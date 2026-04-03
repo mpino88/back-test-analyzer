@@ -22,11 +22,25 @@ export function useReportData(reportData) {
     return reportData.value?.forensicLog || [];
   });
 
+  const topSubsets = computed(() => {
+    return reportData.value?.topSubsets || [];
+  });
+
+  const bestBySize = computed(() => {
+    return reportData.value?.bestBySize || [];
+  });
+
   const monthlyRates = computed(() => {
+    if (summary.value?.conditions?.bestMonths) {
+      return summary.value.conditions.bestMonths;
+    }
     return hitRateByMonth(forensicLog.value);
   });
 
   const dowRates = computed(() => {
+    if (summary.value?.conditions?.bestDows) {
+      return summary.value.conditions.bestDows;
+    }
     return hitRateByDow(forensicLog.value);
   });
 
@@ -45,6 +59,8 @@ export function useReportData(reportData) {
   return {
     summary,
     forensicLog,
+    topSubsets,
+    bestBySize,
     monthlyRates,
     dowRates,
     rolling,

@@ -19,6 +19,8 @@ export function parseDate(dateStr) {
  * @returns {{ label: string, hits: number, total: number, hitRate: number }[]}
  */
 export function hitRateByMonth(forensicLog) {
+  if (!forensicLog || forensicLog.length === 0) return [];
+
   const buckets = MONTH_LABELS.map((label) => ({ label, hits: 0, total: 0, hitRate: 0 }));
 
   for (const entry of forensicLog) {
@@ -40,6 +42,8 @@ export function hitRateByMonth(forensicLog) {
  * @returns {{ label: string, hits: number, total: number, hitRate: number }[]}
  */
 export function hitRateByDow(forensicLog) {
+  if (!forensicLog || forensicLog.length === 0) return [];
+
   const buckets = DOW_LABELS.map((label) => ({ label, hits: 0, total: 0, hitRate: 0 }));
 
   for (const entry of forensicLog) {
@@ -61,6 +65,8 @@ export function hitRateByDow(forensicLog) {
  * @returns {{ date: string, rate: number }[]}
  */
 export function rollingHitRate(forensicLog, windowSize = 20) {
+  if (!forensicLog || forensicLog.length === 0) return [];
+
   const results = [];
 
   for (let i = windowSize - 1; i < forensicLog.length; i++) {
@@ -80,7 +86,7 @@ export function rollingHitRate(forensicLog, windowSize = 20) {
  * @returns {{ type: 'hit' | 'miss', length: number, startDate: string, endDate: string }[]}
  */
 export function computeStreaks(forensicLog) {
-  if (forensicLog.length === 0) return [];
+  if (!forensicLog || forensicLog.length === 0) return [];
 
   const streaks = [];
   let currentType = forensicLog[0].y_hit ? 'hit' : 'miss';
@@ -120,6 +126,8 @@ export function computeStreaks(forensicLog) {
  * @returns {{ hitDistribution: { length: number, count: number }[], missDistribution: { length: number, count: number }[] }}
  */
 export function streakDistribution(forensicLog) {
+  if (!forensicLog || forensicLog.length === 0) return { hitDistribution: [], missDistribution: [] };
+
   const streaks = computeStreaks(forensicLog);
   const hitMap = {};
   const missMap = {};
@@ -146,6 +154,8 @@ export function streakDistribution(forensicLog) {
  * @returns {{ number: number, candidateCount: number, winCount: number }[]}
  */
 export function candidateFrequency(forensicLog) {
+  if (!forensicLog || forensicLog.length === 0) return [];
+
   const candidateMap = {};
   const winMap = {};
 
@@ -192,6 +202,6 @@ export function computeSummary(report) {
     datesAnalyzed: report.datesAnalyzed,
     topN: report.topN,
     strategyCount: report.strategyCount,
-    contexts: report.contexts,
+    contexts: report.contexts || (report.context ? [report.context] : []),
   };
 }
