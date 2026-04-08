@@ -9,12 +9,20 @@ import type { GameType, DrawType } from '../../agent/types/agent.types.js';
 import { BacktestEngine, type BacktestMode, type StrategyName } from '../../agent/backtest/BacktestEngine.js';
 import { PairBacktestEngine } from '../../agent/backtest/PairBacktestEngine.js';
 import { ProgressiveEngine }  from '../../agent/backtest/ProgressiveEngine.js';
+import { requireApiKey } from '../middlewares/authMiddleware.js';
+import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
+import type { Redis } from 'ioredis';
 
-export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool): Router {
+export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool, redis?: Redis): Router {
   const router = Router();
   const backtestEngine      = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
   const pairBacktestEngine  = ballbotPool ? new PairBacktestEngine(ballbotPool, agentPool) : null;
   const progressiveEngine   = ballbotPool ? new ProgressiveEngine(ballbotPool) : null;
+
+  const strictLimiter = redis ? createStrictLimiter(redis) : (req: Request, res: Response, next: any) => next();
+
+  // Autenticación global para todas las rutas del Agente
+  router.use(requireApiKey);
 
   // GET /api/agent/status
   router.get('/status', async (_req: Request, res: Response) => {
@@ -196,7 +204,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
 
   // POST /api/agent/trigger
   // Body: { game_type: 'pick3'|'pick4', draw_type: 'midday'|'evening', draw_date?: 'YYYY-MM-DD' }
-  router.post('/trigger', async (req: Request, res: Response) => {
+  router.post('/trigger', strictLimiter, async (req: Request, res: Response) => {
     if (!scheduler) {
       res.status(503).json({ error: 'Scheduler no disponible' });
       return;
@@ -285,7 +293,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   // Body: { mode?: 'midday'|'evening'|'combined', strategy?: string,
   //         max_combos?: 60, train_window_draws?: 90, eval_step?: 7 }
   // Corre la simulación (puede tardar 30-120s según el historial)
-  router.post('/backtest/run', async (req: Request, res: Response) => {
+  router.post('/backtest/run', strictLimiter, async (req: Request, res: Response) => {
     if (!backtestEngine) {
       res.status(503).json({ error: 'Ballbot pool no disponible' });
       return;
@@ -351,7 +359,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   // ─── POST /api/agent/backtest/v2/run ────────────────────────────
   // Corre PairBacktestEngine para pick3 o pick4.
   // Body: { game_type?: "pick3"|"pick4", mode?: "midday"|"evening"|"combined" }
-  router.post('/backtest/v2/run', async (req: Request, res: Response) => {
+  router.post('/backtest/v2/run', strictLimiter, async (req: Request, res: Response) => {
     if (!pairBacktestEngine) {
       res.status(503).json({ error: 'Ballbot pool no disponible' });
       return;
@@ -411,7 +419,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   // ─── POST /api/agent/backtest/progressive ───────────────────────
   // Corre ProgressiveEngine directo desde Ballbot DB.
   // Body: { map_source, period, start_date, end_date, top_n?, strategy_ids? }
-  router.post('/backtest/progressive', async (req: Request, res: Response) => {
+  router.post('/backtest/progressive', strictLimiter, async (req: Request, res: Response) => {
     if (!progressiveEngine) { res.status(503).json({ error: 'Ballbot pool no disponible' }); return; }
 
     const body = req.body as Record<string, unknown>;
@@ -477,7 +485,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   // ─── POST /api/agent/backtest/unified ───────────────────────────
   // Corre v2 (pair metrics) + Progressive en paralelo y devuelve JSON fusionado.
   // Body: { game_type, map_source, period, start_date, end_date, mode, top_n? }
-  router.post('/backtest/unified', async (req: Request, res: Response) => {
+  router.post('/backtest/unified', strictLimiter, async (req: Request, res: Response) => {
     if (!pairBacktestEngine || !progressiveEngine) {
       res.status(503).json({ error: 'Motores no disponibles' }); return;
     }

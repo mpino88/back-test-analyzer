@@ -17,6 +17,8 @@ import { IngestionWorker } from '../agent/services/IngestionWorker.js';
 import { RAGService } from '../agent/services/RAGService.js';
 import { AgentScheduler } from '../agent/core/AgentScheduler.js';
 import { PostDrawProcessor } from '../agent/feedback/PostDrawProcessor.js';
+import helmet from 'helmet';
+import { createGlobalLimiter } from './middlewares/rateLimitMiddleware.js';
 
 const logger = pino({
   name: 'HitdashServer',
@@ -64,6 +66,9 @@ ingestionWorker.setFeedbackProcessor(postDrawProcessor);
 // ─── App Express ────────────────────────────────────────────────
 const app = express();
 
+app.use(helmet()); // Refuerzo estructural de cabeceras HTTP
+app.use(createGlobalLimiter(redis)); // Deflector Anti-Bots (Límite Global)
+
 app.use(cors({
   origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',
   credentials: true,
@@ -78,7 +83,7 @@ app.use((req, _res, next) => {
 
 // ─── Rutas ──────────────────────────────────────────────────────
 app.use(createHealthRouter(agentPool, redis));
-app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool));
+app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
 app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool));
 app.use(createSSERouter(agentPool, redis));
 
