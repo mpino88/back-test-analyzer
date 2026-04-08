@@ -1,43 +1,46 @@
+// ═══════════════════════════════════════════════════════════════
+// HITDASH — Rate Limit Middleware (Shield Layer 2)
+// In-memory store: sin dependencia de Redis → escudo siempre activo
+// ═══════════════════════════════════════════════════════════════
 import { rateLimit } from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
-import type { Redis } from 'ioredis';
 
 /**
- * Crea un limitador global para evitar spam leve.
+ * Límite global anti-DDoS / anti-bot.
  * 100 peticiones cada 15 minutos por IP.
+ * Protege TODO el ecosistema.
  */
-export function createGlobalLimiter(redisClient: Redis) {
+export function createGlobalLimiter() {
   return rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
+    windowMs: 15 * 60 * 1000,
     limit: 100,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    store: new RedisStore({
-      // @ts-expect-error - Conocido problema de tipos entre ioredis y rate-limit-redis
-      sendCommand: (...args: string[]) => redisClient.call(...args),
-    }),
-    handler: (req, res) => {
-      res.status(429).json({ error: 'Demasiadas peticiones. Por favor intente más tarde.' });
+    skipSuccessfulRequests: false,
+    handler: (_req, res) => {
+      res.status(429).json({
+        error: 'Demasiadas peticiones. Por favor intente más tarde.',
+        code: 'RATE_LIMIT_GLOBAL',
+      });
     },
   });
 }
 
 /**
- * Crea un limitador estricto para operaciones costosas (LLM o Backtest).
- * 2 peticiones por minuto por IP.
+ * Límite estricto para endpoints que consumen LLM / DB intensivo.
+ * Previene Denial-of-Wallet: máx 5 peticiones por minuto por IP.
+ * Aplica a: /trigger, /backtest/run, /backtest/v2/run, /backtest/progressive, /backtest/unified
  */
-export function createStrictLimiter(redisClient: Redis) {
+export function createStrictLimiter() {
   return rateLimit({
-    windowMs: 60 * 1000, // 1 minuto
-    limit: 2,
+    windowMs: 60 * 1000,
+    limit: 5,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
-    store: new RedisStore({
-      // @ts-expect-error
-      sendCommand: (...args: string[]) => redisClient.call(...args),
-    }),
-    handler: (req, res) => {
-      res.status(429).json({ error: 'Límite de operaciones intensivas alcanzado. Protegiendo recursos del servidor.' });
+    handler: (_req, res) => {
+      res.status(429).json({
+        error: 'Límite de operaciones intensivas alcanzado. Protegiendo recursos del servidor.',
+        code: 'RATE_LIMIT_STRICT',
+      });
     },
   });
 }

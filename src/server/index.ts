@@ -67,7 +67,7 @@ ingestionWorker.setFeedbackProcessor(postDrawProcessor);
 const app = express();
 
 app.use(helmet()); // Refuerzo estructural de cabeceras HTTP
-app.use(createGlobalLimiter(redis)); // Deflector Anti-Bots (Límite Global)
+app.use(createGlobalLimiter()); // Deflector Anti-Bots (Límite Global)
 
 app.use(cors({
   origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',
@@ -83,7 +83,7 @@ app.use((req, _res, next) => {
 
 // ─── Rutas ──────────────────────────────────────────────────────
 app.use(createHealthRouter(agentPool, redis));
-app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
+app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool));
 app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool));
 app.use(createSSERouter(agentPool, redis));
 

@@ -11,15 +11,14 @@ import { PairBacktestEngine } from '../../agent/backtest/PairBacktestEngine.js';
 import { ProgressiveEngine }  from '../../agent/backtest/ProgressiveEngine.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
-import type { Redis } from 'ioredis';
 
-export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool, redis?: Redis): Router {
+export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool): Router {
   const router = Router();
   const backtestEngine      = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
   const pairBacktestEngine  = ballbotPool ? new PairBacktestEngine(ballbotPool, agentPool) : null;
   const progressiveEngine   = ballbotPool ? new ProgressiveEngine(ballbotPool) : null;
 
-  const strictLimiter = redis ? createStrictLimiter(redis) : (req: Request, res: Response, next: any) => next();
+  const strictLimiter = createStrictLimiter();
 
   // Autenticación global para todas las rutas del Agente
   router.use(requireApiKey);
