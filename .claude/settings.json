@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"http://localhost:3001/api/agent/sessions?limit=3\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/agent/backtest/run -H 'Content-Type: application/json' -d '{\"game\": \"pick3\", \"mode\": \"combined\", \"engine\": \"v2\"}')",
+      "Bash(grep -v \"^$\")",
+      "Bash(curl -s \"http://localhost:3001/api/agent/backtest?game_type=pick3\")",
+      "Bash(pkill -f \"src/server/index.ts\")",
+      "Bash(echo \"PID: $!\" sleep 6)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('✅ Server OK — DB:', d['checks']['database']['ok'], '| Redis:', d['checks']['redis']['ok']\\)\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/agent/backtest/v2/run -H 'Content-Type: application/json' -d '{\"game_type\": \"pick3\", \"mode\": \"combined\"}')",
+      "Bash(curl -s http://localhost:3001/api/agent/backtest/v2/results?game_type=pick3\\\\&mode=combined)",
+      "Bash(python3 -c ':*)",
+      "Bash(curl -s \"http://localhost:3001/api/agent/backtest/v2/results?game_type=pick3&mode=combined\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/agent/trigger -H 'Content-Type: application/json' -d '{\"trigger_type\":\"manual\",\"game_type\":\"pick3\",\"draw_type\":\"evening\",\"draw_date\":\"2026-04-07\"}')",
+      "Bash(psql \"postgresql://hitdash:hitdash_local_dev@localhost:5433/hitdash\" -c \"SELECT strategy_name, game_type, half, hit_rate, kelly_fraction, wilson_lower FROM hitdash.backtest_results_v2 LIMIT 5;\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('✅ Server OK'\\)\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/agent/backtest/v2/run -H 'Content-Type: application/json' -d '{\"game_type\": \"pick4\", \"mode\": \"combined\"}')",
+      "Bash(curl -s \"https://ballbot-db-api.example.com\")",
+      "Bash(node '--env-file=/Users/yaniel/Documents/Chrome daily OBS/projects/ballbotanalitycs/back-test-analyser/.env' -e ':*)",
+      "Bash(curl -s \"http://localhost:3001/api/agent/backtest/v2/results?game_type=pick4&mode=combined\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/agent/trigger -H 'Content-Type: application/json' -d '{\"trigger_type\":\"manual\",\"game_type\":\"pick4\",\"draw_type\":\"evening\",\"draw_date\":\"2026-04-07\"}')",
+      "Bash(pkill -f \"vite\")",
+      "Bash(curl -s \"http://localhost:5173/agent/backtest\" -o /dev/null -w \"%{http_code}\")",
+      "Read(//Users/yaniel/Documents/Chrome daily OBS/projects/ballbotanalitycs/**)",
+      "Read(//Users/yaniel/Documents/Chrome daily OBS/projects/**)",
+      "Bash(curl -s -X POST http://localhost:3001/api/agent/backtest/progressive -H 'Content-Type: application/json' -d '{:*)",
+      "Bash(curl -s \"http://localhost:3001/api/agent/backtest/progressive/latest?map_source=p3&period=m\")",
+      "Bash(curl -s \"http://localhost:3001/api/agent/backtest/progressive/latest?map_source=p3&period=e\")",
+      "Bash(curl -s http://localhost:3001/api/agent/backtest/progressive/latest?map_source=p3\\\\&period=e)",
+      "Bash(npx vite:*)",
+      "Read(//Users/yaniel/Documents/Chrome\\\\ daily\\\\ OBS/projects/ballbot/power-ball/src/**)"
+    ]
+  }
+}

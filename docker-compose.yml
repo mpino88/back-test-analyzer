@@ -1,0 +1,102 @@
+# ═══════════════════════════════════════════════════════════════
+# HITDASH — Docker Compose (VPS / dash.ballbot.tel)
+# Stack 100% aislado — no comparte nada con otros proyectos del VPS
+# Red interna privada: hitdash-net
+# ═══════════════════════════════════════════════════════════════
+
+version: '3.9'
+
+networks:
+  hitdash-net:
+    driver: bridge
+    name: hitdash-net
+
+volumes:
+  hitdash_pgdata:
+    name: hitdash_pgdata
+  hitdash_redis_data:
+    name: hitdash_redis_data
+
+services:
+
+  # ─── PostgreSQL 16 + pgvector ────────────────────────────────
+  hitdash-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: hitdash-postgres
+    restart: unless-stopped
+    networks:
+      - hitdash-net
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hitdash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-hitdash}
+    volumes:
+      - hitdash_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hitdash} -d ${POSTGRES_DB:-hitdash}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ─── Redis 7 ────────────────────────────────────────────────
+  hitdash-redis:
+    image: redis:7-alpine
+    container_name: hitdash-redis
+    restart: unless-stopped
+    networks:
+      - hitdash-net
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+      --bind 0.0.0.0
+    volumes:
+      - hitdash_redis_data:/data
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ─── Node.js App (Express API + Agent + SSE) ──────────────
+  hitdash-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hitdash-server:latest
+    container_name: hitdash-server
+    restart: unless-stopped
+    networks:
+      - hitdash-net
+    depends_on:
+      hitdash-postgres:
+        condition: service_healthy
+      hitdash-redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      AGENT_DATABASE_URL: postgresql://${POSTGRES_USER:-hitdash}:${POSTGRES_PASSWORD}@hitdash-postgres:5432/${POSTGRES_DB:-hitdash}
+      BALLBOT_DATABASE_URL: ${BALLBOT_DATABASE_URL}
+      BALLBOT_SSL: "true"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@hitdash-redis:6379
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      CORS_ORIGIN: https://dash.ballbot.tel
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # logs managed by Docker (docker compose logs -f hitdash-server)

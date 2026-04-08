@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "outDir": "dist/server",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "lib": ["ES2022"],
+    "paths": {
+      "@agent/*": ["./agent/*"],
+      "@server/*": ["./server/*"]
+    }
+  },
+  "include": ["src/agent/**/*.ts", "src/server/**/*.ts"],
+  "exclude": ["node_modules", "dist", "src/**/*.vue", "src/**/*.test.ts"]
+}
