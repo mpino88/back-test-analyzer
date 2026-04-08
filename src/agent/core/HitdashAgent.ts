@@ -14,7 +14,7 @@ import { LLMRouter }         from '../services/LLMRouter.js';
 import { TelegramNotifier }  from '../services/TelegramNotifier.js';
 import { RAGService }        from '../services/RAGService.js';
 import { PairBacktestEngine } from '../backtest/PairBacktestEngine.js';
-import { runBacktestJob, STRATEGY_CATALOG } from '../../server/routes/backtestControlRouter.js';
+import { runBacktestJob, STRATEGY_CATALOG } from '../backtest/backtestJobRunner.js';
 
 import type {
   GameType, DrawType, TriggerType, Carton, CartonSize, AgentAlert,

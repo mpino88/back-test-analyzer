@@ -29,7 +29,8 @@
       "Bash(curl -s \"http://localhost:3001/api/agent/backtest/progressive/latest?map_source=p3&period=e\")",
       "Bash(curl -s http://localhost:3001/api/agent/backtest/progressive/latest?map_source=p3\\\\&period=e)",
       "Bash(npx vite:*)",
-      "Read(//Users/yaniel/Documents/Chrome\\\\ daily\\\\ OBS/projects/ballbot/power-ball/src/**)"
+      "Read(//Users/yaniel/Documents/Chrome\\\\ daily\\\\ OBS/projects/ballbot/power-ball/src/**)",
+      "Bash(curl -s \"http://localhost:3001/api/agent/backtest/v2/tracking?game_type=pick3&mode=combined\")"
     ]
   }
 }

@@ -631,9 +631,13 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         `SELECT
            sr.name, sr.description, sr.algorithm,
            sr.win_rate, sr.total_tests, sr.status,
-           aw.weight, aw.top_n, aw.hit_rate_history,
-           br.total_eval_pts, br.hits_exact, br.hits_both,
-           COALESCE(br.both_accuracy, br.hit_rate)::float AS hit_rate,
+           aw.weight,
+           COALESCE(aw.top_n, 15)            AS top_n,
+           COALESCE(aw.hit_rate_history, '[]'::jsonb) AS hit_rate_history,
+           br.total_evaluation_pts           AS total_eval_pts,
+           br.hits_combination               AS hits_exact,
+           br.hits_both,
+           COALESCE(br.both_accuracy, br.effectiveness_pct, 0)::float AS hit_rate,
            br.date_from::text, br.date_to::text
          FROM hitdash.strategy_registry sr
          LEFT JOIN hitdash.adaptive_weights aw
@@ -644,7 +648,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
            ON br.strategy_name = sr.name
           AND br.game_type = $1
           AND br.mode      = $2
-         ORDER BY COALESCE(br.both_accuracy, br.hit_rate, sr.win_rate) DESC`,
+         ORDER BY COALESCE(br.both_accuracy, br.effectiveness_pct, sr.win_rate, 0) DESC`,
         [game_type, mode]
       );
 
