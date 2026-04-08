@@ -7,6 +7,9 @@
     <div class="app__body">
       <AppSidebar v-if="summary" :summary="summary" />
       <main class="app__main">
+        <SubsetsGrid v-if="topSubsets && topSubsets.length > 0" title="Top Subsets" :subsets="topSubsets" />
+        <SubsetsGrid v-if="bestBySize && bestBySize.length > 0" title="Best By Size" :subsets="bestBySize" />
+
         <div class="charts-grid stagger-children">
           <div class="charts-grid__full">
             <HitMissTimeline :forensic-log="forensicLog" :rolling="rolling" />
@@ -241,6 +244,7 @@ import { useAgentStatus } from '../composables/agent/useAgentStatus.js';
 import FileDropzone     from '../components/upload/FileDropzone.vue';
 import AppHeader        from '../components/layout/AppHeader.vue';
 import AppSidebar       from '../components/layout/AppSidebar.vue';
+import SubsetsGrid      from '../components/layout/SubsetsGrid.vue';
 import HitMissTimeline  from '../components/charts/HitMissTimeline.vue';
 import HitRateByMonth   from '../components/charts/HitRateByMonth.vue';
 import HitRateByDow     from '../components/charts/HitRateByDow.vue';
@@ -248,7 +252,7 @@ import StreakAnalysis    from '../components/charts/StreakAnalysis.vue';
 import CandidateHeatmap from '../components/charts/CandidateHeatmap.vue';
 
 const { data, fileName, error, handleDrop, handleFileInput, reset } = useFileLoader();
-const { summary, forensicLog, monthlyRates, dowRates, rolling, streaks, candidates } = useReportData(data);
+const { summary, forensicLog, topSubsets, bestBySize, monthlyRates, dowRates, rolling, streaks, candidates } = useReportData(data);
 const { status: agentStatus, connected: agentOnline } = useAgentStatus();
 
 const isDragging = ref(false);

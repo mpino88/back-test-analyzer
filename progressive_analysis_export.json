@@ -1,0 +1,105 @@
+{
+  "topSubsets": [
+    {
+      "indices": [
+        0
+      ],
+      "label": "A",
+      "hits": 227,
+      "misses": 2056,
+      "skipped": 0,
+      "hitRate": 0.0994305738063951,
+      "conditions": {
+        "bestDows": [
+          {
+            "label": "Lun",
+            "hitRate": 0.1165644171779141
+          },
+          {
+            "label": "Mié",
+            "hitRate": 0.11042944785276074
+          }
+        ],
+        "bestMonths": [
+          {
+            "label": "Ene",
+            "hitRate": 0.13425925925925927
+          },
+          {
+            "label": "Ago",
+            "hitRate": 0.12365591397849462
+          }
+        ],
+        "avgInterval": 10,
+        "stdInterval": 9,
+        "peakBand": "1-5",
+        "p25": 3,
+        "p75": 13,
+        "avgPreMiss": 9,
+        "stdPreMiss": 9,
+        "hitAfterHit": 0.061946902654867256,
+        "hitAfterMiss": 0.10359922178988328,
+        "recentHitRate": 0.1,
+        "recentDelta": 0.056942619360490776,
+        "trend": "stable"
+      }
+    }
+  ],
+  "bestBySize": [
+    {
+      "indices": [
+        0
+      ],
+      "label": "A",
+      "hits": 227,
+      "misses": 2056,
+      "skipped": 0,
+      "hitRate": 0.0994305738063951,
+      "conditions": {
+        "bestDows": [
+          {
+            "label": "Lun",
+            "hitRate": 0.1165644171779141
+          },
+          {
+            "label": "Mié",
+            "hitRate": 0.11042944785276074
+          }
+        ],
+        "bestMonths": [
+          {
+            "label": "Ene",
+            "hitRate": 0.13425925925925927
+          },
+          {
+            "label": "Ago",
+            "hitRate": 0.12365591397849462
+          }
+        ],
+        "avgInterval": 10,
+        "stdInterval": 9,
+        "peakBand": "1-5",
+        "p25": 3,
+        "p75": 13,
+        "avgPreMiss": 9,
+        "stdPreMiss": 9,
+        "hitAfterHit": 0.061946902654867256,
+        "hitAfterMiss": 0.10359922178988328,
+        "recentHitRate": 0.1,
+        "recentDelta": 0.056942619360490776,
+        "trend": "stable"
+      }
+    }
+  ],
+  "totalSubsets": 1,
+  "context": {
+    "mapSource": "p3",
+    "period": "m"
+  },
+  "startDate": "01/01/20",
+  "endDate": "04/01/26",
+  "datesAnalyzed": 2283,
+  "totalInRange": 2283,
+  "topN": 10,
+  "strategyCount": 1
+}

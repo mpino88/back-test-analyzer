@@ -24,8 +24,8 @@ export function useFileLoader() {
       const text = await file.text();
       const parsed = JSON.parse(text);
 
-      if (!parsed.forensicLog || !parsed.topSubsets) {
-        throw new Error('El JSON no tiene la estructura esperada (faltan forensicLog o topSubsets).');
+      if (!parsed.forensicLog && !parsed.topSubsets) {
+        throw new Error('El JSON no tiene la estructura esperada. Debe contener al menos "forensicLog" o "topSubsets".');
       }
 
       data.value = parsed;
