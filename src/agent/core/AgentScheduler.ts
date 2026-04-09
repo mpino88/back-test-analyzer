@@ -119,7 +119,10 @@ export class AgentScheduler {
           data: {
             game_type: job.game_type,
             draw_type: job.draw_type,
-            draw_date: nextDrawDate(job.draw_type),
+            // ═══ ANO-06 FIX: draw_date es calculado dinámicamente en el worker
+            // NO aquí — esto se ejecutaría solo al boot, congelando la fecha.
+            // Usamos un placeholder que el worker sobreescribirá en tiempo real.
+            draw_date: 'dynamic',
             trigger: 'cron',
           } satisfies AgentJobData,
           opts: {
@@ -143,7 +146,10 @@ export class AgentScheduler {
     this.worker = new Worker<AgentJobData>(
       QUEUE_NAME,
       async (job: Job<AgentJobData>) => {
-        const { game_type, draw_type, draw_date, trigger } = job.data;
+        const { game_type, draw_type, trigger } = job.data;
+        // ═══ ANO-06 FIX: Calcular draw_date en tiempo de ejecución, NO en boot.
+        // Garantiza que los cartones generados siempre tengan la fecha real de HOY.
+        const draw_date = nextDrawDate(draw_type);
         logger.info({ game_type, draw_type, draw_date, trigger }, 'AgentScheduler: ejecutando job');
 
         const result = await agent.run({

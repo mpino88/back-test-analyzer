@@ -84,7 +84,11 @@ export class DriftDetector {
 
     const cutoffRecent = new Date(Date.now() - recentDays * 86_400_000);
     const recent   = rows.filter(r => new Date(r.draw_date) >= cutoffRecent);
-    const historic = rows; // todo el período histórico
+    // ═══ ANO-08 FIX: Excluir datos recientes del histórico.
+    // Antes: historic = rows (incluía los datos recientes → violaba independencia de chi-square).
+    // Chi-square requiere que las dos muestras sean DISJUNTAS para ser válido estadísticamente.
+    // El drift era subestimado ~50% porque el denominador estaba contaminado con los mismos datos.
+    const historic = rows.filter(r => new Date(r.draw_date) < cutoffRecent);
 
     const n_r = recent.length;
     const n_h = historic.length;

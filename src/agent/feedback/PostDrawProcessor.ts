@@ -56,7 +56,10 @@ export class PostDrawProcessor {
   private readonly evaluator:   StrategyEvaluator;
   private readonly embedder:    LearningEmbedder;
   private readonly drift:       DriftDetector;
-  private readonly notifier:    TelegramNotifier;
+  // ═══ ANO-01 FIX: No instanciar TelegramNotifier aquí.
+  // El singleton se inyecta desde server/index.ts via setNotifier().
+  // Evita conexiones duplicadas al bot + garantiza credenciales válidas al boot.
+  private notifier:    TelegramNotifier | null = null;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -68,7 +71,13 @@ export class PostDrawProcessor {
     this.evaluator  = new StrategyEvaluator(agentPool);
     this.embedder   = new LearningEmbedder(agentPool, ragService);
     this.drift      = new DriftDetector(ballbotPool);
-    this.notifier   = new TelegramNotifier();
+    // notifier se asigna vía setNotifier() — NO en el constructor
+  }
+
+  /** Inject the shared TelegramNotifier singleton. Called from server/index.ts. */
+  setNotifier(notifier: TelegramNotifier): void {
+    this.notifier = notifier;
+    logger.info('PostDrawProcessor: TelegramNotifier vinculado');
   }
 
   // ─── Encolar feedback tras nuevo resultado ───────────────────
@@ -182,13 +191,15 @@ export class PostDrawProcessor {
         ]
       );
 
-      // Notificar por Telegram
-      await this.notifier.notifyAlert({
-        type: 'drift',
-        message: driftReport.recommendation,
-        severity: 'high',
-        game_type,
-      });
+      // ═══ ANO-04 FIX: Verificar notifier disponible antes de llamar
+      if (this.notifier) {
+        await this.notifier.notifyAlert({
+          type: 'drift',
+          message: driftReport.recommendation,
+          severity: 'high',
+          game_type,
+        });
+      }
     }
 
     // ─── 6. Calcular accuracy reciente y notificar si es relevante ─
@@ -196,12 +207,15 @@ export class PostDrawProcessor {
 
     // Alerta si accuracy cayó por debajo del 10% (peor que random)
     if (accuracy.total_cartones >= 10 && accuracy.hit_rate < 0.05) {
-      await this.notifier.notifyAlert({
-        type: 'anomaly',
-        message: `Hit rate bajo: ${(accuracy.hit_rate * 100).toFixed(1)}% en los últimos 30d (${accuracy.total_cartones} cartones). Revisar algoritmos.`,
-        severity: 'high',
-        game_type,
-      });
+      // ═══ ANO-04 FIX: Guard antes de llamar al notifier
+      if (this.notifier) {
+        await this.notifier.notifyAlert({
+          type: 'anomaly',
+          message: `Hit rate bajo: ${(accuracy.hit_rate * 100).toFixed(1)}% en los últimos 30d (${accuracy.total_cartones} cartones). Revisar algoritmos.`,
+          severity: 'high',
+          game_type,
+        });
+      }
     }
 
     logger.info(
@@ -341,13 +355,17 @@ export class PostDrawProcessor {
     const mode = draw_type as string;
 
     // Load all strategies with backtest_results_v2 entries
+    // ═══ ANO-03 FIX: Usar DISTINCT ON (strategy_name) + ORDER BY created_at DESC
+    // El SELECT DISTINCT anterior podía devolver múltiples filas por estrategia si
+    // exístían resultados en mode='midday' Y mode='combined', causando doble update.
     const { rows: strategies } = await this.agentPool.query<{
       strategy_name: string;
       id: string;
     }>(
-      `SELECT DISTINCT strategy_name, id
+      `SELECT DISTINCT ON (strategy_name) strategy_name, id
        FROM hitdash.backtest_results_v2
-       WHERE game_type = $1 AND mode IN ($2, 'combined')`,
+       WHERE game_type = $1 AND mode IN ($2, 'combined')
+       ORDER BY strategy_name, created_at DESC`,
       [game_type, draw_type]
     ).catch(() => ({ rows: [] as Array<{ strategy_name: string; id: string }> }));
 

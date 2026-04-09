@@ -66,6 +66,8 @@ ingestionWorker.setFeedbackProcessor(postDrawProcessor);
 ingestionWorker.setNotifier(telegramNotifier);
 agentScheduler.setNotifier(telegramNotifier);
 ragService.setNotifier(telegramNotifier);
+// ANO-01 FIX: Inyectar singleton de TelegramNotifier en PostDrawProcessor
+postDrawProcessor.setNotifier(telegramNotifier);
 
 // ─── SENTINEL: DB pool error events ───────────────────────
 let agentDbAlive = true;
