@@ -117,7 +117,8 @@ redis.on('ready', () => {
 const app = express();
 
 app.use(helmet()); // Refuerzo estructural de cabeceras HTTP
-app.use(createGlobalLimiter()); // Deflector Anti-Bots (Límite Global)
+app.use(createGlobalLimiter(telegramNotifier)); // Deflector Anti-Bots + Sentinel alerta Rate Limit
+
 
 app.use(cors({
   origin: process.env['CORS_ORIGIN'] ?? 'http://localhost:5173',

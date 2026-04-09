@@ -11,6 +11,9 @@ import { PairBacktestEngine } from '../../agent/backtest/PairBacktestEngine.js';
 import { ProgressiveEngine }  from '../../agent/backtest/ProgressiveEngine.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
+import pino from 'pino';
+
+const logger = pino({ name: 'AgentRouter' });
 
 export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool): Router {
   const router = Router();
@@ -89,7 +92,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
          ORDER BY ${safeSort} ${order}`
       );
       res.json(result.rows);
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err), sort: safeSort }, 'Error obteniendo estrategias');
       res.status(500).json({ error: 'Error obteniendo estrategias' });
     }
   });
@@ -121,7 +125,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         ]
       );
       res.json(result.rows);
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo cartones');
       res.status(500).json({ error: 'Error obteniendo cartones' });
     }
   });
@@ -153,7 +158,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         baseline_random: 0.1,
         data: result.rows,
       });
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo accuracy');
       res.status(500).json({ error: 'Error obteniendo tendencia de accuracy' });
     }
   });
@@ -173,7 +179,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         [acknowledged]
       );
       res.json(result.rows);
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo alertas');
       res.status(500).json({ error: 'Error obteniendo alertas' });
     }
   });
@@ -193,7 +200,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         [limit]
       );
       res.json(result.rows);
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo sesiones');
       res.status(500).json({ error: 'Error obteniendo sesiones' });
     }
   });
@@ -210,7 +218,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         [id]
       );
       res.json({ success: true });
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err), id }, 'Error actualizando alerta');
       res.status(500).json({ error: 'Error actualizando alerta' });
     }
   });
@@ -395,8 +404,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
     try {
       await pairBacktestEngine.runAll(mode as BacktestMode, game_type as 'pick3' | 'pick4');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[PairBacktest v2] Error:', msg);
+      logger.error({ error: err instanceof Error ? err.message : String(err), game_type, mode }, '[PairBacktest v2] Error en background');
     }
   });
 
@@ -471,7 +479,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         [mapSource, period, topN, startDate, endDate, JSON.stringify(result)]
       ).catch(() => { /* tabla puede no existir aún */ });
     } catch (err) {
-      console.error('[Progressive] Error:', err instanceof Error ? err.message : String(err));
+      logger.error({ error: err instanceof Error ? err.message : String(err), mapSource, period }, '[Progressive] Error en background');
     }
   });
 
@@ -564,7 +572,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         [mapSource, period, topN, startDate, endDate, JSON.stringify(unified)]
       ).catch(() => {});
     } catch (err) {
-      console.error('[Unified] Error:', err instanceof Error ? err.message : String(err));
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, '[Unified] Error en background');
     }
   });
 

@@ -1,22 +1,23 @@
-// ═══════════════════════════════════════════════════════════════
-// HITDASH — Rate Limit Middleware (Shield Layer 2)
-// In-memory store: sin dependencia de Redis → escudo siempre activo
-// ═══════════════════════════════════════════════════════════════
 import { rateLimit } from 'express-rate-limit';
+import type { Request } from 'express';
+import type { TelegramNotifier } from '../../agent/services/TelegramNotifier.js';
 
 /**
  * Límite global anti-DDoS / anti-bot.
  * 100 peticiones cada 15 minutos por IP.
  * Protege TODO el ecosistema.
  */
-export function createGlobalLimiter() {
+export function createGlobalLimiter(notifier?: TelegramNotifier) {
   return rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 100,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skipSuccessfulRequests: false,
-    handler: (_req, res) => {
+    handler: (req: Request, res) => {
+      const ip   = (req.headers['x-forwarded-for'] as string ?? req.ip ?? 'unknown').split(',')[0]!.trim();
+      const path = req.path;
+      notifier?.notifyRateLimitBreach(ip, path).catch(() => {});
       res.status(429).json({
         error: 'Demasiadas peticiones. Por favor intente más tarde.',
         code: 'RATE_LIMIT_GLOBAL',

@@ -129,18 +129,20 @@ export class IngestionWorker {
     });
 
     this.worker.on('failed', (job, err) => {
-      logger.error({ jobId: job?.id, error: err.message }, 'Ingesta fallida');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.error({ jobId: job?.id, error: errMsg }, 'Ingesta fallida');
 
       // ─── Notificación de fallo crítico a admins ───────────────
       if (this.notifier) {
         const msg = [
           `🔴 *HITDASH — Ingesta FALLIDA*`,
-          `❌ Error: ${err.message.slice(0, 200)}`,
+          `❌ Error: ${String(errMsg).slice(0, 200)}`,
           `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
         ].join('\n');
         this.notifier.sendAdminLog(msg).catch(() => {});
       }
     });
+
 
     logger.info('IngestionWorker: worker iniciado');
   }
