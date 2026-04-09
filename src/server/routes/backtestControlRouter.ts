@@ -51,7 +51,13 @@ export function createBacktestControlRouter(
 
   // ── GET /draws/meta ──────────────────────────────────────────
   // Retorna rango de fechas disponible + total de sorteos por juego
+  let metaCache: any = null;
+  let metaCacheTime = 0;
   router.get('/draws/meta', async (_req: Request, res: Response) => {
+    if (metaCache && Date.now() - metaCacheTime < 60000) {
+      res.json(metaCache);
+      return;
+    }
     try {
       const { rows } = await ballbotPool.query<{
         game: string;
@@ -68,6 +74,8 @@ export function createBacktestControlRouter(
          GROUP BY game, period
          ORDER BY game, period`
       );
+      metaCache = rows;
+      metaCacheTime = Date.now();
       res.json(rows);
     } catch (err) {
       res.status(500).json({ error: String(err) });

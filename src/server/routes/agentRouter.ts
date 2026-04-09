@@ -703,11 +703,11 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
                WHERE br.strategy_name = $1
                  AND br.game_type     = $2
                  AND br.mode          = $3
-               ORDER BY bp.draw_index ASC
+               ORDER BY bp.draw_index DESC
                LIMIT 60`,
               [s.name, game_type, mode]
             );
-            timelineMap[s.name] = pts.rows.map(p => ({
+            timelineMap[s.name] = pts.rows.reverse().map(p => ({
               draw_index: p.draw_index,
               eval_date:  p.eval_date,
               hit:        p.hit_both || p.hit_combination,
