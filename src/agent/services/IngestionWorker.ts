@@ -172,13 +172,14 @@ export class IngestionWorker {
     const startTime = Date.now();
     const stats: IngestionStats = { processed: 0, skipped: 0, errors: 0, duration_ms: 0 };
 
-    // 1. Watermark: timestamp del último draw ingestado
-    const wmResult = await this.agentPool.query<{ last_at: string | null }>(
-      `SELECT MAX(ingested_at)::text AS last_at FROM hitdash.ingested_results`
-    );
-    const lastAt = wmResult.rows[0]?.last_at ?? '2000-01-01T00:00:00Z';
+    // ═══ ANO-NEW-04 FIX: Timezone mismatch & Infinite Loop
+    // Antes: se comparaba MAX(ingested_at) local vs created_at de Ballbot (con TZ distinto).
+    // Esto causaba que `created_at > lastAt` siempre fuera true para sorteos en UTC,
+    // procesando los mismos sorteos una y otra vez cada 15 mins (y duplicando RAG patterns).
+    // Ahora: Traemos los últimos N sorteos de Ballbot y filtramos explícitamente por draw_key original.
 
-    // 2. Fetch draws de Ballbot más nuevos que el watermark
+    const BATCH_LIMIT = 20;
+
     interface DrawRow {
       game: string;
       period: string;
@@ -186,25 +187,46 @@ export class IngestionWorker {
       numbers: string;
       created_at: Date;
     }
-    const pending = await this.ballbotPool.query<DrawRow>(
+
+    const { rows: recentDraws } = await this.ballbotPool.query<DrawRow>(
       `SELECT game, period, date, numbers, created_at
        FROM public.draws
-       WHERE created_at > $1
-       ORDER BY created_at ASC
-       LIMIT $2`,
-      [lastAt, BATCH_SIZE]
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [BATCH_LIMIT]
     );
 
-    if (pending.rows.length === 0) {
-      logger.info('No hay resultados pendientes de ingesta');
+    if (recentDraws.length === 0) {
+      logger.info('No hay resultados en Ballbot');
       stats.duration_ms = Date.now() - startTime;
       return stats;
     }
 
-    logger.info({ count: pending.rows.length, since: lastAt }, 'Resultados pendientes encontrados');
+    // Process oldest first
+    recentDraws.reverse();
+
+    const pending: DrawRow[] = [];
+    for (const row of recentDraws) {
+      const drawKey = `${row.game}:${row.period}:${row.date}`;
+      const { rowCount } = await this.agentPool.query(
+        `SELECT 1 FROM hitdash.ingested_results WHERE draw_key = $1`,
+        [drawKey]
+      );
+      if (rowCount === 0) {
+        pending.push(row);
+      }
+    }
+
+    if (pending.length === 0) {
+      logger.info('No hay resultados pendientes de ingesta tras filtrar');
+      stats.duration_ms = Date.now() - startTime;
+      return stats;
+    }
+
+    logger.info({ count: pending.length }, 'Resultados pendientes encontrados');
 
     // 3. Procesar cada resultado
-    for (const row of pending.rows) {
+    for (const row of pending) {
       const drawKey = `${row.game}:${row.period}:${row.date}`;
       try {
         const ragKnowledgeId = await this.processResult(row);
