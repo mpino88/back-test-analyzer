@@ -190,6 +190,32 @@ export class TelegramNotifier {
     logger.info({ game_type, draw_type, halves: recs.map(r => r.half) }, 'Pares enviados a Telegram');
   }
 
+  // ─── Canal independiente: logs de servicio para admins ──────────
+  // Independiente del flujo de usuario — reporta estado interno del sistema.
+  async sendAdminLog(message: string): Promise<void> {
+    await this.send(message);
+  }
+
+  // ─── Notificación de arranque del servidor ────────────────────────
+  async notifyServiceBoot(params: {
+    port: number;
+    redis: boolean;
+    agentDb: boolean;
+    ballbotDb: boolean;
+  }): Promise<void> {
+    const { port, redis, agentDb, ballbotDb } = params;
+    const message = [
+      `🚀 *HITDASH — Servidor arrancado*`,
+      `📍 Puerto: ${port}`,
+      `🔵 Agent DB: ${agentDb ? '✅ Conectado' : '❌ Offline'}`,
+      `🔵 Ballbot DB: ${ballbotDb ? '✅ Conectado' : '⚠️ Sin conexión'}`,
+      `🔵 Redis: ${redis ? '✅ Conectado' : '⚠️ Sin conexión'}`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n');
+    await this.send(message);
+    logger.info('Notificación de boot enviada a admins');
+  }
+
   // ─── Método base de envío con retry — envía a TODOS los admins ──
   private async send(text: string, retries = 2): Promise<void> {
     if (!this.enabled || !this.bot) return;

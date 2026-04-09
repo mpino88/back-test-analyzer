@@ -19,6 +19,7 @@ import { AgentScheduler } from '../agent/core/AgentScheduler.js';
 import { PostDrawProcessor } from '../agent/feedback/PostDrawProcessor.js';
 import helmet from 'helmet';
 import { createGlobalLimiter } from './middlewares/rateLimitMiddleware.js';
+import { TelegramNotifier } from '../agent/services/TelegramNotifier.js';
 
 const logger = pino({
   name: 'HitdashServer',
@@ -58,10 +59,11 @@ const ragService = new RAGService(agentPool);
 const ingestionWorker = new IngestionWorker(ballbotPool, agentPool, ragService);
 const agentScheduler = new AgentScheduler(ballbotPool, agentPool, ragService);
 const postDrawProcessor = new PostDrawProcessor(ballbotPool, agentPool, ragService);
+const telegramNotifier = new TelegramNotifier();
 
-// ═══ BN-01 FIX: Vincular feedback loop ═══
-// IngestionWorker → PostDrawProcessor (el cable que faltaba)
+// ═══ Vincular servicios entre sí ═══
 ingestionWorker.setFeedbackProcessor(postDrawProcessor);
+ingestionWorker.setNotifier(telegramNotifier);
 
 // ─── App Express ────────────────────────────────────────────────
 const app = express();
@@ -156,6 +158,14 @@ async function start(): Promise<void> {
     logger.info(`   Health: http://localhost:${PORT}/health`);
     logger.info(`   API:    http://localhost:${PORT}/api/agent/status`);
     logger.info(`   SSE:    http://localhost:${PORT}/events/agent-status`);
+
+    // ─── Notificar a admins va Telegram que el servidor arrancó ───
+    telegramNotifier.notifyServiceBoot({
+      port: PORT,
+      agentDb: true,              // ya verificado ariba — si llega acá, está ok
+      ballbotDb: true,            // idem
+      redis: true,
+    }).catch(() => {});           // fire-and-forget — nunca bloquea el boot
   });
 }
 

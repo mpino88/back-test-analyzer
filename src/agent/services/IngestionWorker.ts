@@ -10,6 +10,7 @@ import { Pool } from 'pg';
 import pino from 'pino';
 import { RAGService } from './RAGService.js';
 import type { PostDrawProcessor } from '../feedback/PostDrawProcessor.js';
+import type { TelegramNotifier } from './TelegramNotifier.js';
 import type { LotteryDigits, GameType, DrawType } from '../types/agent.types.js';
 
 const logger = pino({ name: 'IngestionWorker' });
@@ -44,6 +45,7 @@ export class IngestionWorker {
   private readonly queue: Queue;
   private worker: Worker | null = null;
   private feedbackProcessor: PostDrawProcessor | null = null;
+  private notifier: TelegramNotifier | null = null;
 
   constructor(ballbotPool: Pool, agentPool: Pool, ragService: RAGService) {
     this.ballbotPool = ballbotPool;
@@ -60,6 +62,15 @@ export class IngestionWorker {
   setFeedbackProcessor(processor: PostDrawProcessor): void {
     this.feedbackProcessor = processor;
     logger.info('IngestionWorker: PostDrawProcessor vinculado — feedback loop ACTIVO');
+  }
+
+  /**
+   * Inject TelegramNotifier for proactive admin service logs.
+   * Called from server/index.ts after server boots successfully.
+   */
+  setNotifier(notifier: TelegramNotifier): void {
+    this.notifier = notifier;
+    logger.info('IngestionWorker: TelegramNotifier vinculado — logs de servicio ACTIVOS');
   }
 
   // Registra el job repetible cada 15 minutos con jobId fijo (deduplicación)
@@ -101,10 +112,34 @@ export class IngestionWorker {
         errors: result.errors,
         duration_ms: result.duration_ms,
       }, 'Ingesta completada');
+
+      // ─── Notificación proactiva a admins ──────────────────────
+      if (this.notifier && result.processed > 0) {
+        const emoji = result.errors > 0 ? '⚠️' : '✅';
+        const msg = [
+          `${emoji} *HITDASH — Ingesta completada*`,
+          `📥 Sorteos nuevos: *${result.processed}*`,
+          result.skipped > 0  ? `⏭ Saltados: ${result.skipped}` : '',
+          result.errors > 0   ? `❌ Errores: ${result.errors}` : '',
+          `⏱ Duración: ${result.duration_ms}ms`,
+          `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+        ].filter(Boolean).join('\n');
+        this.notifier.sendAdminLog(msg).catch(() => {});
+      }
     });
 
     this.worker.on('failed', (job, err) => {
       logger.error({ jobId: job?.id, error: err.message }, 'Ingesta fallida');
+
+      // ─── Notificación de fallo crítico a admins ───────────────
+      if (this.notifier) {
+        const msg = [
+          `🔴 *HITDASH — Ingesta FALLIDA*`,
+          `❌ Error: ${err.message.slice(0, 200)}`,
+          `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+        ].join('\n');
+        this.notifier.sendAdminLog(msg).catch(() => {});
+      }
     });
 
     logger.info('IngestionWorker: worker iniciado');

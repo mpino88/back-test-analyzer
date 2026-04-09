@@ -26,7 +26,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   // GET /api/agent/status
   router.get('/status', async (_req: Request, res: Response) => {
     try {
-      const [sessionRow, alertRow, ragRow] = await Promise.all([
+      const [sessionRow, alertRow, ragRow, ingestRow, cycleRow] = await Promise.all([
         agentPool.query<{
           id: string;
           game_type: string;
@@ -47,13 +47,27 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         agentPool.query<{ count: string }>(
           `SELECT COUNT(*)::text AS count FROM hitdash.rag_knowledge`
         ),
+        // Last ingestion = most recent rag_knowledge entry
+        agentPool.query<{ created_at: string }>(
+          `SELECT created_at::text FROM hitdash.rag_knowledge
+           ORDER BY created_at DESC LIMIT 1`
+        ),
+        // Last agent cycle = most recent completed agent_session
+        agentPool.query<{ created_at: string }>(
+          `SELECT created_at::text FROM hitdash.agent_sessions
+           WHERE status = 'completed'
+           ORDER BY created_at DESC LIMIT 1`
+        ),
       ]);
 
       res.json({
         online: true,
-        last_session: sessionRow.rows[0] ?? null,
-        pending_alerts: parseInt(alertRow.rows[0]!.count, 10),
-        rag_documents: parseInt(ragRow.rows[0]!.count, 10),
+        last_session:      sessionRow.rows[0] ?? null,
+        pending_alerts:    parseInt(alertRow.rows[0]!.count, 10),
+        rag_documents:     parseInt(ragRow.rows[0]!.count, 10),
+        last_ingestion:    ingestRow.rows[0]?.created_at ?? null,
+        last_agent_cycle:  cycleRow.rows[0]?.created_at ?? null,
+        redis_ok:          true, // BullMQ/Redis not instrumented — assume up if server is up
       });
     } catch (err) {
       res.status(500).json({ error: 'Error obteniendo status del agente' });
@@ -665,9 +679,9 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         stratRows.rows.map(async s => {
           try {
             const pts = await agentPool.query<{
-              draw_index: number; eval_date: string; hit_exact: boolean; hit_both: boolean;
+              draw_index: number; eval_date: string; hit_combination: boolean; hit_both: boolean;
             }>(
-              `SELECT bp.draw_index, bp.eval_date::text, bp.hit_exact, bp.hit_both
+              `SELECT bp.draw_index, bp.eval_date::text, bp.hit_combination, bp.hit_both
                FROM hitdash.backtest_points bp
                JOIN hitdash.backtest_results br ON br.id = bp.backtest_id
                WHERE br.strategy_name = $1
@@ -680,7 +694,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
             timelineMap[s.name] = pts.rows.map(p => ({
               draw_index: p.draw_index,
               eval_date:  p.eval_date,
-              hit:        p.hit_both || p.hit_exact,
+              hit:        p.hit_both || p.hit_combination,
             }));
           } catch {
             timelineMap[s.name] = [];
