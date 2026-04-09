@@ -59,13 +59,14 @@ export class HitdashAgent {
   constructor(
     private readonly ballbotPool: Pool,
     private readonly agentPool: Pool,
-    ragService: RAGService
+    ragService: RAGService,
+    notifier?: TelegramNotifier          // Injectable — avoids duplicate singleton
   ) {
     this.analysisEngine      = new AnalysisEngine(ballbotPool, agentPool);
     this.cartonGenerator     = new CartonGenerator();
     this.pairRecommender     = new PairRecommender();
     this.llmRouter           = new LLMRouter();
-    this.notifier            = new TelegramNotifier();
+    this.notifier            = notifier ?? new TelegramNotifier();
     this.ragService          = ragService;
     this.pairBacktestEngine  = new PairBacktestEngine(ballbotPool, agentPool);
   }

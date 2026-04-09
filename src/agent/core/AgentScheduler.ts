@@ -138,7 +138,7 @@ export class AgentScheduler {
 
   // ─── Iniciar el worker que procesa los jobs ───────────────────
   start(): void {
-    const agent = new HitdashAgent(this.ballbotPool, this.agentPool, this.ragService);
+    const agent = new HitdashAgent(this.ballbotPool, this.agentPool, this.ragService, this.notifier ?? undefined);
 
     this.worker = new Worker<AgentJobData>(
       QUEUE_NAME,
@@ -184,14 +184,15 @@ export class AgentScheduler {
     });
 
     this.worker.on('failed', (job, err) => {
-      logger.error({ jobId: job?.id, error: err.message }, 'Job fallido');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.error({ jobId: job?.id, error: errMsg }, 'Job fallido');
       if (this.notifier) {
         this.notifier.notifyAgentJobFailed({
           queue: QUEUE_NAME,
           jobId: job?.id,
           game_type: (job?.data as AgentJobData | undefined)?.game_type,
           draw_type: (job?.data as AgentJobData | undefined)?.draw_type,
-          error: err.message,
+          error: errMsg,
         }).catch(() => {});
       }
     });

@@ -259,7 +259,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         draw_date
       );
       res.json({ success: true, job_id: jobId });
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error disparando agente manualmente');
       res.status(500).json({ error: 'Error disparando agente manualmente' });
     }
   });
@@ -273,7 +274,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
     try {
       const status = await scheduler.getQueueStatus();
       res.json(status);
-    } catch {
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo estado de la cola');
       res.status(500).json({ error: 'Error obteniendo estado de la cola' });
     }
   });
@@ -503,7 +505,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       );
       if (!rows.length) { res.json(null); return; }
       res.json({ ...rows[0]!['result_json'], cached_at: rows[0]!['created_at'] });
-    } catch {
+    } catch (err) {
+      logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'progressive/latest — DB error, returning null');
       res.json(null);
     }
   });
@@ -709,7 +712,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
               eval_date:  p.eval_date,
               hit:        p.hit_both || p.hit_combination,
             }));
-          } catch {
+          } catch (err) {
+            logger.warn({ strategy: s.name, error: err instanceof Error ? err.message : String(err) }, 'Timeline fetch fallida — usando array vacío');
             timelineMap[s.name] = [];
           }
         })

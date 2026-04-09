@@ -97,8 +97,10 @@ export class PostDrawProcessor {
       logger.info({ jobId: job.id }, 'Feedback procesado OK');
     });
     this.worker.on('failed', (job, err) => {
-      logger.error({ jobId: job?.id, error: err.message }, 'Feedback fallido');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      logger.error({ jobId: job?.id, error: errMsg }, 'Feedback fallido');
     });
+
 
     logger.info('PostDrawProcessor: worker iniciado');
   }
