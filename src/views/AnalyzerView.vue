@@ -236,6 +236,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
+import { apiGet } from '../utils/apiClient.js';
 
 import { useFileLoader }  from '../composables/useFileLoader.js';
 import { useReportData }  from '../composables/useReportData.js';
@@ -272,11 +273,8 @@ const lastIngestion = computed(() => {
 
 onMounted(async () => {
   try {
-    const res = await fetch('/api/agent/pair-recommendations/latest');
-    if (res.ok) {
-      const all = await res.json();
-      latestRec.value = all?.[0] ?? null;
-    }
+    const all = await apiGet('/api/agent/pair-recommendations/latest');
+    latestRec.value = all?.[0] ?? null;
   } catch {}
 });
 </script>

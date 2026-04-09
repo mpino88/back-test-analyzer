@@ -148,6 +148,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
+import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 const { status, connected } = useAgentStatus();
 const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
@@ -160,8 +161,7 @@ const loadingRecs = ref(false);
 async function fetchLatestRecs() {
   loadingRecs.value = true;
   try {
-    const res = await fetch('/api/agent/pair-recommendations/latest');
-    if (res.ok) latestRecs.value = await res.json();
+    latestRecs.value = await apiGet('/api/agent/pair-recommendations/latest');
   } catch {}
   finally { loadingRecs.value = false; }
 }
@@ -179,17 +179,11 @@ async function triggerAgent() {
   triggering.value = true;
   triggerMsg.value = '';
   try {
-    const res = await fetch('/api/agent/trigger', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        game_type: triggerGame.value,
-        draw_type: triggerDraw.value,
-        draw_date: triggerDate.value,
-      }),
+    const data = await apiPost('/api/agent/trigger', {
+      game_type: triggerGame.value,
+      draw_type: triggerDraw.value,
+      draw_date: triggerDate.value,
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? 'Error');
     triggerMsg.value = `✅ Job encolado: ${data.job_id}`;
     triggerError.value = false;
   } catch (e) {
