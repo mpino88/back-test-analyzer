@@ -15,7 +15,7 @@ import pino from 'pino';
 
 const logger = pino({ name: 'AgentRouter' });
 
-export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool): Router {
+export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool, redis?: import('ioredis').Redis): Router {
   const router = Router();
   const backtestEngine      = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
   const pairBacktestEngine  = ballbotPool ? new PairBacktestEngine(ballbotPool, agentPool) : null;
@@ -63,6 +63,10 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         ),
       ]);
 
+      const redisAlive = redis
+        ? await redis.ping().then(() => true).catch(() => false)
+        : false;
+
       res.json({
         online: true,
         last_session:      sessionRow.rows[0] ?? null,
@@ -70,9 +74,10 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         rag_documents:     parseInt(ragRow.rows[0]!.count, 10),
         last_ingestion:    ingestRow.rows[0]?.created_at ?? null,
         last_agent_cycle:  cycleRow.rows[0]?.created_at ?? null,
-        redis_ok:          true, // BullMQ/Redis not instrumented — assume up if server is up
+        redis_ok:          redisAlive,  // real PING — no more hardcoded true
       });
     } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo status del agente');
       res.status(500).json({ error: 'Error obteniendo status del agente' });
     }
   });

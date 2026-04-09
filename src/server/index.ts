@@ -142,7 +142,8 @@ app.use((req, res, next) => {
 
 // ─── Rutas ──────────────────────────────────────────────────────
 app.use(createHealthRouter(agentPool, redis));
-app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool));
+app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
+
 app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool));
 app.use(createSSERouter(agentPool, redis));
 

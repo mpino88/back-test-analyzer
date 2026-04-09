@@ -19,6 +19,7 @@ import type { Pool } from 'pg';
 import pino from 'pino';
 import { PairBacktestEngine, type PairStrategyName } from '../../agent/backtest/PairBacktestEngine.js';
 import type { BacktestMode } from '../../agent/backtest/BacktestEngine.js';
+import { requireApiKey } from '../middlewares/authMiddleware.js';
 import {
   STRATEGY_CATALOG,
   jobs,
@@ -41,7 +42,9 @@ export function createBacktestControlRouter(
   const router  = Router();
   const engine  = new PairBacktestEngine(ballbotPool, agentPool);
 
-  // ── GET /strategies ──────────────────────────────────────────
+  // ── Auth global para todo el router ─────────────────────────
+  router.use(requireApiKey);
+
   router.get('/strategies', (_req: Request, res: Response) => {
     res.json(STRATEGY_CATALOG);
   });
