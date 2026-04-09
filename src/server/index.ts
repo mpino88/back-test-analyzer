@@ -228,7 +228,10 @@ async function start(): Promise<void> {
 }
 
 // ─── Graceful shutdown ──────────────────────────────────────────
+let isShuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   logger.info({ signal }, 'Shutdown iniciado — cerrando conexiones...');
   await Promise.race([
     telegramNotifier.notifyShutdown(signal).catch(() => {}),
