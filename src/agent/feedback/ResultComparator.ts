@@ -60,8 +60,13 @@ export class ResultComparator {
       if (matchCount >= 2) hits_partial++;
     }
 
+    // ═══ ANO-05 FIX: Incluir hits_partial en accuracy_score con peso 0.35
+    // Antes: accuracy = hits_exact / carton_size → partial siempre=0 (idem a miss completo)
+    // Ahora: partial contribuye 0.35 de crédito → el RAG aprende "casi-acierto" vs "derrota total"
+    // El peso 0.35 refleja valor real para el jugador: 2/3 dígitos correctos en Pick3 tiene valor.
+    const PARTIAL_WEIGHT = 0.35;
     const accuracy_score = carton.carton_size > 0
-      ? +(hits_exact / carton.carton_size).toFixed(4)
+      ? +((hits_exact + hits_partial * PARTIAL_WEIGHT) / carton.carton_size).toFixed(4)
       : 0;
 
     // Generar notas de aprendizaje

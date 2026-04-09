@@ -86,12 +86,15 @@ export class StrategyEvaluator {
 
   // ─── Promover/retirar estrategias según win_rate ──────────────
   async rebalanceStatuses(): Promise<void> {
-    // Promover a 'active' si win_rate >= 0.15 y total_tests >= 20
+    // ═══ ANO-NEW-02 FIX: Sincronizar umbral con PairBacktestEngine (era 0.15, PairEngine usa 0.12)
+    // Con 0.15 de umbral, una estrategia promovida por el backtest (0.12) podía ser retirada
+    // por live evaluation en la siguiente ronda, creando un loop de flip-flop inestable.
+    // Umbral 0.12: estadisticamente validado por el backtest de mayor volumen muestral.
     await this.agentPool.query(
       `UPDATE hitdash.strategy_registry
        SET status = 'active', updated_at = now()
        WHERE status = 'testing'
-         AND win_rate >= 0.15
+         AND win_rate >= 0.12
          AND total_tests >= 20`
     );
 

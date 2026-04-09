@@ -216,10 +216,16 @@ const momentumEma: CandFn = (ctx, map, topN) => {
   for (const n of Array.from({ length: 100 }, (_, i) => i)) {
     for (const win of WINS) {
       const slice = dates.slice(-win);
-      let ema = 0;
-      for (let i = 0; i < slice.length; i++) {
+      // ═══ ANO-NEW-01 FIX: Sembrar EMA con el primer valor observado, no con 0.
+      // EMA seed=0 subpondera sistemáticamente los primeros valores de la ventana,
+      // haciendo que el calor reciente no se propague correctamente al score.
+      const firstPresent = slice.length > 0
+        ? (twoDigitNumbers(map[slice[0]!]![ctx.period]!, ctx.mapSource).includes(n) ? 1 : 0)
+        : 0;
+      let ema = firstPresent;
+      for (let i = 1; i < slice.length; i++) {
         const present = twoDigitNumbers(map[slice[i]!]![ctx.period]!, ctx.mapSource).includes(n) ? 1 : 0;
-        ema = i === 0 ? present : ALPHA * ema + (1 - ALPHA) * present;
+        ema = ALPHA * ema + (1 - ALPHA) * present;
       }
       scores[n]! += ema;
     }

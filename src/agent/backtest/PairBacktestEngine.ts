@@ -783,25 +783,47 @@ export class PairBacktestEngine {
         hitPair = pick4PairHit(topPairs, actualAB, actualCD);
       }
 
-      // Determinar rank y score del par real para métricas de precisión
-      const actualPairKey = config.game_type === 'pick3'
-        ? extractPair(testDraw, config.half)
-        : `${testDraw.p1}${testDraw.p2}`;   // para pick4 usamos AB como referencia primaria
-      const actualPairInfo = scoreNormMap.get(actualPairKey) ?? { rank: 100, score: 0 };
+      // ═══ ANO-07 FIX: Para Pick4, promediar métricas entre AB y CD
+      // Antes: solo se medía el rank del par AB → estrategia que acierta via CD parecía miss.
+      // Ahora: se obtiene rank+score de ambos halves y se promedia → métricas representativas.
+      let actualPairRank  = 100;
+      let actualPairScore = 0;
+      let reciprocalRank  = 1/100;
+
+      if (config.game_type === 'pick3') {
+        const actualPairKey = extractPair(testDraw, config.half);
+        const info = scoreNormMap.get(actualPairKey) ?? { rank: 100, score: 0 };
+        actualPairRank  = info.rank;
+        actualPairScore = +info.score.toFixed(4);
+        reciprocalRank  = +(1 / info.rank).toFixed(4);
+      } else {
+        // Pick4: promediar rank y score entre AB y CD
+        const draw4   = testDraw as DrawEntry & { p4?: number };
+        const actualABKey = `${testDraw.p1}${testDraw.p2}`;
+        const actualCDKey = `${testDraw.p3}${draw4.p4 ?? 0}`;
+        const infoAB  = scoreNormMap.get(actualABKey) ?? { rank: 100, score: 0 };
+        const infoCD  = scoreNormMap.get(actualCDKey) ?? { rank: 100, score: 0 };
+        // Blend 50/50 entre AB y CD — representa la experiencia real del jugador
+        actualPairRank  = Math.round((infoAB.rank  + infoCD.rank)  / 2);
+        actualPairScore = +((infoAB.score + infoCD.score) / 2).toFixed(4);
+        reciprocalRank  = +((1/infoAB.rank + 1/infoCD.rank) / 2).toFixed(4);
+      }
 
       points.push({
         draw_index:        i,
         eval_date:         testDraw.draw_date,
         top_pairs:         topPairs,
         centena_plus:      centenaPlus,
-        // actual_pair must be exactly 2 chars (VARCHAR(2)) — for pick4 use AB as reference
-        actual_pair:       actualPairKey.slice(0, 2),
+        // actual_pair must be exactly 2 chars (VARCHAR(2))
+        actual_pair:       config.game_type === 'pick3'
+          ? extractPair(testDraw, config.half).slice(0, 2)
+          : `${testDraw.p1}${testDraw.p2}`.slice(0, 2),  // AB como referencia visual
         hit_pair:          hitPair,
         hit_centena_plus:  hitCentenaPlus,
         top_n_used:        currentTopN,
-        actual_pair_rank:  actualPairInfo.rank,
-        actual_pair_score: +actualPairInfo.score.toFixed(4),
-        reciprocal_rank:   +(1 / actualPairInfo.rank).toFixed(4),
+        actual_pair_rank:  actualPairRank,
+        actual_pair_score: actualPairScore,
+        reciprocal_rank:   reciprocalRank,
       });
     }
 
