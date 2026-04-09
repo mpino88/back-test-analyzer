@@ -5,6 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ref, computed, readonly } from 'vue';
+import { apiFetch } from '../../utils/apiClient.js';
 
 const BASE = '/api/backtest-control';
 const POLL_MS = 1500; // poll cada 1.5s mientras corre
@@ -57,8 +58,8 @@ export function useBacktestControl() {
     catalogLoading.value = true;
     try {
       const [catRes, metaRes] = await Promise.all([
-        window.fetch(`${BASE}/strategies`),
-        window.fetch(`${BASE}/draws/meta`),
+        apiFetch(`${BASE}/strategies`),
+        apiFetch(`${BASE}/draws/meta`),
       ]);
       if (catRes.ok)  catalog.value   = await catRes.json();
       if (metaRes.ok) drawsMeta.value = await metaRes.json();
@@ -74,7 +75,7 @@ export function useBacktestControl() {
 
   // ─── Cargar historial de jobs ──────────────────────────────────
   async function loadHistory() {
-    const res = await window.fetch(`${BASE}/history`);
+    const res = await apiFetch(`${BASE}/history`);
     if (res.ok) history.value = await res.json();
   }
 
@@ -110,7 +111,7 @@ export function useBacktestControl() {
       date_to:    dateTo.value   || undefined,
     };
 
-    const res = await window.fetch(`${BASE}/run`, {
+    const res = await apiFetch(`${BASE}/run`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(body),
@@ -133,7 +134,7 @@ export function useBacktestControl() {
     stopPolling();
     pollTimer = setInterval(async () => {
       try {
-        const res = await window.fetch(`${BASE}/status/${jobId}`);
+        const res = await apiFetch(`${BASE}/status/${jobId}`);
         if (!res.ok) return;
         const data = await res.json();
         jobStatus.value   = data.status;
@@ -154,7 +155,7 @@ export function useBacktestControl() {
 
   // ─── Obtener resultados ───────────────────────────────────────
   async function fetchResults(jobId) {
-    const res = await window.fetch(`${BASE}/results/${jobId}`);
+    const res = await apiFetch(`${BASE}/results/${jobId}`);
     if (res.ok && res.status !== 202) {
       const data = await res.json();
       jobResults.value = data.results ?? null;
@@ -166,7 +167,7 @@ export function useBacktestControl() {
     activeJobId.value = jobId;
     jobResults.value  = null;
     jobError.value    = null;
-    const res = await window.fetch(`${BASE}/results/${jobId}`);
+    const res = await apiFetch(`${BASE}/results/${jobId}`);
     if (!res.ok) return;
     const data = await res.json();
     jobStatus.value  = data.status ?? 'completed';
@@ -177,14 +178,14 @@ export function useBacktestControl() {
   async function cancelJob() {
     if (!activeJobId.value) return;
     stopPolling();
-    await window.fetch(`${BASE}/cancel/${activeJobId.value}`);
+    await apiFetch(`${BASE}/cancel/${activeJobId.value}`);
     jobStatus.value = 'cancelled';
   }
 
   // ─── Adaptive state ───────────────────────────────────────────
   const adaptiveState = ref([]);
   async function loadAdaptiveState() {
-    const res = await window.fetch(
+    const res = await apiFetch(
       `${BASE}/adaptive-state?game_type=${gameType.value}&mode=${mode.value}`
     );
     if (res.ok) adaptiveState.value = await res.json();

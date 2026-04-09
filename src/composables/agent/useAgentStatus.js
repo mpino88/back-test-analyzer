@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ref, onMounted, onUnmounted } from 'vue';
+import { createAuthSSE } from '../../utils/apiClient.js';
 
 export function useAgentStatus() {
   const status      = ref(null);   // último payload SSE
@@ -14,7 +15,7 @@ export function useAgentStatus() {
   function connect() {
     if (eventSource) return;
 
-    eventSource = new EventSource('/events/agent-status');
+    eventSource = createAuthSSE('/events/agent-status');
 
     eventSource.onopen = () => {
       connected.value = true;

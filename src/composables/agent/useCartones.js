@@ -1,6 +1,6 @@
 // HITDASH — useCartones
-
 import { ref, watch } from 'vue';
+import { apiGet } from '../../utils/apiClient.js';
 
 export function useCartones(filters = {}) {
   const cartones  = ref([]);
@@ -21,9 +21,7 @@ export function useCartones(filters = {}) {
       if (drawType.value) params.set('draw_type', drawType.value);
       if (status.value && status.value !== 'all') params.set('status', status.value);
 
-      const res  = await window.fetch(`/api/agent/cartones?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      cartones.value = await res.json();
+      cartones.value = await apiGet(`/api/agent/cartones?${params}`);
     } catch (e) {
       error.value = e.message;
     } finally {

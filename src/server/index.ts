@@ -120,23 +120,36 @@ async function start(): Promise<void> {
     await redis.connect();
     logger.info('✅ Redis conectado');
   } catch (err) {
-    logger.error({ error: err }, '❌ Error conectando a Redis');
-    process.exit(1);
+    logger.warn(
+      { error: err },
+      '⚠️  Redis no disponible — BullMQ/Rate Limiting degradado. Para desarrollo local: brew install redis && brew services start redis',
+    );
+    // No hacer process.exit — el servidor puede funcionar sin Redis en modo degradado
   }
 
-  // Iniciar IngestionWorker
-  await ingestionWorker.register();
-  ingestionWorker.start();
-  logger.info('✅ IngestionWorker iniciado');
+  // Iniciar workers BullMQ (requieren Redis — degradan si no está disponible)
+  try {
+    await ingestionWorker.register();
+    ingestionWorker.start();
+    logger.info('✅ IngestionWorker iniciado');
+  } catch (err) {
+    logger.warn({ error: err }, '⚠️  IngestionWorker no iniciado — Redis requerido');
+  }
 
-  // Iniciar AgentScheduler (cron pre-sorteo)
-  await agentScheduler.register();
-  agentScheduler.start();
-  logger.info('✅ AgentScheduler iniciado (4 crons: pick3+pick4 × midday+evening)');
+  try {
+    await agentScheduler.register();
+    agentScheduler.start();
+    logger.info('✅ AgentScheduler iniciado (4 crons: pick3+pick4 × midday+evening)');
+  } catch (err) {
+    logger.warn({ error: err }, '⚠️  AgentScheduler no iniciado — Redis requerido');
+  }
 
-  // Iniciar PostDrawProcessor (feedback loop)
-  postDrawProcessor.start();
-  logger.info('✅ PostDrawProcessor iniciado');
+  try {
+    postDrawProcessor.start();
+    logger.info('✅ PostDrawProcessor iniciado');
+  } catch (err) {
+    logger.warn({ error: err }, '⚠️  PostDrawProcessor no iniciado — Redis requerido');
+  }
 
   app.listen(PORT, () => {
     logger.info(`🚀 Hitdash Server corriendo en puerto ${PORT}`);

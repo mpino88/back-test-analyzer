@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { ref, computed, watch } from 'vue';
+import { apiGet } from '../../utils/apiClient.js';
 
 // ─── Strategy metadata ──────────────────────────────────────────
 export const STRATEGY_META = {
@@ -275,11 +276,9 @@ export function useStrategyTracking() {
     loading.value = true;
     error.value   = null;
     try {
-      const res = await window.fetch(
+      const data = await apiGet(
         `/api/agent/backtest/v2/tracking?game_type=${gameType.value}&mode=${mode.value}`
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
       generatedAt.value = data.generated_at;
 
       strategies.value = data.strategies.map(s => {
@@ -293,7 +292,6 @@ export function useStrategyTracking() {
         const adaptiveHealth = computeAdaptiveHealth(s.weight ?? 1, s.top_n ?? 15, s.hit_rate ?? s.win_rate ?? 0, meta.optimalTopN);
         const streakStats = computeStreakStats(s.timeline ?? []);
 
-        // Build rolling hit rate from timeline if history is empty
         let displayHistory = history;
         if (displayHistory.length === 0 && s.timeline?.length >= 10) {
           const windowSize = 10;
@@ -304,15 +302,8 @@ export function useStrategyTracking() {
         }
 
         return {
-          ...s,
-          ...meta,
-          brain,
-          trend,
-          projection: proj,
-          strength,
-          velocity,
-          adaptiveHealth,
-          streakStats,
+          ...s, ...meta, brain, trend,
+          projection: proj, strength, velocity, adaptiveHealth, streakStats,
           hit_rate_display: displayHistory,
           isApex: s.name === 'apex_adaptive',
         };

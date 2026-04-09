@@ -1,6 +1,6 @@
 // HITDASH — useStrategies
-
 import { ref } from 'vue';
+import { apiGet } from '../../utils/apiClient.js';
 
 export function useStrategies() {
   const strategies = ref([]);
@@ -11,9 +11,7 @@ export function useStrategies() {
     loading.value = true;
     error.value   = null;
     try {
-      const res = await window.fetch(`/api/agent/strategies?sort=${sort}&order=${order}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      strategies.value = await res.json();
+      strategies.value = await apiGet(`/api/agent/strategies?sort=${sort}&order=${order}`);
     } catch (e) {
       error.value = e.message;
     } finally {

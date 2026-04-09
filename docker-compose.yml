@@ -51,7 +51,7 @@ services:
     command: >
       redis-server
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
       --requirepass ${REDIS_PASSWORD}
       --bind 0.0.0.0
     volumes:

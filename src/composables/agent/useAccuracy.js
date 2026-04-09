@@ -1,6 +1,6 @@
 // HITDASH — useAccuracy
-
 import { ref, watch } from 'vue';
+import { apiGet } from '../../utils/apiClient.js';
 
 export function useAccuracy() {
   const data    = ref(null);
@@ -12,9 +12,7 @@ export function useAccuracy() {
     loading.value = true;
     error.value   = null;
     try {
-      const res = await window.fetch(`/api/agent/accuracy?range=${range.value}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      data.value = await res.json();
+      data.value = await apiGet(`/api/agent/accuracy?range=${range.value}`);
     } catch (e) {
       error.value = e.message;
     } finally {

@@ -3,6 +3,7 @@
 // Fetches, triggers, and manages backtest_results_v2 data
 // ═══════════════════════════════════════════════════════════════
 import { ref, computed } from 'vue';
+import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 const STRATEGY_META = {
   frequency_rank:    { label: 'Frequency Rank',     icon: '📊', color: '#3b82f6' },
@@ -108,12 +109,9 @@ export function useBacktestV2() {
     loading.value = true;
     error.value   = null;
     try {
-      const res = await fetch(
+      results.value = await apiGet(
         `/api/agent/backtest/v2/results?game_type=${gameType.value}&mode=${mode.value}`
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      results.value = await res.json();
-      // Auto-select best
       selectedName.value = null;
     } catch (e) {
       error.value = e.message;
@@ -124,20 +122,14 @@ export function useBacktestV2() {
   }
 
   async function runBacktest() {
-    running.value = true;
-    runMsg.value  = '';
+    running.value  = true;
+    runMsg.value   = '';
     runError.value = false;
     try {
-      const res = await fetch('/api/agent/backtest/v2/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game_type: gameType.value, mode: mode.value }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      await apiPost('/api/agent/backtest/v2/run', { game_type: gameType.value, mode: mode.value });
       runMsg.value = `⚙️ Backtest encolado — puede tardar 1-3 min. Recarga al completar.`;
     } catch (e) {
-      runMsg.value  = `❌ ${e.message}`;
+      runMsg.value   = `❌ ${e.message}`;
       runError.value = true;
     } finally {
       running.value = false;

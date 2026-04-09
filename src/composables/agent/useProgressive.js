@@ -3,6 +3,7 @@
 // Gestiona Progressive Engine: fetch latest cache + trigger run
 // ═══════════════════════════════════════════════════════════════
 import { ref, computed } from 'vue';
+import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 const SIGNAL_META = {
   PLAY:  { color: '#22c55e', bg: '#052e16', label: 'JUGAR',   icon: '▶', ring: '#16a34a' },
@@ -82,11 +83,9 @@ export function useProgressive() {
     loading.value = true;
     error.value   = null;
     try {
-      const res = await fetch(
+      result.value = await apiGet(
         `/api/agent/backtest/progressive/latest?map_source=${mapSource.value}&period=${period.value}`
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      result.value = await res.json();
     } catch (e) {
       error.value   = e.message;
       result.value  = null;
@@ -100,23 +99,17 @@ export function useProgressive() {
     runMsg.value   = '';
     runError.value = false;
     try {
-      const res = await fetch('/api/agent/backtest/progressive', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          map_source: mapSource.value,
-          period:     period.value,
-          top_n:      topN.value,
-          start_date: startDate.value,
-          end_date:   endDate.value,
-        }),
+      await apiPost('/api/agent/backtest/progressive', {
+        map_source: mapSource.value,
+        period:     period.value,
+        top_n:      topN.value,
+        start_date: startDate.value,
+        end_date:   endDate.value,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       runMsg.value = '⚙️ Análisis en curso — puede tardar 30-90s. Se actualizará al completar.';
-      // Poll hasta que el nuevo análisis esté listo
       await pollUntilFresh();
     } catch (e) {
-      runMsg.value  = `❌ ${e.message}`;
+      runMsg.value   = `❌ ${e.message}`;
       runError.value = true;
     } finally {
       running.value = false;
@@ -129,11 +122,9 @@ export function useProgressive() {
     for (let i = 0; i < maxTries; i++) {
       await sleep(5000);
       try {
-        const res = await fetch(
+        const fresh = await apiGet(
           `/api/agent/backtest/progressive/latest?map_source=${mapSource.value}&period=${period.value}`
         );
-        if (!res.ok) continue;
-        const fresh = await res.json();
         const freshTs = fresh?.cached_at ?? fresh?.generatedAt ?? '';
         if (freshTs && freshTs !== before) {
           result.value = fresh;

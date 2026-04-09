@@ -8,13 +8,14 @@ import { Router, type Request, type Response } from 'express';
 import type { Pool } from 'pg';
 import type { Redis } from 'ioredis';
 import pino from 'pino';
+import { requireApiKey } from '../middlewares/authMiddleware.js';
 
 const logger = pino({ name: 'SSERouter' });
 
 export function createSSERouter(agentPool: Pool, redis: Redis): Router {
   const router = Router();
 
-  router.get('/events/agent-status', async (req: Request, res: Response) => {
+  router.get('/events/agent-status', requireApiKey, async (req: Request, res: Response) => {
     // Headers SSE
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');

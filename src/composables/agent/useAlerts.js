@@ -1,6 +1,6 @@
 // HITDASH — useAlerts
-
 import { ref } from 'vue';
+import { apiGet, apiPatch } from '../../utils/apiClient.js';
 
 export function useAlerts() {
   const alerts    = ref([]);
@@ -12,9 +12,7 @@ export function useAlerts() {
     loading.value = true;
     error.value   = null;
     try {
-      const res = await window.fetch(`/api/agent/alerts?acknowledged=${showAcked.value}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      alerts.value = await res.json();
+      alerts.value = await apiGet(`/api/agent/alerts?acknowledged=${showAcked.value}`);
     } catch (e) {
       error.value = e.message;
     } finally {
@@ -24,7 +22,7 @@ export function useAlerts() {
 
   async function acknowledge(id) {
     try {
-      await window.fetch(`/api/agent/alerts/${id}/acknowledge`, { method: 'PATCH' });
+      await apiPatch(`/api/agent/alerts/${id}/acknowledge`);
       await fetch();
     } catch (e) {
       error.value = e.message;
