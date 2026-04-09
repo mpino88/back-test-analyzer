@@ -9,6 +9,7 @@ import { GoogleGenAI } from '@google/genai';
 import type { Pool } from 'pg';
 import pino from 'pino';
 import type { RagResult, StoreKnowledgeInput, RagCategory } from '../types/agent.types.js';
+import type { TelegramNotifier } from './TelegramNotifier.js';
 
 export type EmbedderFn = (text: string) => Promise<number[]>;
 
@@ -49,11 +50,19 @@ export class RAGService {
   private readonly pool: Pool;
   private readonly embedder: EmbedderFn;
   private readonly bucket: TokenBucket;
+  private notifier: TelegramNotifier | null = null;
+  private fallbackActive = false; // dedup — only notify once per degradation event
 
   constructor(pool: Pool, embedder?: EmbedderFn) {
     this.pool = pool;
     this.bucket = new TokenBucket(50, 1200); // 50 RPM
     this.embedder = embedder ?? this.defaultEmbedder.bind(this);
+  }
+
+  /** Inject TelegramNotifier — fires notifyEmbeddingFallback when Gemini degrades */
+  setNotifier(notifier: TelegramNotifier): void {
+    this.notifier = notifier;
+    logger.info('RAGService: TelegramNotifier vinculado');
   }
 
   private async defaultEmbedder(text: string): Promise<number[]> {
@@ -101,6 +110,11 @@ export class RAGService {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const embedding = await this.embedder(text);
+        // Embedding real exitoso: si el fallback estaba activo, ya no lo está
+        if (this.fallbackActive) {
+          this.fallbackActive = false;
+          logger.info('RAGService: Gemini Embedding recuperado — modo real restaurado');
+        }
         logger.info({ attempt: attempt + 1, dims: embedding.length }, 'Embedding generado');
         return embedding;
       } catch (err) {
@@ -108,11 +122,17 @@ export class RAGService {
         const is403 = lastError.message.includes('403') || lastError.message.includes('PERMISSION_DENIED');
 
         if (is403) {
-          // Error de permisos: no hay valor en reintentar — activar fallback inmediatamente
           logger.warn(
             { model: 'gemini-embedding-001', fix: 'Habilitar API en https://aistudio.google.com' },
-            '⚠️  Gemini Embedding API sin permisos — activando modo fallback pseudo-vectorial. El agente sigue operativo.'
+            '⚠️  Gemini Embedding API sin permisos — activando modo fallback pseudo-vectorial'
           );
+          // Notificar admin solo la primera vez (dedup)
+          if (!this.fallbackActive && this.notifier) {
+            this.fallbackActive = true;
+            this.notifier.notifyEmbeddingFallback(
+              '403 PERMISSION_DENIED — verificar API Key y facturación en Google AI Studio'
+            ).catch(() => {});
+          }
           return this.pseudoEmbedding(text);
         }
 
@@ -124,11 +144,14 @@ export class RAGService {
       }
     }
 
-    // Después de 3 intentos fallidos por otros errores: fallback en lugar de colapso
-    logger.error(
-      { error: lastError?.message },
-      '❌ Embedding fallido tras 3 intentos — activando pseudo-embedding de emergencia'
-    );
+    // 3 intentos agotados por error no-403
+    logger.error({ error: lastError?.message }, '❌ Embedding fallido tras 3 intentos — activando pseudo-embedding');
+    if (!this.fallbackActive && this.notifier) {
+      this.fallbackActive = true;
+      this.notifier.notifyEmbeddingFallback(
+        lastError?.message ?? 'Error desconocido tras 3 reintentos'
+      ).catch(() => {});
+    }
     return this.pseudoEmbedding(text);
   }
 

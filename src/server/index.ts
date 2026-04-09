@@ -64,6 +64,54 @@ const telegramNotifier = new TelegramNotifier();
 // ═══ Vincular servicios entre sí ═══
 ingestionWorker.setFeedbackProcessor(postDrawProcessor);
 ingestionWorker.setNotifier(telegramNotifier);
+agentScheduler.setNotifier(telegramNotifier);
+ragService.setNotifier(telegramNotifier);
+
+// ─── SENTINEL: DB pool error events ───────────────────────
+let agentDbAlive = true;
+let ballbotDbAlive = true;
+let redisAlive = false; // starts false, goes true on 'ready'
+
+agentPool.on('error', (err: Error) => {
+  logger.error({ error: err.message }, 'Agent DB pool error');
+  if (agentDbAlive) {
+    agentDbAlive = false;
+    telegramNotifier.notifyDbEvent('agent', 'lost', err.message).catch(() => {});
+  }
+});
+agentPool.on('connect', () => {
+  if (!agentDbAlive) {
+    agentDbAlive = true;
+    telegramNotifier.notifyDbEvent('agent', 'recovered').catch(() => {});
+  }
+});
+
+ballbotPool.on('error', (err: Error) => {
+  logger.error({ error: err.message }, 'Ballbot DB pool error');
+  if (ballbotDbAlive) {
+    ballbotDbAlive = false;
+    telegramNotifier.notifyDbEvent('ballbot', 'lost', err.message).catch(() => {});
+  }
+});
+ballbotPool.on('connect', () => {
+  if (!ballbotDbAlive) {
+    ballbotDbAlive = true;
+    telegramNotifier.notifyDbEvent('ballbot', 'recovered').catch(() => {});
+  }
+});
+
+// ─── SENTINEL: Redis events ──────────────────────────────
+redis.on('error', (err: Error) => {
+  if (redisAlive) {
+    redisAlive = false;
+    telegramNotifier.notifyRedisEvent('lost', err.message).catch(() => {});
+  }
+});
+redis.on('ready', () => {
+  const wasDown = !redisAlive;
+  redisAlive = true;
+  if (wasDown) telegramNotifier.notifyRedisEvent('recovered').catch(() => {});
+});
 
 // ─── App Express ────────────────────────────────────────────────
 const app = express();
@@ -77,9 +125,17 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Logging de requests
-app.use((req, _res, next) => {
-  logger.info({ method: req.method, path: req.path }, 'Request recibido');
+// SENTINEL: slow endpoint detection + request logging
+const SLOW_MS = 2000;
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    logger.info({ method: req.method, path: req.path, ms, status: res.statusCode }, 'Request completado');
+    if (ms > SLOW_MS) {
+      telegramNotifier.notifySlowEndpoint(req.method, req.path, ms).catch(() => {});
+    }
+  });
   next();
 });
 
@@ -94,9 +150,10 @@ app.use((_req, res) => {
   res.status(404).json({ error: 'Ruta no encontrada' });
 });
 
-// Error handler
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  logger.error({ error: err.message }, 'Error no manejado');
+// ─── SENTINEL: Express 500 ─────────────────────────────
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error({ error: err.message, path: req.path }, 'Error no manejado');
+  telegramNotifier.notifyExpressError(req.method, req.path, err.message).catch(() => {});
   res.status(500).json({ error: 'Error interno del servidor' });
 });
 
@@ -172,6 +229,10 @@ async function start(): Promise<void> {
 // ─── Graceful shutdown ──────────────────────────────────────────
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'Shutdown iniciado — cerrando conexiones...');
+  await Promise.race([
+    telegramNotifier.notifyShutdown(signal).catch(() => {}),
+    new Promise(r => setTimeout(r, 3000)),  // max 3s for Telegram before closing
+  ]);
   await agentScheduler.stop();
   await postDrawProcessor.stop();
   await ingestionWorker.stop();
@@ -183,7 +244,31 @@ async function shutdown(signal: string): Promise<void> {
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
+
+// ─── SENTINEL: Unhandled errors (never let the process die silent) ───
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  logger.error({ error: msg }, 'unhandledRejection');
+  telegramNotifier.notifyUnhandledError('unhandledRejection', msg).catch(() => {});
+});
+
+process.on('uncaughtException', (err: Error) => {
+  logger.error({ error: err.message, stack: err.stack }, 'uncaughtException');
+  telegramNotifier.notifyUnhandledError('uncaughtException', err.message)
+    .catch(() => {})
+    .finally(() => process.exit(1));
+});
+
+// ─── SENTINEL: Memory watchdog every 5 minutes ─────────────
+const MEM_THRESHOLD_MB = 512;
+setInterval(() => {
+  const heapMb = process.memoryUsage().heapUsed / 1024 / 1024;
+  if (heapMb > MEM_THRESHOLD_MB) {
+    logger.warn({ heapMb: heapMb.toFixed(1) }, 'Presión de memoria alta');
+    telegramNotifier.notifyHighMemory(heapMb, MEM_THRESHOLD_MB).catch(() => {});
+  }
+}, 5 * 60 * 1000).unref();
 
 start().catch(err => {
   logger.error(err, 'Error fatal al iniciar servidor');

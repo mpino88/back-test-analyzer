@@ -10,6 +10,7 @@ import type { Pool } from 'pg';
 import pino from 'pino';
 import { HitdashAgent } from './HitdashAgent.js';
 import { RAGService } from '../services/RAGService.js';
+import type { TelegramNotifier } from '../services/TelegramNotifier.js';
 import type { GameType, DrawType } from '../types/agent.types.js';
 
 const logger = pino({ name: 'AgentScheduler' });
@@ -76,6 +77,7 @@ function nextDrawDate(draw_type: DrawType): string {
 export class AgentScheduler {
   private readonly queue: Queue;
   private worker: Worker | null = null;
+  private notifier: TelegramNotifier | null = null;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -83,6 +85,12 @@ export class AgentScheduler {
     private readonly ragService: RAGService
   ) {
     this.queue = new Queue(QUEUE_NAME, { connection: redisConnection() });
+  }
+
+  /** Inject TelegramNotifier for proactive admin alerts on job failures/stalls */
+  setNotifier(notifier: TelegramNotifier): void {
+    this.notifier = notifier;
+    logger.info('AgentScheduler: TelegramNotifier vinculado');
   }
 
   // ─── Registrar los 4 jobs cron (pick3+pick4 × midday+evening) ─
@@ -177,10 +185,22 @@ export class AgentScheduler {
 
     this.worker.on('failed', (job, err) => {
       logger.error({ jobId: job?.id, error: err.message }, 'Job fallido');
+      if (this.notifier) {
+        this.notifier.notifyAgentJobFailed({
+          queue: QUEUE_NAME,
+          jobId: job?.id,
+          game_type: (job?.data as AgentJobData | undefined)?.game_type,
+          draw_type: (job?.data as AgentJobData | undefined)?.draw_type,
+          error: err.message,
+        }).catch(() => {});
+      }
     });
 
     this.worker.on('stalled', (jobId) => {
       logger.warn({ jobId }, 'Job estancado — será reintentado');
+      if (this.notifier) {
+        this.notifier.notifyJobStalled(QUEUE_NAME, jobId).catch(() => {});
+      }
     });
 
     logger.info('AgentScheduler: worker iniciado');

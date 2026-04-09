@@ -1,8 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — TelegramNotifier v1.0.0
-// Envía cartones y alertas al canal de Telegram via grammy
-// Sin dependencia de sistema global — usa solo credenciales .env
+// HITDASH — TelegramNotifier v2.0 (SENTINEL)
+// Canal de usuario:    cartones, alertas, recomendaciones de pares
+// Canal de servicio:   logs proactivos de toda la infraestructura
+//   • Boot / Shutdown               • DB connection loss/recovery
+//   • Redis loss/recovery           • Express 500 errors
+//   • Rate limit breaches           • Agent job failures / stalls
+//   • RAG embedding fallback        • Memory pressure
+// Envío paralelo a todos los admins. Fallo de un recipient no afecta a otros.
 // ═══════════════════════════════════════════════════════════════
+
 
 import { Bot } from 'grammy';
 import pino from 'pino';
@@ -190,33 +196,150 @@ export class TelegramNotifier {
     logger.info({ game_type, draw_type, halves: recs.map(r => r.half) }, 'Pares enviados a Telegram');
   }
 
-  // ─── Canal independiente: logs de servicio para admins ──────────
-  // Independiente del flujo de usuario — reporta estado interno del sistema.
+  // ════════════════════════════════════════════════════════════
+  // CANAL DE SERVICIO — SENTINEL (independiente del flujo usuario)
+  // ════════════════════════════════════════════════════════════
+
   async sendAdminLog(message: string): Promise<void> {
     await this.send(message);
   }
 
-  // ─── Notificación de arranque del servidor ────────────────────────
+  // 1. BOOT
   async notifyServiceBoot(params: {
-    port: number;
-    redis: boolean;
-    agentDb: boolean;
-    ballbotDb: boolean;
+    port: number; redis: boolean; agentDb: boolean; ballbotDb: boolean;
   }): Promise<void> {
     const { port, redis, agentDb, ballbotDb } = params;
-    const message = [
+    const mem = process.memoryUsage();
+    await this.send([
       `🚀 *HITDASH — Servidor arrancado*`,
       `📍 Puerto: ${port}`,
-      `🔵 Agent DB: ${agentDb ? '✅ Conectado' : '❌ Offline'}`,
-      `🔵 Ballbot DB: ${ballbotDb ? '✅ Conectado' : '⚠️ Sin conexión'}`,
-      `🔵 Redis: ${redis ? '✅ Conectado' : '⚠️ Sin conexión'}`,
+      `${agentDb ? '✅' : '❌'} Agent DB`,
+      `${ballbotDb ? '✅' : '⚠️'} Ballbot DB (READ-ONLY)`,
+      `${redis ? '✅' : '⚠️'} Redis / BullMQ`,
+      `💾 Heap: ${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
-    ].join('\n');
-    await this.send(message);
+    ].join('\n'));
     logger.info('Notificación de boot enviada a admins');
   }
 
-  // ─── Método base de envío con retry — envía a TODOS los admins ──
+  // 2. SHUTDOWN
+  async notifyShutdown(signal: string): Promise<void> {
+    await this.send([
+      `🛑 *HITDASH — Servidor detenido*`,
+      `📡 Señal: \`${signal}\``,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 3. DB connection event (lost | recovered)
+  async notifyDbEvent(db: 'agent' | 'ballbot', event: 'lost' | 'recovered', error?: string): Promise<void> {
+    const emoji = event === 'lost' ? '🔴' : '🟢';
+    const label = db === 'agent' ? 'Agent DB' : 'Ballbot DB (Render)';
+    await this.send([
+      `${emoji} *HITDASH — ${label} ${event === 'lost' ? 'CAÍDA' : 'RECUPERADA'}*`,
+      error ? `❌ ${error.slice(0, 200)}` : '',
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].filter(Boolean).join('\n'));
+  }
+
+  // 4. Redis event (lost | recovered)
+  async notifyRedisEvent(event: 'lost' | 'recovered', error?: string): Promise<void> {
+    const emoji = event === 'lost' ? '🔴' : '🟢';
+    await this.send([
+      `${emoji} *HITDASH — Redis / BullMQ ${event === 'lost' ? 'CAÍDO' : 'RECUPERADO'}*`,
+      `⚠️ BullMQ jobs + Rate Limiting afectados`,
+      error ? `❌ ${error.slice(0, 200)}` : '',
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].filter(Boolean).join('\n'));
+  }
+
+  // 5. Express 500
+  async notifyExpressError(method: string, path: string, error: string): Promise<void> {
+    await this.send([
+      `🔴 *HITDASH — Error 500*`,
+      `📡 \`${method} ${path}\``,
+      `❌ ${error.slice(0, 300)}`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 6. Rate limit breach
+  async notifyRateLimitBreach(ip: string, path: string): Promise<void> {
+    await this.send([
+      `🟠 *HITDASH — Rate Limit alcanzado*`,
+      `🌐 IP: \`${ip}\`  |  Ruta: \`${path}\``,
+      `⚠️ Posible ataque o abuso de API`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 7. BullMQ job fallido
+  async notifyAgentJobFailed(params: {
+    queue: string; jobId?: string; game_type?: string; draw_type?: string; error: string;
+  }): Promise<void> {
+    const { queue, jobId, game_type, draw_type, error } = params;
+    await this.send([
+      `🔴 *HITDASH — Job fallido*`,
+      `⚙️ Cola: \`${queue}\`${jobId ? `  |  ID: \`${jobId}\`` : ''}`,
+      game_type ? `🎮 ${game_type} ${draw_type ?? ''}` : '',
+      `❌ ${error.slice(0, 250)}`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].filter(Boolean).join('\n'));
+  }
+
+  // 8. Job estancado
+  async notifyJobStalled(queue: string, jobId: string): Promise<void> {
+    await this.send([
+      `🟠 *HITDASH — Job estancado (stalled)*`,
+      `⚙️ Cola: \`${queue}\`  |  ID: \`${jobId}\``,
+      `♻️ Será reintentado automáticamente`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 9. RAG fallback a pseudo-embedding
+  async notifyEmbeddingFallback(reason: string): Promise<void> {
+    await this.send([
+      `🟡 *HITDASH — RAG en modo fallback*`,
+      `🧠 Gemini Embedding no disponible`,
+      `⚠️ ${reason.slice(0, 200)}`,
+      `ℹ️ El agente sigue operativo con precisión reducida`,
+      `🔧 Fix: verificar API Key / facturación en Google AI Studio`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 10. Memoria alta
+  async notifyHighMemory(heapMb: number, thresholdMb: number): Promise<void> {
+    await this.send([
+      `🟠 *HITDASH — Presión de memoria*`,
+      `💾 Heap: ${heapMb.toFixed(1)} MB  (umbral: ${thresholdMb} MB)`,
+      `⚠️ Considerar reinicio si sigue escalando`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 11. Endpoint lento
+  async notifySlowEndpoint(method: string, path: string, durationMs: number): Promise<void> {
+    await this.send([
+      `🟡 *HITDASH — Endpoint lento*`,
+      `📡 \`${method} ${path}\`  —  ${durationMs}ms`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+  // 12. Unhandled rejection / uncaught exception
+  async notifyUnhandledError(type: 'unhandledRejection' | 'uncaughtException', error: string): Promise<void> {
+    await this.send([
+      `🔴 *HITDASH — Error crítico no capturado*`,
+      `⚡ \`${type}\``,
+      `❌ ${error.slice(0, 300)}`,
+      `🚨 El proceso puede haberse reiniciado`,
+      `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
+    ].join('\n'));
+  }
+
+
   private async send(text: string, retries = 2): Promise<void> {
     if (!this.enabled || !this.bot) return;
 
