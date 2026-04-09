@@ -237,7 +237,7 @@ export class TelegramNotifier {
     const label = db === 'agent' ? 'Agent DB' : 'Ballbot DB (Render)';
     await this.send([
       `${emoji} *HITDASH — ${label} ${event === 'lost' ? 'CAÍDA' : 'RECUPERADA'}*`,
-      error ? `❌ ${error.slice(0, 200)}` : '',
+      error ? `❌ ${String(error).slice(0, 200)}` : '',
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].filter(Boolean).join('\n'));
   }
@@ -248,7 +248,7 @@ export class TelegramNotifier {
     await this.send([
       `${emoji} *HITDASH — Redis / BullMQ ${event === 'lost' ? 'CAÍDO' : 'RECUPERADO'}*`,
       `⚠️ BullMQ jobs + Rate Limiting afectados`,
-      error ? `❌ ${error.slice(0, 200)}` : '',
+      error ? `❌ ${String(error).slice(0, 200)}` : '',
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].filter(Boolean).join('\n'));
   }
@@ -258,7 +258,7 @@ export class TelegramNotifier {
     await this.send([
       `🔴 *HITDASH — Error 500*`,
       `📡 \`${method} ${path}\``,
-      `❌ ${error.slice(0, 300)}`,
+      `❌ ${String(error).slice(0, 300)}`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].join('\n'));
   }
@@ -282,7 +282,7 @@ export class TelegramNotifier {
       `🔴 *HITDASH — Job fallido*`,
       `⚙️ Cola: \`${queue}\`${jobId ? `  |  ID: \`${jobId}\`` : ''}`,
       game_type ? `🎮 ${game_type} ${draw_type ?? ''}` : '',
-      `❌ ${error.slice(0, 250)}`,
+      `❌ ${String(error).slice(0, 250)}`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].filter(Boolean).join('\n'));
   }
@@ -302,7 +302,7 @@ export class TelegramNotifier {
     await this.send([
       `🟡 *HITDASH — RAG en modo fallback*`,
       `🧠 Gemini Embedding no disponible`,
-      `⚠️ ${reason.slice(0, 200)}`,
+      `⚠️ ${String(reason).slice(0, 200)}`,
       `ℹ️ El agente sigue operativo con precisión reducida`,
       `🔧 Fix: verificar API Key / facturación en Google AI Studio`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
@@ -333,7 +333,7 @@ export class TelegramNotifier {
     await this.send([
       `🔴 *HITDASH — Error crítico no capturado*`,
       `⚡ \`${type}\``,
-      `❌ ${error.slice(0, 300)}`,
+      `❌ ${String(error).slice(0, 300)}`,
       `🚨 El proceso puede haberse reiniciado`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].join('\n'));

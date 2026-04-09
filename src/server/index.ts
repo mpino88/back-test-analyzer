@@ -151,9 +151,10 @@ app.use((_req, res) => {
 });
 
 // ─── SENTINEL: Express 500 ─────────────────────────────
-app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  logger.error({ error: err.message, path: req.path }, 'Error no manejado');
-  telegramNotifier.notifyExpressError(req.method, req.path, err.message).catch(() => {});
+app.use((err: any, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  logger.error({ error: msg, path: req.path }, 'Error no manejado');
+  telegramNotifier.notifyExpressError(req.method, req.path, msg).catch(() => {});
   res.status(500).json({ error: 'Error interno del servidor' });
 });
 
@@ -253,9 +254,11 @@ process.on('unhandledRejection', (reason) => {
   telegramNotifier.notifyUnhandledError('unhandledRejection', msg).catch(() => {});
 });
 
-process.on('uncaughtException', (err: Error) => {
-  logger.error({ error: err.message, stack: err.stack }, 'uncaughtException');
-  telegramNotifier.notifyUnhandledError('uncaughtException', err.message)
+process.on('uncaughtException', (err: unknown) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  logger.error({ error: msg, stack }, 'uncaughtException');
+  telegramNotifier.notifyUnhandledError('uncaughtException', msg)
     .catch(() => {})
     .finally(() => process.exit(1));
 });
