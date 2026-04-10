@@ -215,7 +215,7 @@ async function start(): Promise<void> {
     logger.warn({ error: err }, '⚠️  PostDrawProcessor no iniciado — Redis requerido');
   }
 
-  app.listen(PORT, async () => {
+  app.listen(PORT, '127.0.0.1', async () => {
     logger.info(`🚀 Hitdash Server corriendo en puerto ${PORT}`);
     logger.info(`   Health: http://localhost:${PORT}/health`);
     logger.info(`   API:    http://localhost:${PORT}/api/agent/status`);
@@ -233,11 +233,15 @@ async function start(): Promise<void> {
     try {
       const CACHE_KEY = 'hitdash:meta:draws';
       const CACHE_TTL = 1800;
-      const { rows } = await ballbotPool.query(
-        `SELECT game, period, COUNT(*)::text AS count, 
-                MIN(created_at)::date::text AS date_min, 
-                MAX(created_at)::date::text AS date_max 
-         FROM public.draws GROUP BY game, period`
+      const { rows } = await agentPool.query(
+        `SELECT 
+           CASE WHEN game_type = 'pick3' THEN 'p3' ELSE 'p4' END AS game, 
+           CASE WHEN draw_type = 'midday' THEN 'm' ELSE 'e' END AS period,
+           COUNT(*)::text AS count,
+           MIN(draw_date)::text AS date_min,
+           MAX(draw_date)::text AS date_max
+         FROM hitdash.ingested_results
+         GROUP BY game_type, draw_type`
       );
       await redis.setex(CACHE_KEY, CACHE_TTL, JSON.stringify(rows));
       logger.info('✅ Metadata cache warmed up proactivamente');
