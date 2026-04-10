@@ -283,13 +283,16 @@ export function useStrategyTracking() {
 
       strategies.value = data.strategies.map(s => {
         const meta    = STRATEGY_META[s.name] ?? { icon: '🔵', color: '#94a3b8', label: s.name, category: 'other', optimalTopN: [15, 20] };
+        const history = (s.hit_rate_history ?? []).map(Number);
+        const weight  = Number(s.weight ?? 1);
+        const hitRate = Number(s.hit_rate ?? s.win_rate ?? 0);
+        const topN    = Number(s.top_n ?? 15);
         const brain   = STRATEGY_BRAIN[s.name] ?? null;
-        const history = s.hit_rate_history ?? [];
         const trend   = computeTrend(history);
         const proj    = projectNext(history, 3);
-        const strength = signalStrength(s.hit_rate ?? s.win_rate, s.weight ?? 1, s.top_n ?? 15);
+        const strength = signalStrength(hitRate, weight, topN);
         const velocity = computeLearningVelocity(history);
-        const adaptiveHealth = computeAdaptiveHealth(s.weight ?? 1, s.top_n ?? 15, s.hit_rate ?? s.win_rate ?? 0, meta.optimalTopN);
+        const adaptiveHealth = computeAdaptiveHealth(weight, topN, hitRate, meta.optimalTopN);
         const streakStats = computeStreakStats(s.timeline ?? []);
 
         let displayHistory = history;
@@ -302,8 +305,19 @@ export function useStrategyTracking() {
         }
 
         return {
-          ...s, ...meta, brain, trend,
-          projection: proj, strength, velocity, adaptiveHealth, streakStats,
+          ...s,
+          ...meta,
+          weight,
+          hit_rate: hitRate,
+          top_n: topN,
+          history,
+          brain,
+          trend,
+          projection: proj,
+          strength,
+          velocity,
+          adaptiveHealth,
+          streakStats,
           hit_rate_display: displayHistory,
           isApex: s.name === 'apex_adaptive',
         };

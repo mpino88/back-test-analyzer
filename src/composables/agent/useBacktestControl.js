@@ -111,22 +111,27 @@ export function useBacktestControl() {
       date_to:    dateTo.value   || undefined,
     };
 
-    const res = await apiFetch(`${BASE}/run`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(body),
-    });
+    try {
+      const res = await apiFetch(`${BASE}/run`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        jobStatus.value = 'error';
+        jobError.value  = err.error ?? 'Error al lanzar backtest';
+        return;
+      }
+
+      const { job_id } = await res.json();
+      activeJobId.value = job_id;
+      startPolling(job_id);
+    } catch (err) {
       jobStatus.value = 'error';
-      jobError.value  = err.error ?? 'Error al lanzar backtest';
-      return;
+      jobError.value  = err instanceof Error ? err.message : 'Error de red al lanzar backtest';
     }
-
-    const { job_id } = await res.json();
-    activeJobId.value = job_id;
-    startPolling(job_id);
   }
 
   // ─── Polling de estado ────────────────────────────────────────
@@ -158,7 +163,13 @@ export function useBacktestControl() {
     const res = await apiFetch(`${BASE}/results/${jobId}`);
     if (res.ok && res.status !== 202) {
       const data = await res.json();
-      jobResults.value = data.results ?? null;
+      jobResults.value = (data.results ?? []).map(r => ({
+        ...r,
+        hit_rate: Number(r.hit_rate ?? 0),
+        win_rate: Number(r.win_rate ?? 0),
+        weight:   Number(r.weight ?? 1),
+        top_n:    Number(r.top_n ?? 15)
+      }));
     }
   }
 
@@ -171,7 +182,13 @@ export function useBacktestControl() {
     if (!res.ok) return;
     const data = await res.json();
     jobStatus.value  = data.status ?? 'completed';
-    jobResults.value = data.results ?? null;
+    jobResults.value = (data.results ?? []).map(r => ({
+      ...r,
+      hit_rate: Number(r.hit_rate ?? 0),
+      win_rate: Number(r.win_rate ?? 0),
+      weight:   Number(r.weight ?? 1),
+      top_n:    Number(r.top_n ?? 15)
+    }));
   }
 
   // ─── Cancelar job activo ──────────────────────────────────────

@@ -8,11 +8,11 @@
         <p class="tracking-subtitle">Análisis profundo · Razonamiento adaptativo · Inteligencia colectiva</p>
       </div>
       <div class="tracking-header__controls">
-        <select v-model="gameType" class="ctrl-select" @change="fetch()">
+        <select v-model="gameType" class="ctrl-select">
           <option value="pick3">Pick 3</option>
           <option value="pick4">Pick 4</option>
         </select>
-        <select v-model="mode" class="ctrl-select" @change="fetch()">
+        <select v-model="mode" class="ctrl-select">
           <option value="combined">Combined</option>
           <option value="midday">Midday</option>
           <option value="evening">Evening</option>
@@ -711,8 +711,9 @@ function buildChartData() {
 async function buildMainChart() {
   await nextTick();
   if (!mainChartRef.value) return;
-  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   const ctx = mainChartRef.value.getContext('2d');
+  if (!ctx) return;
+  if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
   chartInstance = new Chart(ctx, {
     type: 'line',
     data: buildChartData(),
@@ -745,7 +746,7 @@ async function buildMainChart() {
 }
 
 function updateMainChart() {
-  if (!chartInstance) return;
+  if (!chartInstance || !mainChartRef.value) return;
   const { labels, datasets } = buildChartData();
   chartInstance.data.labels   = labels;
   chartInstance.data.datasets = datasets;
@@ -754,7 +755,9 @@ function updateMainChart() {
 
 onMounted(async () => {
   await fetch();
-  buildMainChart();
+  nextTick(() => {
+    buildMainChart();
+  });
 });
 
 watch(strategies, () => {
