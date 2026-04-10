@@ -111,18 +111,16 @@ export class LearningEmbedder {
     return feedbackId;
   }
 
-  // ─── Persistir múltiples resultados ──────────────────────────
+  // ─── Persistir múltiples resultados en paralelo ──────────────
+  // ═══ COG-06 FIX: Promise.allSettled en lugar de for...of secuencial.
+  // El loop secuencial bloqueaba el BullMQ job >15s con 10+ cartones,
+  // causando stalls y alertas de Sentinel innecesarias.
   async embedMany(results: ComparisonResult[]): Promise<{ embedded: number; skipped: number }> {
-    let embedded = 0;
-    let skipped = 0;
+    const settled = await Promise.allSettled(results.map(r => this.embed(r)));
+    const embedded = settled.filter(r => r.status === 'fulfilled' && r.value !== null).length;
+    const skipped  = settled.length - embedded;
 
-    for (const result of results) {
-      const id = await this.embed(result);
-      if (id) embedded++;
-      else skipped++;
-    }
-
-    logger.info({ embedded, skipped }, 'LearningEmbedder: batch completado');
+    logger.info({ embedded, skipped }, 'LearningEmbedder: batch paralelo completado');
     return { embedded, skipped };
   }
 

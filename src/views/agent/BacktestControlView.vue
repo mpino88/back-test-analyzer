@@ -16,12 +16,12 @@
     </div>
 
     <!-- ── DRAWS META INFO ─────────────────────────────────────── -->
-    <div class="draws-meta" v-if="drawsMetaForContext">
+    <div class="draws-meta" v-if="drawsMetaForContext && drawsMetaForContext.count != null">
       <span class="dm-item">📅 Histórico disponible</span>
       <span class="dm-sep">·</span>
       <span class="dm-val">{{ drawsMetaForContext.count.toLocaleString() }} sorteos</span>
       <span class="dm-sep">·</span>
-      <span class="dm-val">{{ drawsMetaForContext.date_min }} → {{ drawsMetaForContext.date_max }}</span>
+      <span class="dm-val">{{ drawsMetaForContext.date_min || '—' }} → {{ drawsMetaForContext.date_max || '—' }}</span>
     </div>
 
     <!-- ── CONFIG PANEL ────────────────────────────────────────── -->
@@ -287,7 +287,7 @@
           <div class="hj-left">
             <span class="hj-status-dot" :class="`dot--${j.status}`"></span>
             <div>
-              <div class="hj-context">{{ j.game_type.toUpperCase() }} · {{ j.mode }} · Top-{{ j.top_n }}</div>
+              <div class="hj-context">{{ (j.game_type || '').toUpperCase() }} · {{ j.mode }} · Top-{{ j.top_n }}</div>
               <div class="hj-date">{{ fmtDate(j.started_at) }}</div>
             </div>
           </div>

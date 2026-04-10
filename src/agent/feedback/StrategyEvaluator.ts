@@ -11,11 +11,10 @@ import type { ComparisonResult } from './ResultComparator.js';
 const logger = pino({ name: 'StrategyEvaluator' });
 
 // EMA smoothing: new_rate = α * current_hit + (1-α) * prev_win_rate
-// ═══ ANO-02 FIX: α=0.20 (antes 0.1 era demasiado conservador)
-// Con α=0.1 se necesitaban ~22 sorteos para reflejar el 90% del rendimiento real.
-// Con α=0.20 se necesitan ~10 sorteos — más reactivo a la realidad del mercado.
-// Coherente con PostDrawProcessor.updateLiveAdaptiveWeights que usa α=0.15.
-const EMA_ALPHA = 0.20;
+// ═══ COG-01 FIX: α=0.15 — sincronizado con PostDrawProcessor.updateLiveAdaptiveWeights(α=0.15)
+// Antes: α=0.20 causaba que win_rate subiera/bajara más rápido que los pesos adaptativos,
+// eliminando estrategias via rebalanceStatuses() antes de que el sistema aprendiera a usarlas.
+const EMA_ALPHA = 0.15;
 
 interface StrategyRow {
   id: string;

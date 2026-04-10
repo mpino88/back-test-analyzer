@@ -12,6 +12,7 @@ import { RAGService } from './RAGService.js';
 import type { PostDrawProcessor } from '../feedback/PostDrawProcessor.js';
 import type { TelegramNotifier } from './TelegramNotifier.js';
 import type { LotteryDigits, GameType, DrawType } from '../types/agent.types.js';
+import type { Redis } from 'ioredis';
 
 const logger = pino({ name: 'IngestionWorker' });
 const BATCH_SIZE = 20;
@@ -42,15 +43,17 @@ export class IngestionWorker {
   private readonly ballbotPool: Pool;   // READ-ONLY — Render PostgreSQL
   private readonly agentPool: Pool;     // READ-WRITE — VPS PostgreSQL
   private readonly ragService: RAGService;
+  private readonly redis: Redis;
   private readonly queue: Queue;
   private worker: Worker | null = null;
   private feedbackProcessor: PostDrawProcessor | null = null;
   private notifier: TelegramNotifier | null = null;
 
-  constructor(ballbotPool: Pool, agentPool: Pool, ragService: RAGService) {
+  constructor(ballbotPool: Pool, agentPool: Pool, ragService: RAGService, redis: Redis) {
     this.ballbotPool = ballbotPool;
     this.agentPool = agentPool;
     this.ragService = ragService;
+    this.redis = redis;
 
     this.queue = new Queue(QUEUE_NAME, { connection: parseRedisUrl() });
   }
@@ -172,6 +175,18 @@ export class IngestionWorker {
     const startTime = Date.now();
     const stats: IngestionStats = { processed: 0, skipped: 0, errors: 0, duration_ms: 0 };
 
+    // ═══ COG-05 FIX: Activar freshness check — jamás había sido invocado.
+    // Si Ballbot no recibe sorteos por >8 horas, alertar via Sentinel.
+    const fresh = await this.checkFreshness();
+    if (!fresh && this.notifier) {
+      this.notifier.sendAdminLog(
+        `⚠️ *HITDASH — Data Staleness Detectada*\n` +
+        `🕗 Sin sorteos nuevos en Ballbot (>4 horas)\n` +
+        `🔧 Verificar scraper de Florida Lottery\n` +
+        `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`
+      ).catch(() => {});
+    }
+
     // ═══ ANO-NEW-04 FIX: Timezone mismatch & Infinite Loop
     // Antes: se comparaba MAX(ingested_at) local vs created_at de Ballbot (con TZ distinto).
     // Esto causaba que `created_at > lastAt` siempre fuera true para sorteos en UTC,
@@ -264,7 +279,13 @@ export class IngestionWorker {
       }
     }
 
-    // 4. Log de completado
+    // 4. Invalidez de cache — si hubo algo nuevo, el dashboard debe refrescar metadatos
+    if (stats.processed > 0) {
+      await this.redis.del('hitdash:meta:draws').catch(() => {});
+      logger.info('Cache de metadatos invalidado tras ingesta exitosa');
+    }
+
+    // 5. Log de completado
     await this.agentPool.query(
       `INSERT INTO hitdash.agent_logs (level, metadata, created_at)
        VALUES ('info', $1, now())`,

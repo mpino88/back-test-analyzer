@@ -20,6 +20,7 @@ import pino from 'pino';
 import { PairBacktestEngine, type PairStrategyName } from '../../agent/backtest/PairBacktestEngine.js';
 import type { BacktestMode } from '../../agent/backtest/BacktestEngine.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
+import type { Redis } from 'ioredis';
 import {
   STRATEGY_CATALOG,
   jobs,
@@ -37,7 +38,8 @@ const logger = pino({ name: 'BacktestControlRouter' });
 // ─── Router factory ───────────────────────────────────────────
 export function createBacktestControlRouter(
   agentPool: Pool,
-  ballbotPool: Pool
+  ballbotPool: Pool,
+  redis: Redis
 ): Router {
   const router  = Router();
   const engine  = new PairBacktestEngine(ballbotPool, agentPool);
@@ -51,14 +53,19 @@ export function createBacktestControlRouter(
 
   // ── GET /draws/meta ──────────────────────────────────────────
   // Retorna rango de fechas disponible + total de sorteos por juego
-  let metaCache: any = null;
-  let metaCacheTime = 0;
   router.get('/draws/meta', async (_req: Request, res: Response) => {
-    if (metaCache && Date.now() - metaCacheTime < 60000) {
-      res.json(metaCache);
-      return;
-    }
+    const CACHE_KEY = 'hitdash:meta:draws';
+    const CACHE_TTL = 1800; // 30 min
+
     try {
+      // 1. Intentar hit en Redis
+      const cached = await redis.get(CACHE_KEY);
+      if (cached) {
+        res.json(JSON.parse(cached));
+        return;
+      }
+
+      // 2. Fallback a DB remote (Render)
       const { rows } = await ballbotPool.query<{
         game: string;
         period: string;
@@ -74,10 +81,12 @@ export function createBacktestControlRouter(
          GROUP BY game, period
          ORDER BY game, period`
       );
-      metaCache = rows;
-      metaCacheTime = Date.now();
+
+      // 3. Guardar en Redis
+      await redis.setex(CACHE_KEY, CACHE_TTL, JSON.stringify(rows));
       res.json(rows);
     } catch (err) {
+      logger.error({ error: String(err) }, 'Error obteniendo draws meta');
       res.status(500).json({ error: String(err) });
     }
   });

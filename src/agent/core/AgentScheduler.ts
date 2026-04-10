@@ -99,15 +99,17 @@ export class AgentScheduler {
       name: string;
       game_type: GameType;
       draw_type: DrawType;
-      // Cron en UTC — 60 min antes del sorteo
-      // Midday 12:30 ET = 16:30 UTC → cron a las 15:30 UTC
-      // Evening 19:30 ET = 23:30 UTC → cron a las 22:30 UTC
+      // ═══ COG-02 FIX: Crons en UTC fijos que funcionan todo el año (EDT y EST)
+      // Midday FL 12:30 PM ET = 16:30 UTC (EDT) = 17:30 UTC (EST) — tomamos 16:30 como balance
+      // Evening FL 7:29 PM ET = 23:29 UTC (EDT) = 00:29 UTC (EST) — tomamos 23:30 UTC
+      // Antes: 15:30 UTC = 11:30 AM ET en EDT (demasiado temprano, en EST = 10:30 AM)
+      // Ahora: 16:30 UTC = 12:30 PM ET en EDT = 11:30 AM ET en EST (60min antes del sorteo)
       cron: string;
     }> = [
-      { name: 'pick3-midday',  game_type: 'pick3', draw_type: 'midday',  cron: '30 15 * * *' },
-      { name: 'pick3-evening', game_type: 'pick3', draw_type: 'evening', cron: '30 22 * * *' },
-      { name: 'pick4-midday',  game_type: 'pick4', draw_type: 'midday',  cron: '30 15 * * *' },
-      { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '30 22 * * *' },
+      { name: 'pick3-midday',  game_type: 'pick3', draw_type: 'midday',  cron: '30 16 * * *' },
+      { name: 'pick3-evening', game_type: 'pick3', draw_type: 'evening', cron: '30 23 * * *' },
+      { name: 'pick4-midday',  game_type: 'pick4', draw_type: 'midday',  cron: '30 16 * * *' },
+      { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '30 23 * * *' },
     ];
 
     for (const job of jobs) {

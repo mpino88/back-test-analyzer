@@ -56,7 +56,7 @@ const redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379', {
 
 // ─── Servicios del agente ────────────────────────────────────────
 const ragService = new RAGService(agentPool);
-const ingestionWorker = new IngestionWorker(ballbotPool, agentPool, ragService);
+const ingestionWorker = new IngestionWorker(ballbotPool, agentPool, ragService, redis);
 const agentScheduler = new AgentScheduler(ballbotPool, agentPool, ragService);
 const postDrawProcessor = new PostDrawProcessor(ballbotPool, agentPool, ragService);
 const telegramNotifier = new TelegramNotifier();
@@ -146,7 +146,7 @@ app.use((req, res, next) => {
 app.use(createHealthRouter(agentPool, redis));
 app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
 
-app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool));
+app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool, redis));
 app.use(createSSERouter(agentPool, redis));
 
 // 404 handler
@@ -215,7 +215,7 @@ async function start(): Promise<void> {
     logger.warn({ error: err }, '⚠️  PostDrawProcessor no iniciado — Redis requerido');
   }
 
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     logger.info(`🚀 Hitdash Server corriendo en puerto ${PORT}`);
     logger.info(`   Health: http://localhost:${PORT}/health`);
     logger.info(`   API:    http://localhost:${PORT}/api/agent/status`);
@@ -228,6 +228,22 @@ async function start(): Promise<void> {
       ballbotDb: true,            // idem
       redis: true,
     }).catch(() => {});           // fire-and-forget — nunca bloquea el boot
+
+    // ─── Proactive Cache Warm-up ───────────────────────────────────
+    try {
+      const CACHE_KEY = 'hitdash:meta:draws';
+      const CACHE_TTL = 1800;
+      const { rows } = await ballbotPool.query(
+        `SELECT game, period, COUNT(*)::text AS count, 
+                MIN(created_at)::date::text AS date_min, 
+                MAX(created_at)::date::text AS date_max 
+         FROM public.draws GROUP BY game, period`
+      );
+      await redis.setex(CACHE_KEY, CACHE_TTL, JSON.stringify(rows));
+      logger.info('✅ Metadata cache warmed up proactivamente');
+    } catch (err) {
+      logger.warn({ error: String(err) }, 'Warm-up de cache fallido — se cargará bajo demanda');
+    }
   });
 }
 
