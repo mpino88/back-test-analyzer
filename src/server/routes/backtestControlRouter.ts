@@ -65,20 +65,23 @@ export function createBacktestControlRouter(
         return;
       }
 
-      // 2. Fallback a DB remote (Render)
-      const { rows } = await ballbotPool.query<{
+      // 2. ═══ x10 PRO OPTIMIZATION ═══
+      // Consultar desde la base de datos LOCAL estructurada para anular la latencia
+      const { rows } = await agentPool.query<{
         game: string;
         period: string;
         count: string;
         date_min: string;
         date_max: string;
       }>(
-        `SELECT game, period,
-                COUNT(*)::text AS count,
-                MIN(created_at)::date::text AS date_min,
-                MAX(created_at)::date::text AS date_max
-         FROM public.draws
-         GROUP BY game, period
+        `SELECT 
+           CASE WHEN game_type = 'pick3' THEN 'p3' ELSE 'p4' END AS game, 
+           CASE WHEN draw_type = 'midday' THEN 'm' ELSE 'e' END AS period,
+           COUNT(*)::text AS count,
+           MIN(draw_date)::text AS date_min,
+           MAX(draw_date)::text AS date_max
+         FROM hitdash.ingested_results
+         GROUP BY game_type, draw_type
          ORDER BY game, period`
       );
 

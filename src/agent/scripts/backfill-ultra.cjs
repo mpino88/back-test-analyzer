@@ -37,14 +37,21 @@ async function backfill() {
       }
 
       await agentPool.query(`
-        UPDATE hitdash.ingested_results AS t SET
-          p1 = u.p1, p2 = u.p2, p3 = u.p3, p4 = u.p4,
-          draw_date = u.ddate::date, game_type = u.gtype, draw_type = u.dtype
-        FROM (
-          SELECT * FROM UNNEST($1::text[], $2::int[], $3::int[], $4::int[], $5::int[], $6::text[], $7::text[], $8::text[])
-          AS x(dkey, p1, p2, p3, p4, ddate, gtype, dtype)
-        ) AS u
-        WHERE t.draw_key = u.dkey
+        INSERT INTO hitdash.ingested_results (
+          draw_key, p1, p2, p3, p4, draw_date, game_type, draw_type
+        )
+        SELECT 
+          u.dkey, u.p1, u.p2, u.p3, u.p4, u.ddate::date, u.gtype::text, u.dtype::text
+        FROM UNNEST($1::text[], $2::int[], $3::int[], $4::int[], $5::int[], $6::text[], $7::text[], $8::text[])
+        AS u(dkey, p1, p2, p3, p4, ddate, gtype, dtype)
+        ON CONFLICT (draw_key) DO UPDATE SET
+          p1 = EXCLUDED.p1,
+          p2 = EXCLUDED.p2,
+          p3 = EXCLUDED.p3,
+          p4 = EXCLUDED.p4,
+          draw_date = EXCLUDED.draw_date,
+          game_type = EXCLUDED.game_type,
+          draw_type = EXCLUDED.draw_type
       `, [keys, p1s, p2s, p3s, p4s, dates, gtypes, dtypes]);
 
       console.log(`📦 Batch ${i / BATCH_SIZE + 1} completado (${i + batch.length}/${draws.length})`);
