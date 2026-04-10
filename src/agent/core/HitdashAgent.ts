@@ -512,11 +512,20 @@ export class HitdashAgent {
         `⚠️ _Solo estadística. Sin garantía de resultados._`,
       ].join('\n');
 
-      // Persistir en proactive_alerts (visible en AlertsView del dashboard)
-      await this.agentPool.query(
+      // ═══ FIX IDEMPOTENCIA ═══
+      // Prevenir alertas duplicadas exactas dentro de las últimas 12 horas
+      // (ocurre si corre un backtest manual + cron de agente en paralelo)
+      const res = await this.agentPool.query(
         `INSERT INTO hitdash.proactive_alerts
            (alert_type, priority, game_type, message, data)
-         VALUES ('strategy_opportunity', 'medium', $1, $2, $3)`,
+         SELECT 'strategy_opportunity', 'medium', $1, $2, $3
+         WHERE NOT EXISTS (
+           SELECT 1 FROM hitdash.proactive_alerts
+           WHERE alert_type = 'strategy_opportunity'
+             AND game_type = $1
+             AND message = $2
+             AND created_at > now() - interval '12 hours'
+         ) RETURNING id`,
         [
           game_type,
           `Mantener apex_consensus_v2 los próximos ${forwardDraws} sorteos ${drawLabel} (N=${optimal_n}, efect.=${(effectiveness * 100).toFixed(1)}%)`,
@@ -531,8 +540,16 @@ export class HitdashAgent {
         ]
       );
 
-      // Enviar por Telegram
-      await this.notifier.sendAdminLog(message);
+      // Si no se insertó (fue filtrada por el debounce), abortamos envío a Telegram
+      if ((res.rowCount ?? 0) === 0) {
+        logger.debug('Alerta prescriptiva suprimida (duplicado en < 12h)');
+        return;
+      }
+
+      // Enviar por Telegram solo si fue nueva
+      if (this.notifier) {
+        await this.notifier.sendAdminLog(message);
+      }
 
       logger.info(
         { game_type, draw_type, forwardDraws, optimal_n, effectiveness },
