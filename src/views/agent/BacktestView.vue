@@ -8,11 +8,11 @@
         <p class="bt-subtitle">Análisis histórico de estrategias de pares con 15 métricas de precisión</p>
       </div>
       <div class="bt-controls">
-        <select v-model="gameType" class="ctrl-select" @change="fetchResults">
+        <select :value="gameType" @change="setGameType($event.target.value); fetchResults()" class="ctrl-select">
           <option value="pick3">Pick 3</option>
           <option value="pick4">Pick 4</option>
         </select>
-        <select v-model="mode" class="ctrl-select" @change="fetchResults">
+        <select :value="mode" @change="setMode($event.target.value); fetchResults()" class="ctrl-select">
           <option value="combined">Combined</option>
           <option value="midday">Midday</option>
           <option value="evening">Evening</option>
@@ -353,7 +353,7 @@ import { useBacktestV2 } from '../../composables/agent/useBacktestV2.js';
 
 const {
   loading, running, error, runMsg, runError,
-  gameType, mode, halfFilter,
+  gameType, mode, halfFilter, setGameType, setMode,
   filtered, bestStrategy, selected, avgHitRate, avgKelly, totalEvalPts,
   barChartData, radarChartData,
   fetchResults, runBacktest, selectStrategy,

@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { ref, computed } from 'vue';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
+import { useBacktestControl } from './useBacktestControl.js';
 
 const STRATEGY_META = {
   frequency_rank:    { label: 'Frequency Rank',     icon: '📊', color: '#3b82f6' },
@@ -29,8 +30,7 @@ export function useBacktestV2() {
   const selectedName = ref(null);
 
   // ── Controls ─────────────────────────────────────────────────
-  const gameType = ref('pick3');
-  const mode     = ref('combined');
+  const { gameType, mode, setGameType, setMode } = useBacktestControl();
   const halfFilter = ref('all');  // 'all' | 'du' | 'ab' | 'cd'
 
   // ── Derived ──────────────────────────────────────────────────

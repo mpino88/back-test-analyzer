@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { ref, computed } from 'vue';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
+import { useBacktestControl } from './useBacktestControl.js';
 
 const SIGNAL_META = {
   PLAY:  { color: '#22c55e', bg: '#052e16', label: 'JUGAR',   icon: '▶', ring: '#16a34a' },
@@ -18,6 +19,8 @@ const TREND_META = {
 };
 
 export function useProgressive() {
+  const { gameType, mode, setGameType, setMode } = useBacktestControl();
+
   const result   = ref(null);
   const loading  = ref(false);
   const running  = ref(false);
@@ -26,8 +29,16 @@ export function useProgressive() {
   const runError = ref(false);
 
   // ── Controls ──────────────────────────────────────────────────
-  const mapSource  = ref('p3');   // 'p3' | 'p4'
-  const period     = ref('e');    // 'm' | 'e'
+  const mapSource = computed({
+    get: () => gameType.value === 'pick3' ? 'p3' : 'p4',
+    set: (v) => setGameType(v === 'p3' ? 'pick3' : 'pick4')
+  });
+
+  const period = computed({
+    get: () => mode.value === 'evening' ? 'e' : 'm',
+    set: (v) => setMode(v === 'evening' ? 'evening' : 'midday')
+  });
+
   const topN       = ref(10);
   const startDate  = ref(oneYearAgo());
   const endDate    = ref(today());

@@ -7,12 +7,12 @@
 
     <!-- Filtros -->
     <div class="filters">
-      <select v-model="gameType" class="input-select">
+      <select :value="gameType" @change="setGameType($event.target.value)" class="input-select">
         <option value="pick3">Pick 3</option>
         <option value="pick4">Pick 4</option>
       </select>
-      <select v-model="drawType" class="input-select">
-        <option value="">Todos los sorteos</option>
+      <select :value="mode" @change="setMode($event.target.value)" class="input-select">
+        <option value="combined">Todos los sorteos</option>
         <option value="midday">Midday</option>
         <option value="evening">Evening</option>
       </select>
@@ -77,7 +77,7 @@ import { useCartones } from '../../composables/agent/useCartones.js';
 
 const STATUS_LABEL = { pending: '⏳ Pendiente', hit: '✅ Hit', partial: '🔶 Partial', miss: '❌ Miss' };
 
-const { cartones, loading, error, gameType, drawType, status, limit, refresh } = useCartones();
+const { cartones, loading, error, gameType, mode, status, limit, refresh, setGameType, setMode } = useCartones();
 
 function parseNumbers(raw) {
   try {
