@@ -8,11 +8,11 @@
         <p class="tracking-subtitle">Análisis profundo · Razonamiento adaptativo · Inteligencia colectiva</p>
       </div>
       <div class="tracking-header__controls">
-        <select v-model="gameType" class="ctrl-select">
+        <select v-model="gameType" class="ctrl-select" @change="fetch()">
           <option value="pick3">Pick 3</option>
           <option value="pick4">Pick 4</option>
         </select>
-        <select v-model="mode" class="ctrl-select">
+        <select v-model="mode" class="ctrl-select" @change="fetch()">
           <option value="combined">Combined</option>
           <option value="midday">Midday</option>
           <option value="evening">Evening</option>

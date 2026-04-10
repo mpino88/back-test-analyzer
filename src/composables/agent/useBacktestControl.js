@@ -173,7 +173,6 @@ export function useBacktestControl() {
     }
   }
 
-  // ─── Cargar resultados de job histórico ───────────────────────
   async function loadJobResults(jobId) {
     activeJobId.value = jobId;
     jobResults.value  = null;
@@ -181,6 +180,14 @@ export function useBacktestControl() {
     const res = await apiFetch(`${BASE}/results/${jobId}`);
     if (!res.ok) return;
     const data = await res.json();
+    
+    // ── FIX: Sync UI Context with the loaded job ──
+    if (data.game_type) gameType.value = data.game_type;
+    if (data.mode)      mode.value     = data.mode;
+    if (data.top_n)     topN.value     = data.top_n;
+    if (data.date_from) dateFrom.value = data.date_from.slice(0, 10);
+    if (data.date_to)   dateTo.value   = data.date_to.slice(0, 10);
+    
     jobStatus.value  = data.status ?? 'completed';
     jobResults.value = (data.results ?? []).map(r => ({
       ...r,
