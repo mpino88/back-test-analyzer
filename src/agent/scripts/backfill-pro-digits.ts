@@ -33,7 +33,7 @@ async function backfill() {
     let count = 0;
     for (const row of draws) {
       try {
-        const parts = row.numbers.split(',').map(n => parseInt(n.trim(), 10));
+        const parts = row.numbers.split(',').map((n: string) => parseInt(n.trim(), 10));
         const p1 = parts[0] ?? 0;
         const p2 = parts[1] ?? 0;
         const p3 = parts[2] ?? 0;
@@ -53,12 +53,12 @@ async function backfill() {
           RETURNING draw_key
         `, [p1, p2, p3, p4, drawDate, gameType, drawType, drawKey]);
 
-        if (res.rowCount > 0) {
+        if ((res.rowCount ?? 0) > 0) {
           count++;
           if (count % 100 === 0) console.log(` Sincronizados ${count} sorteos...`);
         }
       } catch (innerErr) {
-        console.error(`Error en fila ${row.date}:`, innerErr.message);
+        console.error(`Error en fila ${row.date}:`, innerErr instanceof Error ? innerErr.message : String(innerErr));
       }
     }
     

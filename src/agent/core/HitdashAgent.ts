@@ -26,8 +26,22 @@ const logger = pino({ name: 'HitdashAgent' });
 // ─── Feature flag: flip to false to instantly revert to carton mode ──
 const USE_PAIR_MODE = true;
 
+// ─── Fallback static sizes (only used if optimal_n unavailable) ──────
 const CARTON_SIZES_PICK3: CartonSize[] = [9, 16];
 const CARTON_SIZES_PICK4: CartonSize[] = [10, 16];
+
+// ─── Cognitive N → CartonSize mapping ────────────────────────────────
+// Converts the pair-mode optimal_n (number of pairs recommended) into
+// the carton ticket size. Pairs represent 2-digit combos, so carton slots
+// = ceil(optimal_n * 0.75) clamped to valid CartonSize values.
+function cognitiveNToCartonSize(optimal_n: number): CartonSize {
+  const raw = Math.ceil(optimal_n * 0.75);
+  // Snap to nearest valid CartonSize: [9, 10, 16, 20, 25]
+  const valid: CartonSize[] = [9, 10, 16, 20, 25];
+  return valid.reduce((prev, curr) =>
+    Math.abs(curr - raw) < Math.abs(prev - raw) ? curr : prev
+  );
+}
 
 interface AgentRunParams {
   trigger_type: TriggerType;
@@ -305,12 +319,15 @@ export class HitdashAgent {
     const query = `${game_type.toUpperCase()} ${draw_type} análisis predictivo ${draw_date}`;
     const queryVector = await this.ragService.embedText(query);
 
+    let allRecs: import('../types/agent.types.js').PairRecommendation[] = [];
+
     if (game_type === 'pick3') {
       const pairAnalysis = await this.analysisEngine.analyzePairs(game_type, draw_type, 'du', 90);
       reasoning_chain.push({
         step: 'pair_analysis_complete',
         half: 'du',
         top_n: pairAnalysis.top_n,
+        optimal_n: pairAnalysis.optimal_n,
         top3_pairs: pairAnalysis.ranked_pairs.slice(0, 3).map(r => r.pair),
         ts: new Date().toISOString(),
       });
@@ -326,9 +343,17 @@ export class HitdashAgent {
 
       // ═══ COG-10 LLM OVERRIDE: Integrar votos del LLM ═══
       const rec = this.pairRecommender.recommend(pairAnalysis, undefined, llmResult.validated_pairs);
-      
+      allRecs = [rec];
+
       await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmResult.reasoning);
       await this.persistPairRecommendations([rec], game_type, draw_type, draw_date, sessionId);
+
+      // ═══ RESTAURACIÓN COG-N: Generar cartones desde optimal_n ════════
+      // El tamaño del cartón NO es estático [9,16] — lo dicta el Cognitive N
+      // del PairRecommender, preservando la intención matemática original.
+      await this.generateAndPersistCartonesFromPairs(
+        [rec], game_type, draw_type, draw_date, sessionId
+      );
 
     } else {
       // pick4: analyze AB and CD independently
@@ -350,21 +375,176 @@ export class HitdashAgent {
         abAnalysis, cdAnalysis, undefined,
         llmResult.validated_pairs, llmResult.validated_pairs
       );
+      allRecs = recs;
 
       await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmResult.reasoning);
       await this.persistPairRecommendations(recs, game_type, draw_type, draw_date, sessionId);
+
+      // ═══ RESTAURACIÓN COG-N: Generar cartones Pick 4 ════════════════
+      await this.generateAndPersistCartonesFromPairs(
+        recs, game_type, draw_type, draw_date, sessionId
+      );
     }
+
+    // ═══ RESTAURACIÓN ALERTA PRESCRIPTIVA ════════════════════════════
+    // Analiza el momentum actual para recomendar una estrategia sostenida.
+    // Era parte del diseño original — perdida en las refactorizaciones anteriores.
+    await this.fireProactivePrescriptiveAlert(allRecs, game_type, draw_type);
 
     const duration_ms = Date.now() - globalStart;
     await this.closeSession(sessionId, 'completed', {
       reasoning_chain,
-      output_data: { mode: 'pair_v2', game_type, draw_type },
+      output_data: {
+        mode: 'pair_v2',
+        game_type,
+        draw_type,
+        recs_count: allRecs.length,
+        optimal_n: allRecs[0]?.optimal_n ?? null,
+      },
       duration_ms,
       model_used: 'apex_consensus_v2',
     });
 
     logger.info({ session_id: sessionId, duration_ms, mode: 'pair_v2' }, 'HitdashAgent: ciclo pair-mode completado');
     return sessionId;
+  }
+
+  // ─── Genera y persiste cartones dimensionados por Cognitive N ────────
+  // RESTAURACIÓN: Esta función existía conceptualmente en el diseño original.
+  // El tamaño del cartón es orgánico: lo determina el optimal_n del PairRecommender,
+  // NO los arrays estáticos [9,16] que mutilaron el flujo previo.
+  private async generateAndPersistCartonesFromPairs(
+    recs: import('../types/agent.types.js').PairRecommendation[],
+    game_type: GameType,
+    draw_type: DrawType,
+    draw_date: string,
+    sessionId: string
+  ): Promise<void> {
+    try {
+      const strategyId = await this.resolveStrategyId('apex_consensus_v2');
+      const cartonNumbers: Array<{ value: string }> = [];
+
+      for (const rec of recs) {
+        // Tomar los top pares del rec y construir combinaciones jugables
+        for (const pair of rec.pairs) {
+          cartonNumbers.push({ value: pair });
+        }
+      }
+
+      if (cartonNumbers.length === 0) return;
+
+      // ═══ COG-N: Tamaño del cartón dictado por optimal_n ═══
+      // Usar el optimal_n de la primera rec como base (es el matemáticamente
+      // determinado por el PairBacktestEngine con Cognitive N)
+      const primaryRec = recs[0]!;
+      const cognitiveSize = cognitiveNToCartonSize(primaryRec.optimal_n);
+
+      // Seleccionar los mejores `cognitiveSize` pares por score
+      const topPairs = recs
+        .flatMap(r => r.pairs)
+        .slice(0, cognitiveSize)
+        .map(p => ({ value: p }));
+
+      const confidence = primaryRec.confidence;
+
+      await this.agentPool.query(
+        `INSERT INTO hitdash.carton_generations
+           (game_type, draw_type, carton_size, numbers, strategy_id,
+            confidence_score, draw_date, session_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          game_type,
+          draw_type,
+          cognitiveSize,
+          JSON.stringify(topPairs),
+          strategyId,
+          confidence,
+          draw_date,
+          sessionId,
+        ]
+      );
+
+      logger.info(
+        { game_type, draw_type, cognitiveSize, pairs: topPairs.length },
+        'HitdashAgent: cartón cognitivo generado desde optimal_n'
+      );
+    } catch (err) {
+      // Non-fatal — the pair recommendations were already persisted
+      logger.warn(
+        { error: err instanceof Error ? err.message : String(err) },
+        'HitdashAgent: error generando cartón cognitivo — continuando'
+      );
+    }
+  }
+
+  // ─── Alerta prescriptiva proactiva ───────────────────────────────────
+  // RESTAURACIÓN: La función original del agente debía analizar el momentum
+  // y recomendar activamente "juega X estrategia por Y sorteos".
+  // Esto se perdió en refactorizaciones sucesivas. Se restaura aquí.
+  private async fireProactivePrescriptiveAlert(
+    recs: import('../types/agent.types.js').PairRecommendation[],
+    game_type: GameType,
+    draw_type: DrawType
+  ): Promise<void> {
+    try {
+      if (recs.length === 0) return;
+
+      const primaryRec = recs[0]!;
+      const effectiveness = primaryRec.predicted_effectiveness;
+      const optimal_n = primaryRec.optimal_n;
+      const confidence = primaryRec.confidence;
+
+      // Solo disparar si hay suficiente señal (efectividad > 10% o confianza alta)
+      const hasSignal = effectiveness > 0.10 || confidence > 0.65;
+      if (!hasSignal) return;
+
+      // Estimar cuántos sorteos quedan de ventana (heurística: 3-5 basado en momentum)
+      const forwardDraws = effectiveness > 0.25 ? 5 : effectiveness > 0.15 ? 4 : 3;
+      const drawLabel   = draw_type === 'midday' ? 'Midday' : 'Evening';
+      const gameLabel   = game_type === 'pick3' ? 'Pick 3' : 'Pick 4';
+
+      const message = [
+        `🚀 *HITDASH — Oportunidad Estratégica Detectada*`,
+        `🎮 ${gameLabel} ${drawLabel}`,
+        `🧠 El agente recomienda mantener *apex_consensus_v2* los próximos *${forwardDraws} sorteos*`,
+        `📊 N óptimo actual: *${optimal_n} pares* | Efectividad estimada: *${(effectiveness * 100).toFixed(1)}%*`,
+        `💡 Pares top: \`${primaryRec.pairs.slice(0, 5).join('  ')}\`${primaryRec.pairs.length > 5 ? ` +${primaryRec.pairs.length - 5} más` : ''}`,
+        `⚠️ _Solo estadística. Sin garantía de resultados._`,
+      ].join('\n');
+
+      // Persistir en proactive_alerts (visible en AlertsView del dashboard)
+      await this.agentPool.query(
+        `INSERT INTO hitdash.proactive_alerts
+           (alert_type, priority, game_type, message, data)
+         VALUES ('strategy_opportunity', 'medium', $1, $2, $3)`,
+        [
+          game_type,
+          `Mantener apex_consensus_v2 los próximos ${forwardDraws} sorteos ${drawLabel} (N=${optimal_n}, efect.=${(effectiveness * 100).toFixed(1)}%)`,
+          JSON.stringify({
+            strategy: 'apex_consensus_v2',
+            forward_draws: forwardDraws,
+            optimal_n,
+            predicted_effectiveness: effectiveness,
+            confidence,
+            draw_type,
+          }),
+        ]
+      );
+
+      // Enviar por Telegram
+      await this.notifier.sendAdminLog(message);
+
+      logger.info(
+        { game_type, draw_type, forwardDraws, optimal_n, effectiveness },
+        'HitdashAgent: alerta prescriptiva disparada'
+      );
+    } catch (err) {
+      // Non-fatal — never block the main flow
+      logger.warn(
+        { error: err instanceof Error ? err.message : String(err) },
+        'HitdashAgent: error en alerta prescriptiva — continuando'
+      );
+    }
   }
 
   // ═══ BN-02: Consultar memoria RAG con vector reutilizado ═══════════
