@@ -22,43 +22,38 @@ export function toDbPeriod(draw_type: DrawType): string {
 }
 
 /**
- * CTE que normaliza public.draws al formato lottery_results.
- * Parámetros posicionales: $1=game, $2=period, $3=period_days
- * Uso: prependear a cualquier SELECT ... FROM lottery_results
+ * ═══ x10 PRO OPTIMIZATION ═══
+ * CTE que lee de la base de datos LOCAL (hitdash.ingested_results)
+ * con dígitos ya parseados. Elimina la latencia de red externa y el split_part cost.
  */
 export const DRAWS_CTE = `
 WITH lottery_results AS (
   SELECT
-    created_at::date AS draw_date,
+    draw_date,
     jsonb_build_object(
-      'p1', split_part(numbers, ',', 1)::int,
-      'p2', split_part(numbers, ',', 2)::int,
-      'p3', split_part(numbers, ',', 3)::int,
-      'p4', CASE WHEN game = 'p4' THEN split_part(numbers, ',', 4)::int ELSE NULL END
+      'p1', p1,
+      'p2', p2,
+      'p3', p3,
+      'p4', p4
     ) AS digits
-  FROM public.draws
-  WHERE game = $1
-    AND period = $2
-    AND created_at >= now() - ($3 || ' days')::interval
+  FROM hitdash.ingested_results
+  WHERE game_type = $1
+    AND draw_type = $2
+    AND draw_date >= CURRENT_DATE - ($3 || ' days')::interval
 )`;
 
-/**
- * Variante sin date filter cuando el algoritmo quiere filtrar manualmente.
- * Parámetros: $1=game, $2=period
- */
 export const DRAWS_CTE_ALL = `
 WITH lottery_results AS (
   SELECT
-    created_at::date AS draw_date,
-    created_at,
+    draw_date,
     jsonb_build_object(
-      'p1', split_part(numbers, ',', 1)::int,
-      'p2', split_part(numbers, ',', 2)::int,
-      'p3', split_part(numbers, ',', 3)::int,
-      'p4', CASE WHEN game = 'p4' THEN split_part(numbers, ',', 4)::int ELSE NULL END
+      'p1', p1,
+      'p2', p2,
+      'p3', p3,
+      'p4', p4
     ) AS digits
-  FROM public.draws
-  WHERE game = $1
-    AND period = $2
-    AND created_at >= now() - interval '1095 days'
+  FROM hitdash.ingested_results
+  WHERE game_type = $1
+    AND draw_type = $2
+    AND draw_date >= CURRENT_DATE - interval '1095 days'
 )`;

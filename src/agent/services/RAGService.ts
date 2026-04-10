@@ -188,6 +188,18 @@ export class RAGService {
     minSimilarity: number = 0.65
   ): Promise<RagResult[]> {
     const embedding = await this.embedText(query);
+    return this.searchWithVector(embedding, topK, category, minSimilarity);
+  }
+
+  /**
+   * BN-02 OPTIMIZATION: Allows searching with a pre-computed vector to avoid redundant embeddings.
+   */
+  async searchWithVector(
+    embedding: number[],
+    topK: number = 10,
+    category?: RagCategory,
+    minSimilarity: number = 0.65
+  ): Promise<RagResult[]> {
     const vectorLiteral = `[${embedding.join(',')}]`;
 
     const result = await this.pool.query<RagResult & { similarity: number }>(
@@ -202,7 +214,7 @@ export class RAGService {
       [vectorLiteral, category ?? null, minSimilarity, topK]
     );
 
-    logger.info({ query_len: query.length, results: result.rows.length, category }, 'RAG search completado');
+    logger.info({ results: result.rows.length, category }, 'RAG vector search completado');
     return result.rows;
   }
 

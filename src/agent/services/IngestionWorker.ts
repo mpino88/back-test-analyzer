@@ -336,10 +336,25 @@ export class IngestionWorker {
       });
 
       await agentClient.query(
-        `INSERT INTO hitdash.ingested_results (draw_key, rag_knowledge_id)
-         VALUES ($1, $2)
-         ON CONFLICT (draw_key) DO NOTHING`,
-        [drawKey, ragKnowledgeId]
+        `INSERT INTO hitdash.ingested_results 
+          (draw_key, rag_knowledge_id, p1, p2, p3, p4, draw_date, game_type, draw_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (draw_key) DO UPDATE SET
+            p1 = EXCLUDED.p1,
+            p2 = EXCLUDED.p2,
+            p3 = EXCLUDED.p3,
+            p4 = EXCLUDED.p4,
+            draw_date = EXCLUDED.draw_date,
+            game_type = EXCLUDED.game_type,
+            draw_type = EXCLUDED.draw_type`,
+        [
+          drawKey, 
+          ragKnowledgeId, 
+          digits.p1, digits.p2, digits.p3, digits.p4 ?? null, 
+          drawDate, 
+          gameType, 
+          drawType
+        ]
       );
 
       await agentClient.query('COMMIT');

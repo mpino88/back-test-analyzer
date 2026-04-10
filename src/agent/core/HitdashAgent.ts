@@ -291,15 +291,19 @@ export class HitdashAgent {
   }
 
   // ─── Pair mode execution path ────────────────────────────────────
-  private async runPairMode(
+  async runPairMode(
     params: AgentRunParams,
     sessionId: string,
     globalStart: number,
-    reasoning_chain: unknown[]
+    reasoning_chain: any[]
   ): Promise<string> {
     const { game_type, draw_type, draw_date } = params;
 
     reasoning_chain.push({ step: 'pair_mode_start', ts: new Date().toISOString() });
+
+    // ═══ BN-02 OPTIMIZATION: Generar embedding una sola vez por ciclo ═══
+    const query = `${game_type.toUpperCase()} ${draw_type} análisis predictivo ${draw_date}`;
+    const queryVector = await this.ragService.embedText(query);
 
     if (game_type === 'pick3') {
       const pairAnalysis = await this.analysisEngine.analyzePairs(game_type, draw_type, 'du', 90);
@@ -311,23 +315,19 @@ export class HitdashAgent {
         ts: new Date().toISOString(),
       });
 
-      // ═══ BN-02 FIX: Consultar memoria RAG antes de LLM ═══
-      const ragContext = await this.queryRAGContext(game_type, draw_type, draw_date);
-      reasoning_chain.push({
-        step: 'rag_context_retrieved',
-        patterns_found: ragContext.patterns.length,
-        learnings_found: ragContext.learnings.length,
-        ts: new Date().toISOString(),
-      });
+      // ═══ BN-02: Consultar RAG con vector pre-calculado ═══
+      const ragContext = await this.queryRAGContextWithVector(queryVector);
 
-      // LLM pair validation (ahora con contexto RAG)
-      const llmReasoning = await this.validateWithLLMPairs(
+      // LLM pair validation
+      const llmResult = await this.validateWithLLMPairs(
         pairAnalysis.ranked_pairs.slice(0, 20), game_type, draw_type, draw_date,
         pairAnalysis.centena_plus, ragContext
       );
 
-      const rec = this.pairRecommender.recommend(pairAnalysis);
-      await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmReasoning);
+      // ═══ COG-10 LLM OVERRIDE: Integrar votos del LLM ═══
+      const rec = this.pairRecommender.recommend(pairAnalysis, undefined, llmResult.validated_pairs);
+      
+      await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmResult.reasoning);
       await this.persistPairRecommendations([rec], game_type, draw_type, draw_date, sessionId);
 
     } else {
@@ -336,23 +336,22 @@ export class HitdashAgent {
         this.analysisEngine.analyzePairs(game_type, draw_type, 'ab', 90),
         this.analysisEngine.analyzePairs(game_type, draw_type, 'cd', 90),
       ]);
-      reasoning_chain.push({
-        step: 'pair_analysis_complete',
-        ab_top3: abAnalysis.ranked_pairs.slice(0, 3).map(r => r.pair),
-        cd_top3: cdAnalysis.ranked_pairs.slice(0, 3).map(r => r.pair),
-        ts: new Date().toISOString(),
-      });
 
-      // ═══ BN-02 FIX: Consultar memoria RAG (pick4) ═══
-      const ragContext = await this.queryRAGContext(game_type, draw_type, draw_date);
+      // ═══ BN-02: Consultar RAG con vector pre-calculado (Pick 4) ═══
+      const ragContext = await this.queryRAGContextWithVector(queryVector);
 
-      const llmReasoning = await this.validateWithLLMPairs(
+      const llmResult = await this.validateWithLLMPairs(
         [...abAnalysis.ranked_pairs.slice(0, 10), ...cdAnalysis.ranked_pairs.slice(0, 10)],
         game_type, draw_type, draw_date, undefined, ragContext
       );
 
-      const recs = this.pairRecommender.recommendPick4(abAnalysis, cdAnalysis);
-      await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmReasoning);
+      // ═══ COG-10: Aplicar validación LLM a ambos mitades ═══
+      const recs = this.pairRecommender.recommendPick4(
+        abAnalysis, cdAnalysis, undefined,
+        llmResult.validated_pairs, llmResult.validated_pairs
+      );
+
+      await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmResult.reasoning);
       await this.persistPairRecommendations(recs, game_type, draw_type, draw_date, sessionId);
     }
 
@@ -368,38 +367,27 @@ export class HitdashAgent {
     return sessionId;
   }
 
-  // ═══ BN-02: Consultar memoria RAG para contexto histórico ═══════════
-  private async queryRAGContext(
-    game_type: GameType,
-    draw_type: DrawType,
-    draw_date: string
+  // ═══ BN-02: Consultar memoria RAG con vector reutilizado ═══════════
+  private async queryRAGContextWithVector(
+    vector: number[]
   ): Promise<{ patterns: string[]; learnings: string[] }> {
-    const query = `${game_type.toUpperCase()} ${draw_type} análisis predictivo ${draw_date}`;
-
     try {
       const [patternResults, learningResults] = await Promise.all([
-        this.ragService.searchSimilar(query, 5, 'pattern', 0.50),
-        this.ragService.searchSimilar(query, 5, 'learning', 0.50),
+        this.ragService.searchWithVector(vector, 5, 'pattern', 0.50),
+        this.ragService.searchWithVector(vector, 5, 'learning', 0.50),
       ]);
 
-      const patterns  = patternResults.map(r => r.content);
-      const learnings = learningResults.map(r => r.content);
-
-      logger.info(
-        { patterns: patterns.length, learnings: learnings.length },
-        'RAG context recuperado para ciclo de análisis'
-      );
-
-      return { patterns, learnings };
+      return {
+        patterns: patternResults.map(r => r.content),
+        learnings: learningResults.map(r => r.content)
+      };
     } catch (err) {
-      logger.warn(
-        { error: err instanceof Error ? err.message : String(err) },
-        'RAG query falló — procediendo sin contexto histórico'
-      );
+      logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'RAG vector query falló');
       return { patterns: [], learnings: [] };
     }
   }
 
+  // ─── LLM validation (pair mode) ──────────────────────────────────
   // ─── LLM validation (pair mode) ──────────────────────────────────
   private async validateWithLLMPairs(
     topRanked: Array<{ pair: string; score: number }>,
@@ -408,7 +396,7 @@ export class HitdashAgent {
     draw_date: string,
     centena_plus?: number,
     ragContext?: { patterns: string[]; learnings: string[] }
-  ): Promise<string> {
+  ): Promise<{ validated_pairs: string[]; reasoning: string; centena_plus?: number }> {
     const pairList = topRanked.map((r, i) => `${i + 1}. ${r.pair} (score=${r.score.toFixed(4)})`).join('\n');
     const centenaNote = centena_plus !== undefined ? `\nCentena Plus sugerida: ${centena_plus}` : '';
 
@@ -444,6 +432,12 @@ Responde:
   "confidence": 0.0
 }`;
 
+    const defaultVal = {
+      validated_pairs: [],
+      reasoning: 'Análisis estadístico multi-algoritmo consensus v2.',
+      centena_plus,
+    };
+
     try {
       const response = await this.llmRouter.complete([
         { role: 'system', content: systemPrompt },
@@ -452,13 +446,21 @@ Responde:
 
       const jsonMatch = response.content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as { reasoning?: string };
-        return (parsed.reasoning ?? '').slice(0, 300);
+        const parsed = JSON.parse(jsonMatch[0]) as {
+          validated_pairs?: string[];
+          reasoning?: string;
+          centena_plus?: number;
+        };
+        return {
+          validated_pairs: parsed.validated_pairs ?? [],
+          reasoning: (parsed.reasoning ?? '').slice(0, 300) || defaultVal.reasoning,
+          centena_plus: parsed.centena_plus ?? centena_plus,
+        };
       }
     } catch (err) {
-      logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'LLM pair validation fallida — sin razonamiento');
+      logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'LLM pair validation fallida — usando valores default');
     }
-    return 'Análisis estadístico multi-algoritmo consensus v2.';
+    return defaultVal;
   }
 
   // ─── LLM validation: construir prompt conciso y parsear respuesta ─

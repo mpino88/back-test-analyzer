@@ -152,16 +152,21 @@ export class AnalysisEngine {
 
   constructor(
     private readonly ballbotPool: Pool,
-    private readonly agentPool?: Pool,   // hitdash local — for backtest_results_v2
+    private readonly agentPool:   Pool,
   ) {
-    this.freq   = new FrequencyAnalysis(ballbotPool);
-    this.gap    = new GapAnalysis(ballbotPool);
-    this.hc     = new HotColdClassifier(ballbotPool);
-    this.pairs  = new PairCorrelation(ballbotPool);
-    this.fib    = new FibonacciPisano(ballbotPool);
-    this.streak = new StreakDetection(ballbotPool);
-    this.pos    = new PositionAnalysis(ballbotPool);
-    this.ma     = new MovingAverages(ballbotPool);
+    // ═══ x10 PRO OPTIMIZATION ═══
+    // Los algoritmos ahora corren contra hitdash.ingested_results (LOCAL)
+    // para eliminar latencia de red externa.
+    const analysisPool = agentPool; 
+
+    this.freq   = new FrequencyAnalysis(analysisPool);
+    this.gap    = new GapAnalysis(analysisPool);
+    this.hc     = new HotColdClassifier(analysisPool);
+    this.pairs  = new PairCorrelation(analysisPool);
+    this.fib    = new FibonacciPisano(analysisPool);
+    this.streak = new StreakDetection(analysisPool);
+    this.pos    = new PositionAnalysis(analysisPool);
+    this.ma     = new MovingAverages(analysisPool);
   }
 
   async analyze(
