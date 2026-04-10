@@ -655,7 +655,10 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
     }
 
     try {
-      // ── 1. Merge strategy_registry + adaptive_weights + backtest_results (v1) ──
+      // ── 1. Merge strategy_registry + adaptive_weights + backtest_results_v2 ──
+      // ═══ F02 FIX: Reemplaza JOIN con backtest_results (v1 LEGACY) por backtest_results_v2.
+      // V1 medía combinaciones de 3 dígitos. V2 mide hit_rate de pares. Motor activo = v2.
+      // LATERAL JOIN obtiene la mejor mitad (half) por estrategia para evitar duplicados AB/CD.
       const stratRows = await agentPool.query<{
         name: string; description: string; algorithm: string;
         win_rate: number; total_tests: number; status: string;
@@ -664,42 +667,53 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         total_eval_pts: number | null; hits_exact: number | null;
         hits_both: number | null; hit_rate: number | null;
         date_from: string | null; date_to: string | null;
+        mrr: number | null; wilson_lower: number | null;
+        sharpe: number | null; kelly_fraction: number | null;
       }>(
         `SELECT
            sr.name, sr.description, sr.algorithm,
            sr.win_rate, sr.total_tests, sr.status,
            aw.weight,
-           COALESCE(aw.top_n, 15)            AS top_n,
-           COALESCE(aw.hit_rate_history, '[]'::jsonb) AS hit_rate_history,
-           br.total_evaluation_pts           AS total_eval_pts,
-           br.hits_combination               AS hits_exact,
-           br.hits_both,
-           COALESCE(br.both_accuracy, br.effectiveness_pct, 0)::float AS hit_rate,
-           br.date_from::text, br.date_to::text
+           COALESCE(aw.top_n, 15)                         AS top_n,
+           COALESCE(aw.hit_rate_history, '[]'::jsonb)     AS hit_rate_history,
+           br.total_eval_pts,
+           br.hits_pair                                   AS hits_exact,
+           br.hits_pair                                   AS hits_both,
+           COALESCE(br.hit_rate, 0.0)::float              AS hit_rate,
+           br.date_from::text, br.date_to::text,
+           br.mrr, br.wilson_lower, br.sharpe, br.kelly_fraction
          FROM hitdash.strategy_registry sr
          LEFT JOIN hitdash.adaptive_weights aw
            ON aw.strategy = sr.name
           AND aw.game_type = $1
           AND aw.mode      = $2
-         LEFT JOIN hitdash.backtest_results br
-           ON br.strategy_name = sr.name
-          AND br.game_type = $1
-          AND br.mode      = $2
-         ORDER BY COALESCE(br.both_accuracy, br.effectiveness_pct, sr.win_rate, 0) DESC`,
+         LEFT JOIN LATERAL (
+           SELECT *
+           FROM hitdash.backtest_results_v2 br2
+           WHERE br2.strategy_name = sr.name
+             AND br2.game_type     = $1
+             AND br2.mode          = $2
+           ORDER BY br2.hit_rate DESC
+           LIMIT 1
+         ) br ON true
+         ORDER BY COALESCE(br.hit_rate, sr.win_rate, 0) DESC`,
         [game_type, mode]
       );
 
       // ── 2. Timeline (last 60 eval points por estrategia, en paralelo) ──
       const timelineMap: Record<string, Array<{ draw_index: number; eval_date: string; hit: boolean }>> = {};
+      // ═══ F07 FIX: Timeline ahora usa backtest_points_v2.hit_pair (motor activo)
+      // Antes: backtest_points.hit_combination (motor v1 legado — mide combos de 3 dígitos)
+      // Los gráficos de momentum ahora reflejan el rendimiento real del motor de pares.
       await Promise.all(
         stratRows.rows.map(async s => {
           try {
             const pts = await agentPool.query<{
-              draw_index: number; eval_date: string; hit_combination: boolean; hit_both: boolean;
+              draw_index: number; eval_date: string; hit_pair: boolean;
             }>(
-              `SELECT bp.draw_index, bp.eval_date::text, bp.hit_combination, bp.hit_both
-               FROM hitdash.backtest_points bp
-               JOIN hitdash.backtest_results br ON br.id = bp.backtest_id
+              `SELECT bp.draw_index, bp.eval_date::text, bp.hit_pair
+               FROM hitdash.backtest_points_v2 bp
+               JOIN hitdash.backtest_results_v2 br ON br.id = bp.backtest_id
                WHERE br.strategy_name = $1
                  AND br.game_type     = $2
                  AND br.mode          = $3
@@ -710,7 +724,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
             timelineMap[s.name] = pts.rows.reverse().map(p => ({
               draw_index: p.draw_index,
               eval_date:  p.eval_date,
-              hit:        p.hit_both || p.hit_combination,
+              hit:        p.hit_pair,
             }));
           } catch (err) {
             logger.warn({ strategy: s.name, error: err instanceof Error ? err.message : String(err) }, 'Timeline fetch fallida — usando array vacío');
@@ -738,22 +752,27 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           : rollingHitRate(timeline, 10);
 
         return {
-          name:           s.name,
-          description:    s.description,
-          algorithm:      s.algorithm,
-          status:         s.status,
-          win_rate:       s.win_rate ?? 0,
-          total_tests:    s.total_tests ?? 0,
-          weight:         s.weight ?? 1.0,
-          top_n:          s.top_n ?? 15,
-          hit_rate:       s.hit_rate ?? s.win_rate ?? 0,
+          name:             s.name,
+          description:      s.description,
+          algorithm:        s.algorithm,
+          status:           s.status,
+          win_rate:         s.win_rate ?? 0,
+          total_tests:      s.total_tests ?? 0,
+          weight:           s.weight ?? 1.0,
+          top_n:            s.top_n ?? 15,
+          hit_rate:         s.hit_rate ?? s.win_rate ?? 0,
           hit_rate_history: rateHistory,
-          total_eval_pts: s.total_eval_pts ?? 0,
-          hits_exact:     s.hits_exact ?? 0,
-          hits_both:      s.hits_both ?? 0,
-          date_from:      s.date_from,
-          date_to:        s.date_to,
-          timeline: timeline.slice(-60),
+          total_eval_pts:   s.total_eval_pts ?? 0,
+          hits_exact:       s.hits_exact ?? 0,
+          hits_both:        s.hits_both ?? 0,
+          date_from:        s.date_from,
+          date_to:          s.date_to,
+          timeline:         timeline.slice(-60),
+          // ── v2 precision metrics (null if no backtest_results_v2 yet) ──
+          mrr:              s.mrr ?? 0,
+          wilson_lower:     s.wilson_lower ?? 0,
+          sharpe:           s.sharpe ?? 0,
+          kelly_fraction:   s.kelly_fraction ?? 0,
         };
       });
 

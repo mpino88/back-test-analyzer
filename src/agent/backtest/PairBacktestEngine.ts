@@ -663,45 +663,45 @@ export class PairBacktestEngine {
   }
 
   // ─── Fetch histórico ─────────────────────────────────────────
+  // ═══ F03 FIX: Fuente única de datos — hitdash.ingested_results (local VPS)
+  // Antes: consulta directa a Ballbot vía ballbotPool (red externa = latencia + inconsistencia).
+  // AnalysisEngine ya usaba DRAWS_CTE desde ingested_results → dos fuentes para el mismo sistema.
+  // Ahora: mismo pool, mismos datos → análisis y backtest son matemáticamente consistentes.
   private async fetchHistory(
     game_type: 'pick3' | 'pick4',
     mode: BacktestMode,
     date_from?: string,
     date_to?: string
   ): Promise<DrawEntry[]> {
-    const gameFilter   = game_type === 'pick3' ? 'p3' : 'p4';
-    const periodFilter = mode === 'combined' ? null : (mode === 'midday' ? 'm' : 'e');
+    // 'combined' → sin filtro de draw_type; de lo contrario 'midday' | 'evening'
+    const drawTypeFilter = mode === 'combined' ? null : mode;
 
-    const { rows } = await this.ballbotPool.query<{
-      p1: string; p2: string; p3: string; p4?: string;
+    const { rows } = await this.agentPool.query<{
+      p1: number; p2: number; p3: number; p4: number | null;
       draw_date: string;
-      created_at: Date;
     }>(
-      `SELECT
-         split_part(numbers, ',', 1) AS p1,
-         split_part(numbers, ',', 2) AS p2,
-         split_part(numbers, ',', 3) AS p3,
-         ${game_type === 'pick4' ? "split_part(numbers, ',', 4) AS p4," : ''}
-         to_char(created_at::date, 'YYYY-MM-DD') AS draw_date,
-         created_at
-       FROM public.draws
-       WHERE game = $1
-         AND ($2::text IS NULL OR period = $2)
-         AND ($3::date IS NULL OR created_at::date >= $3::date)
-         AND ($4::date IS NULL OR created_at::date <= $4::date)
-       ORDER BY created_at ASC`,
-      [gameFilter, periodFilter, date_from ?? null, date_to ?? null]
+      `SELECT p1, p2, p3, p4,
+              draw_date::text AS draw_date
+       FROM hitdash.ingested_results
+       WHERE game_type = $1
+         AND ($2::text IS NULL OR draw_type = $2)
+         AND ($3::date IS NULL OR draw_date >= $3::date)
+         AND ($4::date IS NULL OR draw_date <= $4::date)
+       ORDER BY draw_date ASC`,
+      [game_type, drawTypeFilter, date_from ?? null, date_to ?? null]
     );
 
     return rows.map(r => ({
-      p1:         parseInt(r.p1, 10),
-      p2:         parseInt(r.p2, 10),
-      p3:         parseInt(r.p3, 10),
-      ...(r.p4 !== undefined ? { p4: parseInt(r.p4, 10) } : {}),
+      p1:         r.p1,
+      p2:         r.p2,
+      p3:         r.p3,
+      ...(r.p4 !== null ? { p4: r.p4 } : {}),
       draw_date:  r.draw_date,
-      created_at: new Date(r.created_at),
+      // created_at derivado de draw_date para algoritmos con ventana temporal (ej. pairHotColdWeighted)
+      created_at: new Date(r.draw_date + 'T12:00:00Z'),
     }));
   }
+
 
   // ─── Ejecutar backtest de UNA estrategia ────────────────────
   async runStrategy(
@@ -959,7 +959,11 @@ export class PairBacktestEngine {
 
   // ─── Actualizar win_rate en strategy_registry ────────────────
   async updateStrategyWinRate(strategyName: string, summary: PairBacktestSummary): Promise<void> {
-    const EMA_ALPHA = 0.2;
+    // ═══ F05 FIX: α=0.15 sincronizado con StrategyEvaluator (era 0.20)
+    // Con dos alphas distintas, win_rate fluctuaba diferente según qué camino actualizaba:
+    // backtest usaba 0.20 (más reactivo) vs live evaluation usaba 0.15 (más conservador).
+    // Resultado: estrategias en flip-flop activa↔retirada entre ciclos. Ahora α=0.15 global.
+    const EMA_ALPHA = 0.15;
     const row = await this.agentPool.query<{ win_rate: number }>(
       `SELECT win_rate FROM hitdash.strategy_registry WHERE name = $1`,
       [strategyName]

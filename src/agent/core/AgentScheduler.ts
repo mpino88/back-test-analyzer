@@ -108,8 +108,10 @@ export class AgentScheduler {
     }> = [
       { name: 'pick3-midday',  game_type: 'pick3', draw_type: 'midday',  cron: '30 16 * * *' },
       { name: 'pick3-evening', game_type: 'pick3', draw_type: 'evening', cron: '30 23 * * *' },
-      { name: 'pick4-midday',  game_type: 'pick4', draw_type: 'midday',  cron: '30 16 * * *' },
-      { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '30 23 * * *' },
+      // ═══ F12 FIX: Escalonar pick4 +5 minutos para evitar bloqueo BullMQ concurrency=1
+      // Pick3 y Pick4 en el mismo cron exacto → solo 1 corre a la vez → pick4 llega tarde al sorteo
+      { name: 'pick4-midday',  game_type: 'pick4', draw_type: 'midday',  cron: '35 16 * * *' },
+      { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '35 23 * * *' },
     ];
 
     for (const job of jobs) {

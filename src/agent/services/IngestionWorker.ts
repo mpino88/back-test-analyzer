@@ -15,7 +15,11 @@ import type { LotteryDigits, GameType, DrawType } from '../types/agent.types.js'
 import type { Redis } from 'ioredis';
 
 const logger = pino({ name: 'IngestionWorker' });
+// ═══ F04 FIX: BATCH_LIMIT 20 → 200 para cubrir gaps de hasta ~100 días sin pérdida de datos.
+// Con LIMIT=20 y 2 sorteos/día × 2 juegos = sistema pierde datos silenciosamente tras 5 días offline.
+// 200 draws = ~50 días de cobertura por ciclo de 15 min. Si el gap es mayor, ver `backfill-ultra.cjs`.
 const BATCH_SIZE = 20;
+const BATCH_LIMIT = 200;
 const QUEUE_NAME = 'hitdash-ingestion';
 
 function parseRedisUrl(): { host: string; port: number; password?: string } {
@@ -193,8 +197,7 @@ export class IngestionWorker {
     // procesando los mismos sorteos una y otra vez cada 15 mins (y duplicando RAG patterns).
     // Ahora: Traemos los últimos N sorteos de Ballbot y filtramos explícitamente por draw_key original.
 
-    const BATCH_LIMIT = 20;
-
+    // BATCH_LIMIT usa constante global (200) — no redefinir localmente
     interface DrawRow {
       game: string;
       period: string;
