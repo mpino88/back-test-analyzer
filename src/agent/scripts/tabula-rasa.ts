@@ -23,7 +23,7 @@
  * ══════════════════════════════════════════════════════════════
  */
 import { Pool } from 'pg';
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 
 const DB_URL    = process.env['AGENT_DATABASE_URL'];
 const REDIS_URL = process.env['REDIS_URL'];
