@@ -14,11 +14,11 @@
 import type { GameType, DrawType } from '../types/agent.types.js';
 
 export function toDbGame(game_type: GameType): string {
-  return game_type === 'pick3' ? 'p3' : 'p4';
+  return game_type; // Se guardan como 'pick3' o 'pick4'
 }
 
 export function toDbPeriod(draw_type: DrawType): string {
-  return draw_type === 'midday' ? 'm' : 'e';
+  return draw_type; // Se guardan como 'midday' o 'evening'
 }
 
 /**
