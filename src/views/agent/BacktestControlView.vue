@@ -34,16 +34,16 @@
           <div class="cs-group">
             <label class="cs-label">Juego</label>
             <div class="btn-group">
-              <button :class="['btn-opt', gameType === 'pick3' && 'btn-opt--active']" @click="gameType = 'pick3'">Pick 3</button>
-              <button :class="['btn-opt', gameType === 'pick4' && 'btn-opt--active']" @click="gameType = 'pick4'">Pick 4</button>
+              <button :class="['btn-opt', gameType === 'pick3' && 'btn-opt--active']" @click="setGameType('pick3')">Pick 3</button>
+              <button :class="['btn-opt', gameType === 'pick4' && 'btn-opt--active']" @click="setGameType('pick4')">Pick 4</button>
             </div>
           </div>
           <div class="cs-group">
             <label class="cs-label">Sorteo</label>
             <div class="btn-group">
-              <button :class="['btn-opt', mode === 'midday'  && 'btn-opt--active']" @click="mode = 'midday'">Mediodía</button>
-              <button :class="['btn-opt', mode === 'evening' && 'btn-opt--active']" @click="mode = 'evening'">Noche</button>
-              <button :class="['btn-opt', mode === 'combined'&& 'btn-opt--active']" @click="mode = 'combined'">Ambos</button>
+              <button :class="['btn-opt', mode === 'midday'  && 'btn-opt--active']" @click="setMode('midday')">Mediodía</button>
+              <button :class="['btn-opt', mode === 'evening' && 'btn-opt--active']" @click="setMode('evening')">Noche</button>
+              <button :class="['btn-opt', mode === 'combined'&& 'btn-opt--active']" @click="setMode('combined')">Ambos</button>
             </div>
           </div>
         </div>
@@ -55,13 +55,13 @@
         <div class="cs-row">
           <div class="cs-group">
             <label class="cs-label">Desde</label>
-            <input type="date" class="cs-input" v-model="dateFrom" :max="dateTo || undefined" />
+            <input type="date" class="cs-input" :value="dateFrom" @input="setDateFrom($event.target.value)" :max="dateTo || undefined" />
           </div>
           <div class="cs-group">
             <label class="cs-label">Hasta</label>
-            <input type="date" class="cs-input" v-model="dateTo" :min="dateFrom || undefined" />
+            <input type="date" class="cs-input" :value="dateTo" @input="setDateTo($event.target.value)" :min="dateFrom || undefined" />
           </div>
-          <button class="btn-ghost" @click="dateFrom = ''; dateTo = ''" v-if="dateFrom || dateTo">✕ Limpiar</button>
+          <button class="btn-ghost" @click="clearDates()" v-if="dateFrom || dateTo">✕ Limpiar</button>
         </div>
       </div>
 
@@ -105,11 +105,11 @@
             <div class="topn-presets">
               <button v-for="n in [5, 10, 15, 20, 30]" :key="n"
                 :class="['btn-opt', 'btn-opt--sm', topN === n && 'btn-opt--active']"
-                @click="topN = n">{{ n }}</button>
+                @click="setTopN(n)">{{ n }}</button>
             </div>
             <div class="topn-custom">
               <label class="cs-label">Personalizado</label>
-              <input type="number" class="cs-input cs-input--sm" v-model.number="topN" min="1" max="99" />
+              <input type="number" class="cs-input cs-input--sm" :value="topN" @change="setTopN(+$event.target.value)" min="1" max="99" />
               <span class="cs-hint">pares de 100 posibles</span>
             </div>
           </div>
@@ -316,6 +316,8 @@ import { useBacktestControl, CATEGORY_META } from '../../composables/agent/useBa
 const {
   catalog, drawsMeta, catalogLoading,
   gameType, mode, topN, dateFrom, dateTo, selectedStrats,
+  // Mutators explícitos — nunca asignar directamente en el template
+  setGameType, setMode, setTopN, setDateFrom, setDateTo, clearDates,
   activeJobId, jobStatus, jobProgress, jobResults, jobError, running,
   progressPct, resultsSorted,
   history, adaptiveState,
@@ -329,7 +331,7 @@ onMounted(async () => {
   await Promise.all([loadCatalog(), loadHistory(), loadAdaptiveState()]);
 });
 
-// Reload adaptive state when context changes
+// Cuando cambia el contexto (gameType/mode), recargar adaptive weights
 watch([gameType, mode], () => loadAdaptiveState());
 
 // ─── Computed ────────────────────────────────────────────────────
@@ -387,6 +389,7 @@ function statusLabel(s) {
     cancelled: '✕ Cancelado',
   }[s] ?? s ?? '—';
 }
+
 </script>
 
 <style scoped>

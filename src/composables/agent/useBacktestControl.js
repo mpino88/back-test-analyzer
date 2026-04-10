@@ -1,16 +1,19 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — useBacktestControl
-// Gestiona el ciclo de vida de jobs de backtest:
-//   cargar catálogo → configurar parámetros → lanzar → polling → resultados
+// HITDASH — useBacktestControl  (v3 — SINGLETON STATE)
+//
+// APEX FIX: El estado de configuración (gameType, mode, topN, etc.)
+// se declara a NIVEL DE MÓDULO para que todas las vistas que llamen
+// a este composable compartan el mismo estado reactivo.
+// Así no hay desconexión entre los botones del header y la tabla de resultados.
 // ═══════════════════════════════════════════════════════════════
 
 import { ref, computed, readonly } from 'vue';
 import { apiFetch } from '../../utils/apiClient.js';
 
-const BASE = '/api/backtest-control';
-const POLL_MS = 1500; // poll cada 1.5s mientras corre
+const BASE    = '/api/backtest-control';
+const POLL_MS = 1500;
 
-// ─── Strategy catalog (cargado desde API) ────────────────────────
+// ─── Strategy catalog metadata ────────────────────────────────
 export const CATEGORY_META = {
   meta:       { color: '#fbbf24', label: 'Meta-Estrategia' },
   baseline:   { color: '#4ade80', label: 'Baseline' },
@@ -21,247 +24,262 @@ export const CATEGORY_META = {
   cyclic:     { color: '#818cf8', label: 'Cíclica' },
 };
 
-export function useBacktestControl() {
-  // ─── Catálogo ──────────────────────────────────────────────────
-  const catalog         = ref([]);
-  const drawsMeta       = ref([]);
-  const catalogLoading  = ref(false);
+// ─────────────────────────────────────────────────────────────
+// ██  SINGLETON STATE — Nivel Módulo  ██
+// Todos los componentes que usen este composable comparten
+// exactamente estos mismos refs. No hay duplicación de estado.
+// ─────────────────────────────────────────────────────────────
 
-  // ─── Parámetros de configuración ──────────────────────────────
-  const gameType        = ref('pick3');   // pick3 | pick4
-  const mode            = ref('combined'); // midday | evening | combined
-  const topN            = ref(15);
-  const dateFrom        = ref('');
-  const dateTo          = ref('');
-  const selectedStrats  = ref(new Set()); // Set de strategy IDs seleccionados
+// Catálogo
+const catalog        = ref([]);
+const drawsMeta      = ref([]);
+const catalogLoading = ref(false);
 
-  // ─── Estado de job activo ──────────────────────────────────────
-  const activeJobId     = ref(null);
-  const jobStatus       = ref(null);   // 'queued'|'running'|'completed'|'error'|'cancelled'
-  const jobProgress     = ref({ done: 0, total: 1, current_strategy: '' });
-  const jobResults      = ref(null);
-  const jobError        = ref(null);
-  const running         = computed(() => ['queued', 'running'].includes(jobStatus.value));
+// Parámetros de configuración (The "Context" — Single Source of Truth)
+const gameType       = ref('pick3');    // 'pick3' | 'pick4'
+const mode           = ref('combined'); // 'midday' | 'evening' | 'combined'
+const topN           = ref(15);
+const dateFrom       = ref('');
+const dateTo         = ref('');
+const selectedStrats = ref(new Set());
 
-  // ─── Historial ────────────────────────────────────────────────
-  const history         = ref([]);
+// Estado de job activo
+const activeJobId    = ref(null);
+const jobStatus      = ref(null);
+const jobProgress    = ref({ done: 0, total: 1, current_strategy: '' });
+const jobResults     = ref(null);
+const jobError       = ref(null);
 
-  // ─── Polling timer ────────────────────────────────────────────
-  let pollTimer = null;
+// Historial
+const history        = ref([]);
 
-  function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+// Adaptive weights
+const adaptiveState  = ref([]);
+
+// Polling
+let pollTimer = null;
+
+// ─────────────────────────────────────────────────────────────
+// ██  MUTATORS — Las ÚNICAS funciones que modifican el estado ██
+// El Template NUNCA asigna directamente a un ref exportado.
+// ─────────────────────────────────────────────────────────────
+function setGameType(gt)  { gameType.value = gt; }
+function setMode(m)       { mode.value     = m; }
+function setTopN(n)       { topN.value     = Number(n); }
+function setDateFrom(d)   { dateFrom.value = d; }
+function setDateTo(d)     { dateTo.value   = d; }
+function clearDates()     { dateFrom.value = ''; dateTo.value = ''; }
+
+// ─── Polling ──────────────────────────────────────────────────
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+// ─── Cargar catálogo ──────────────────────────────────────────
+async function loadCatalog() {
+  catalogLoading.value = true;
+  try {
+    const [catRes, metaRes] = await Promise.all([
+      apiFetch(`${BASE}/strategies`),
+      apiFetch(`${BASE}/draws/meta`),
+    ]);
+    if (catRes.ok)  catalog.value   = await catRes.json();
+    if (metaRes.ok) drawsMeta.value = await metaRes.json();
+    selectedStrats.value = new Set(
+      catalog.value.filter(s => s.default_selected).map(s => s.id)
+    );
+  } finally {
+    catalogLoading.value = false;
   }
+}
 
-  // ─── Cargar catálogo de estrategias ────────────────────────────
-  async function loadCatalog() {
-    catalogLoading.value = true;
-    try {
-      const [catRes, metaRes] = await Promise.all([
-        apiFetch(`${BASE}/strategies`),
-        apiFetch(`${BASE}/draws/meta`),
-      ]);
-      if (catRes.ok)  catalog.value   = await catRes.json();
-      if (metaRes.ok) drawsMeta.value = await metaRes.json();
+// ─── Cargar historial ─────────────────────────────────────────
+async function loadHistory() {
+  const res = await apiFetch(`${BASE}/history`);
+  if (res.ok) history.value = await res.json();
+}
 
-      // Pre-seleccionar los que tienen default_selected
-      selectedStrats.value = new Set(
-        catalog.value.filter(s => s.default_selected).map(s => s.id)
-      );
-    } finally {
-      catalogLoading.value = false;
-    }
-  }
+// ─── Cargar adaptive weights ──────────────────────────────────
+async function loadAdaptiveState() {
+  const res = await apiFetch(
+    `${BASE}/adaptive-state?game_type=${gameType.value}&mode=${mode.value}`
+  );
+  if (res.ok) adaptiveState.value = await res.json();
+}
 
-  // ─── Cargar historial de jobs ──────────────────────────────────
-  async function loadHistory() {
-    const res = await apiFetch(`${BASE}/history`);
-    if (res.ok) history.value = await res.json();
-  }
+// ─── Estrategias selection ────────────────────────────────────
+function toggleStrategy(id) {
+  const s = new Set(selectedStrats.value);
+  if (s.has(id)) s.delete(id); else s.add(id);
+  selectedStrats.value = s;
+}
+function selectAll()     { selectedStrats.value = new Set(catalog.value.map(s => s.id)); }
+function selectNone()    { selectedStrats.value = new Set(); }
+function selectDefault() { selectedStrats.value = new Set(catalog.value.filter(s => s.default_selected).map(s => s.id)); }
 
-  // ─── Toggle estrategia ─────────────────────────────────────────
-  function toggleStrategy(id) {
-    const s = new Set(selectedStrats.value);
-    if (s.has(id)) s.delete(id);
-    else           s.add(id);
-    selectedStrats.value = s;
-  }
+// ─── Lanzar backtest ──────────────────────────────────────────
+const running = computed(() => ['queued', 'running'].includes(jobStatus.value));
 
-  function selectAll()   { selectedStrats.value = new Set(catalog.value.map(s => s.id)); }
-  function selectNone()  { selectedStrats.value = new Set(); }
-  function selectDefault() {
-    selectedStrats.value = new Set(catalog.value.filter(s => s.default_selected).map(s => s.id));
-  }
+async function runBacktest() {
+  if (running.value) return;
+  jobStatus.value   = 'queued';
+  jobProgress.value = { done: 0, total: [...selectedStrats.value].length + 1, current_strategy: 'iniciando…' };
+  jobResults.value  = null;
+  jobError.value    = null;
 
-  // ─── Lanzar backtest ──────────────────────────────────────────
-  async function runBacktest() {
-    if (running.value) return;
+  const body = {
+    game_type:  gameType.value,
+    mode:       mode.value,
+    strategies: [...selectedStrats.value],
+    top_n:      topN.value,
+    date_from:  dateFrom.value || undefined,
+    date_to:    dateTo.value   || undefined,
+  };
 
-    jobStatus.value   = 'queued';
-    jobProgress.value = { done: 0, total: [...selectedStrats.value].length + 1, current_strategy: 'iniciando…' };
-    jobResults.value  = null;
-    jobError.value    = null;
-
-    const body = {
-      game_type:  gameType.value,
-      mode:       mode.value,
-      strategies: [...selectedStrats.value],
-      top_n:      topN.value,
-      date_from:  dateFrom.value || undefined,
-      date_to:    dateTo.value   || undefined,
-    };
-
-    try {
-      const res = await apiFetch(`${BASE}/run`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-        jobStatus.value = 'error';
-        jobError.value  = err.error ?? 'Error al lanzar backtest';
-        return;
-      }
-
-      const { job_id } = await res.json();
-      activeJobId.value = job_id;
-      startPolling(job_id);
-    } catch (err) {
+  try {
+    const res = await apiFetch(`${BASE}/run`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
       jobStatus.value = 'error';
-      jobError.value  = err instanceof Error ? err.message : 'Error de red al lanzar backtest';
+      jobError.value  = err.error ?? 'Error al lanzar backtest';
+      return;
     }
+    const { job_id } = await res.json();
+    activeJobId.value = job_id;
+    startPolling(job_id);
+  } catch (err) {
+    jobStatus.value = 'error';
+    jobError.value  = err instanceof Error ? err.message : 'Error de red';
   }
+}
 
-  // ─── Polling de estado ────────────────────────────────────────
-  function startPolling(jobId) {
-    stopPolling();
-    pollTimer = setInterval(async () => {
-      try {
-        const res = await apiFetch(`${BASE}/status/${jobId}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        jobStatus.value   = data.status;
-        jobProgress.value = data.progress ?? jobProgress.value;
-
-        if (data.status === 'completed') {
-          stopPolling();
-          await fetchResults(jobId);
-          await loadHistory();
-        } else if (data.status === 'error' || data.status === 'cancelled') {
-          stopPolling();
-          jobError.value = data.error ?? 'Job cancelado o con error';
-          await loadHistory();
-        }
-      } catch { /* network hiccup — keep polling */ }
-    }, POLL_MS);
-  }
-
-  // ─── Obtener resultados ───────────────────────────────────────
-  async function fetchResults(jobId) {
-    const res = await apiFetch(`${BASE}/results/${jobId}`);
-    if (res.ok && res.status !== 202) {
+// ─── Polling ──────────────────────────────────────────────────
+function startPolling(jobId) {
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    try {
+      const res  = await apiFetch(`${BASE}/status/${jobId}`);
+      if (!res.ok) return;
       const data = await res.json();
-      jobResults.value = (data.results ?? []).map(r => ({
-        ...r,
-        hit_rate: Number(r.hit_rate ?? 0),
-        win_rate: Number(r.win_rate ?? 0),
-        weight:   Number(r.weight ?? 1),
-        top_n:    Number(r.top_n ?? 15)
-      }));
-    }
-  }
+      jobStatus.value   = data.status;
+      jobProgress.value = data.progress ?? jobProgress.value;
+      if (data.status === 'completed') {
+        stopPolling();
+        await fetchResults(jobId);
+        await loadHistory();
+      } else if (data.status === 'error' || data.status === 'cancelled') {
+        stopPolling();
+        jobError.value = data.error ?? 'Job cancelado o con error';
+        await loadHistory();
+      }
+    } catch { /* network hiccup */ }
+  }, POLL_MS);
+}
 
-  async function loadJobResults(jobId) {
-    activeJobId.value = jobId;
-    jobResults.value  = null;
-    jobError.value    = null;
-    const res = await apiFetch(`${BASE}/results/${jobId}`);
-    if (!res.ok) return;
+// ─── Resultados ───────────────────────────────────────────────
+function normalizeResults(raw) {
+  return (raw ?? []).map(r => ({
+    ...r,
+    hit_rate: Number(r.hit_rate ?? 0),
+    win_rate: Number(r.win_rate ?? 0),
+    weight:   Number(r.weight   ?? 1),
+    top_n:    Number(r.top_n    ?? 15),
+  }));
+}
+
+async function fetchResults(jobId) {
+  const res = await apiFetch(`${BASE}/results/${jobId}`);
+  if (res.ok && res.status !== 202) {
     const data = await res.json();
-    
-    // ── FIX: Sync UI Context with the loaded job ──
-    if (data.game_type) gameType.value = data.game_type;
-    if (data.mode)      mode.value     = data.mode;
-    if (data.top_n)     topN.value     = data.top_n;
-    if (data.date_from) dateFrom.value = data.date_from.slice(0, 10);
-    if (data.date_to)   dateTo.value   = data.date_to.slice(0, 10);
-    
-    jobStatus.value  = data.status ?? 'completed';
-    jobResults.value = (data.results ?? []).map(r => ({
-      ...r,
-      hit_rate: Number(r.hit_rate ?? 0),
-      win_rate: Number(r.win_rate ?? 0),
-      weight:   Number(r.weight ?? 1),
-      top_n:    Number(r.top_n ?? 15)
-    }));
+    jobResults.value = normalizeResults(data.results);
   }
+}
 
-  // ─── Cancelar job activo ──────────────────────────────────────
-  async function cancelJob() {
-    if (!activeJobId.value) return;
-    stopPolling();
-    await apiFetch(`${BASE}/cancel/${activeJobId.value}`);
-    jobStatus.value = 'cancelled';
-  }
+async function loadJobResults(jobId) {
+  activeJobId.value = jobId;
+  jobResults.value  = null;
+  jobError.value    = null;
+  const res = await apiFetch(`${BASE}/results/${jobId}`);
+  if (!res.ok) return;
+  const data = await res.json();
 
-  // ─── Adaptive state ───────────────────────────────────────────
-  const adaptiveState = ref([]);
-  async function loadAdaptiveState() {
-    const res = await apiFetch(
-      `${BASE}/adaptive-state?game_type=${gameType.value}&mode=${mode.value}`
-    );
-    if (res.ok) adaptiveState.value = await res.json();
-  }
+  // Sync context selectors with the historical job being viewed
+  if (data.game_type) setGameType(data.game_type);
+  if (data.mode)      setMode(data.mode);
+  if (data.top_n)     setTopN(data.top_n);
+  if (data.date_from) setDateFrom(data.date_from.slice(0, 10));
+  if (data.date_to)   setDateTo(data.date_to.slice(0, 10));
 
-  // ─── Helpers ──────────────────────────────────────────────────
-  const progressPct = computed(() => {
-    const { done, total } = jobProgress.value;
-    return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-  });
+  jobStatus.value  = data.status ?? 'completed';
+  jobResults.value = normalizeResults(data.results);
+}
 
-  const resultsSorted = computed(() => {
-    if (!jobResults.value) return [];
-    return [...jobResults.value].sort(
-      (a, b) => (b.hit_rate ?? b.win_rate ?? 0) - (a.hit_rate ?? a.win_rate ?? 0)
-    );
-  });
+async function cancelJob() {
+  if (!activeJobId.value) return;
+  stopPolling();
+  await apiFetch(`${BASE}/cancel/${activeJobId.value}`);
+  jobStatus.value = 'cancelled';
+}
 
-  const drawsMetaForContext = computed(() => {
-    if (!drawsMeta.value.length) return null;
-    const g = gameType.value === 'pick3' ? 'p3' : 'p4';
-    const p = mode.value === 'midday' ? 'm' : mode.value === 'evening' ? 'e' : null;
-    const rows = drawsMeta.value.filter(r => r.game === g && (p === null || r.period === p));
-    if (!rows.length) return null;
-    return {
-      count:    rows.reduce((s, r) => s + parseInt(r.count, 10), 0),
-      date_min: rows.map(r => r.date_min).sort()[0],
-      date_max: rows.map(r => r.date_max).sort().at(-1),
-    };
-  });
+// ─── Computados ───────────────────────────────────────────────
+const progressPct = computed(() => {
+  const { done, total } = jobProgress.value;
+  return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+});
 
-  function pct(v) { return v != null ? (v * 100).toFixed(1) + '%' : '—'; }
-  function fmtDate(iso) {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleString('es-PR', { dateStyle: 'short', timeStyle: 'short' });
-  }
+const resultsSorted = computed(() => {
+  if (!jobResults.value) return [];
+  return [...jobResults.value].sort(
+    (a, b) => (b.hit_rate ?? b.win_rate ?? 0) - (a.hit_rate ?? a.win_rate ?? 0)
+  );
+});
 
+const drawsMetaForContext = computed(() => {
+  if (!drawsMeta.value.length) return null;
+  const g = gameType.value === 'pick3' ? 'p3' : 'p4';
+  const p = mode.value === 'midday' ? 'm' : mode.value === 'evening' ? 'e' : null;
+  const rows = drawsMeta.value.filter(r => r.game === g && (p === null || r.period === p));
+  if (!rows.length) return null;
   return {
-    // Catálogo
-    catalog: readonly(catalog),
-    drawsMeta: readonly(drawsMeta),
+    count:    rows.reduce((s, r) => s + parseInt(r.count, 10), 0),
+    date_min: rows.map(r => r.date_min).sort()[0],
+    date_max: rows.map(r => r.date_max).sort().at(-1),
+  };
+});
+
+function pct(v)     { return v != null ? (v * 100).toFixed(1) + '%' : '—'; }
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-PR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+// ─────────────────────────────────────────────────────────────
+// ██  COMPOSABLE EXPORT  ██
+// ─────────────────────────────────────────────────────────────
+export function useBacktestControl() {
+  return {
+    // Catálogo (read-only desde fuera)
+    catalog:     readonly(catalog),
+    drawsMeta:   readonly(drawsMeta),
     catalogLoading,
-    // Configuración
-    gameType, mode, topN, dateFrom, dateTo, selectedStrats,
+    // Context — refs mutable sólo vía setters
+    gameType:    readonly(gameType),
+    mode:        readonly(mode),
+    topN:        readonly(topN),
+    dateFrom:    readonly(dateFrom),
+    dateTo:      readonly(dateTo),
+    selectedStrats,
+    // Mutators explícitos (elimina la asignación directa de template)
+    setGameType, setMode, setTopN, setDateFrom, setDateTo, clearDates,
     // Job
     activeJobId, jobStatus, jobProgress, jobResults, jobError, running,
     progressPct, resultsSorted,
-    // Historial
-    history: readonly(history),
-    // Adaptive
+    history:     readonly(history),
     adaptiveState: readonly(adaptiveState),
-    // Helpers
     drawsMetaForContext, pct, fmtDate,
     // Acciones
     loadCatalog, loadHistory, loadAdaptiveState,
