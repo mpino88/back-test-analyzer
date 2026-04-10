@@ -263,14 +263,17 @@ export function computeCollectiveIntelligence(strategies) {
   };
 }
 
+import { useBacktestControl } from './useBacktestControl.js';
+
 // ─── Composable ──────────────────────────────────────────────────
 export function useStrategyTracking() {
   const strategies   = ref([]);
   const loading      = ref(false);
   const error        = ref(null);
   const generatedAt  = ref(null);
-  const gameType     = ref('pick3');
-  const mode         = ref('combined');
+  
+  // Usamos el contexto centralizado APEX
+  const { gameType, mode, setGameType, setMode } = useBacktestControl();
 
   async function fetch() {
     loading.value = true;
@@ -375,7 +378,7 @@ export function useStrategyTracking() {
   return {
     strategies, ranked, best, apex, collective,
     loading, error, generatedAt,
-    gameType, mode,
+    gameType, mode, setGameType, setMode,
     chartDatasets,
     fetch,
     RANDOM_BASELINE,

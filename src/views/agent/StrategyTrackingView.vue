@@ -8,11 +8,11 @@
         <p class="tracking-subtitle">Análisis profundo · Razonamiento adaptativo · Inteligencia colectiva</p>
       </div>
       <div class="tracking-header__controls">
-        <select v-model="gameType" class="ctrl-select" @change="fetch()">
+        <select :value="gameType" @change="setGameType($event.target.value); fetch()" class="ctrl-select">
           <option value="pick3">Pick 3</option>
           <option value="pick4">Pick 4</option>
         </select>
-        <select v-model="mode" class="ctrl-select" @change="fetch()">
+        <select :value="mode" @change="setMode($event.target.value); fetch()" class="ctrl-select">
           <option value="combined">Combined</option>
           <option value="midday">Midday</option>
           <option value="evening">Evening</option>
@@ -532,7 +532,7 @@ Chart.register(...registerables);
 const {
   strategies, ranked, best, apex, collective,
   loading, error, generatedAt,
-  gameType, mode,
+  gameType, mode, setGameType, setMode,
   fetch,
   RANDOM_BASELINE,
 } = useStrategyTracking();
