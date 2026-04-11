@@ -22,7 +22,7 @@ jobs:
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
-          port: ${{ secrets.VPS_SSH_PORT }}
+          port: 6543
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           source: "src,public,package*.json,tsconfig*.json,vite.config.*,Dockerfile,docker-compose.yml,.dockerignore"
@@ -33,7 +33,7 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
-          port: ${{ secrets.VPS_SSH_PORT }}
+          port: 6543
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
           # Timeout extendido: build multi-stage puede tardar 3-5 min
