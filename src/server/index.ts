@@ -9,6 +9,8 @@ import cors from 'cors';
 import { Pool } from 'pg';
 import { Redis } from 'ioredis';
 import pino from 'pino';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { createHealthRouter } from './routes/healthRouter.js';
 import { createAgentRouter } from './routes/agentRouter.js';
 import { createSSERouter } from './routes/sseRouter.js';
@@ -142,16 +144,24 @@ app.use((req, res, next) => {
   next();
 });
 
+// ─── Frontend estático (Vue 3 compilado) ────────────────────────
+// __dirname en runtime = dist-server/server/ → ../../dist = /app/dist
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
+const DIST_PATH  = join(__dirname, '../../dist');
+
 // ─── Rutas ──────────────────────────────────────────────────────
 app.use(createHealthRouter(agentPool, redis));
 app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
-
 app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool, redis));
 app.use(createSSERouter(agentPool, redis));
 
-// 404 handler
-app.use((_req, res) => {
-  res.status(404).json({ error: 'Ruta no encontrada' });
+// Servir assets del frontend (JS/CSS/img) con caché agresiva
+app.use(express.static(DIST_PATH, { maxAge: '1d', etag: true }));
+
+// SPA fallback: cualquier ruta no-API → index.html (Vue Router)
+app.get('*', (_req, res) => {
+  res.sendFile(join(DIST_PATH, 'index.html'));
 });
 
 // ─── SENTINEL: Express 500 ─────────────────────────────
