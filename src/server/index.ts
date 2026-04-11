@@ -215,7 +215,7 @@ async function start(): Promise<void> {
     logger.warn({ error: err }, '⚠️  PostDrawProcessor no iniciado — Redis requerido');
   }
 
-  app.listen(PORT, '127.0.0.1', async () => {
+  app.listen(PORT, '0.0.0.0', async () => {
     logger.info(`🚀 Hitdash Server corriendo en puerto ${PORT}`);
     logger.info(`   Health: http://localhost:${PORT}/health`);
     logger.info(`   API:    http://localhost:${PORT}/api/agent/status`);

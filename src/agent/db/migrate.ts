@@ -20,6 +20,7 @@ const MIGRATIONS = [
   '007_precision_metrics.sql',
   '008_progressive_results.sql',
   '009_pair_recommendations.sql',
+  '010_extend_alert_types.sql',
 ];
 
 async function migrate(): Promise<void> {

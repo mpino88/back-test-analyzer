@@ -1,0 +1,110 @@
+name: Hitdash Deployment Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to BLISS Docker Infrastructure
+    runs-on: ubuntu-latest
+
+    steps:
+      # ─── 1. Checkout ──────────────────────────────────────────────
+      - name: 📥 Extraer Código Fuente
+        uses: actions/checkout@v4
+
+      # ─── 2. SCP — solo código fuente, sin artefactos ni historial ──
+      # Excluimos: node_modules (se instalan en el servidor), dist (se
+      # construye en el servidor), .git (historial no necesario en VPS).
+      - name: 🚀 Transferir Código Fuente al VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "src,public,package*.json,tsconfig*.json,vite.config.*,Dockerfile,docker-compose.yml,.dockerignore"
+          target: "/home/ballbottel/dash.ballbot.tel"
+
+      # ─── 3. Forja .env + Migración DB + Build + Despliegue ─────────
+      - name: 🛡️ Inyección de Bóveda, Migración y Resurrección Cognitiva
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          # Timeout extendido: build multi-stage puede tardar 3-5 min
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            cd /home/ballbottel/dash.ballbot.tel
+
+            # ── PASO 1: Forjar .env blindado desde GitHub Secrets ─────
+            # Nota: se usa heredoc sin comillas en EOF para que GitHub
+            # Actions expanda ${{ secrets.X }} ANTES de enviar el script.
+            cat > .env << EOF
+            NODE_ENV=production
+            PORT=3001
+
+            POSTGRES_USER=hitdash
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            POSTGRES_DB=hitdash
+
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+
+            BALLBOT_DATABASE_URL=${{ secrets.BALLBOT_DATABASE_URL }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+            TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+            AGENT_API_KEY=${{ secrets.AGENT_API_KEY }}
+            VITE_AGENT_API_KEY=${{ secrets.AGENT_API_KEY }}
+            EOF
+
+            # Blindaje Unix: solo root puede leer el .env
+            chmod 600 .env
+
+            # ── PASO 2: Levantar infraestructura base si no existe ────
+            # Postgres y Redis se crean la primera vez; no se tocan si ya existen.
+            docker compose up -d hitdash-postgres hitdash-redis
+
+            # Esperar hasta que Postgres esté healthy (máx 60s)
+            echo "⏳ Esperando a PostgreSQL..."
+            timeout 60 bash -c \
+              'until docker compose exec -T hitdash-postgres pg_isready -U hitdash -d hitdash -q; do sleep 2; done'
+            echo "✅ PostgreSQL listo"
+
+            # ── PASO 3: Construir imagen sin caché ────────────────────
+            # CRÍTICO: build ANTES de migraciones — la imagen nueva contiene
+            # el JS compilado (dist-server/agent/db/migrate.js) que se ejecutará
+            # en el siguiente paso. Orden invertido = migraciones con imagen vieja.
+            echo "🔨 Construyendo imagen hitdash-server..."
+            docker compose build --no-cache hitdash-server
+
+            # ── PASO 4: Ejecutar migraciones SQL con imagen nueva ─────
+            # Ejecuta el migrate.js ya compilado en Stage 2 del Dockerfile.
+            # Las migraciones son idempotentes (IF NOT EXISTS / ON CONFLICT DO NOTHING).
+            echo "🔄 Ejecutando migraciones de schema..."
+            docker compose run --rm \
+              -e AGENT_DATABASE_URL="postgresql://hitdash:${{ secrets.POSTGRES_PASSWORD }}@hitdash-postgres:5432/hitdash" \
+              hitdash-server \
+              node dist-server/agent/db/migrate.js
+            echo "✅ Migraciones completadas"
+
+            # ── PASO 5: Desplegar el servidor (zero-downtime) ─────────
+            # Solo reemplaza el contenedor hitdash-server.
+            # Postgres y Redis no se interrumpen.
+            docker compose up -d --no-deps hitdash-server
+
+            # ── PASO 6: Validar que el servidor arrancó correctamente ─
+            echo "⏳ Validando arranque del servidor (máx 60s)..."
+            timeout 60 bash -c \
+              'until curl -sf http://localhost:3001/health > /dev/null; do sleep 3; done' \
+              && echo "✅ Servidor respondiendo en /health" \
+              || (echo "❌ El servidor no respondió — últimos logs:" && docker compose logs --tail=50 hitdash-server && exit 1)
+
+            # ── PASO 7: Limpieza de imágenes huérfanas ────────────────
+            docker image prune -f
+
+            echo "🚀 Despliegue SecOps completado. Sistema Hitdash operativo."
