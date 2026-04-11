@@ -95,19 +95,17 @@ jobs:
             echo "✅ Migraciones completadas"
 
             # ── PASO 5: Desplegar el servidor (zero-downtime) ─────────
-            # Liberar puerto 3001 si lo ocupa algún proceso nativo del host
-            # (Node/PM2 de deploys pre-Docker). fuser -k mata SOLO ese proceso,
-            # sin afectar Postgres ni Redis que corren en puertos distintos.
-            fuser -k 3001/tcp 2>/dev/null || true
-            sleep 1
+            # Hitdash expone el puerto 3005 del host (→ 3001 interno).
+            # bliss-api ocupa el 3001 del host — bóvedas separadas, sin colisión.
             # --force-recreate garantiza reemplazo del contenedor anterior.
             # --no-deps protege Postgres y Redis (memoria permanente del agente).
             docker compose up -d --force-recreate --no-deps hitdash-server
 
             # ── PASO 6: Validar que el servidor arrancó correctamente ─
+            # Health check apunta al puerto 3005 del host (mapping 3005→3001).
             echo "⏳ Validando arranque del servidor (máx 60s)..."
             timeout 60 bash -c \
-              'until curl -sf http://localhost:3001/health > /dev/null; do sleep 3; done' \
+              'until curl -sf http://localhost:3005/health > /dev/null; do sleep 3; done' \
               && echo "✅ Servidor respondiendo en /health" \
               || (echo "❌ El servidor no respondió — últimos logs:" && docker compose logs --tail=50 hitdash-server && exit 1)
 
