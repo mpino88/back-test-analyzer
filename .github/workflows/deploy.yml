@@ -25,7 +25,7 @@ jobs:
           port: 6543
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "src,public,package*.json,tsconfig*.json,vite.config.*,Dockerfile,docker-compose.yml,.dockerignore"
+          source: "src,public,index.html,package*.json,tsconfig*.json,vite.config.*,Dockerfile,docker-compose.yml,.dockerignore"
           target: "/home/ballbottel/dash.ballbot.tel"
 
       # ─── 3. Forja .env + Migración DB + Build + Despliegue ─────────
