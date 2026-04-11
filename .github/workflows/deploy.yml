@@ -109,7 +109,13 @@ jobs:
               && echo "✅ Servidor respondiendo en /health" \
               || (echo "❌ El servidor no respondió — últimos logs:" && docker compose logs --tail=50 hitdash-server && exit 1)
 
-            # ── PASO 7: Limpieza de imágenes huérfanas ────────────────
+            # ── PASO 7: Extraer Assets para Nginx (Bypass Cache) ──────
+            # En alojamiento con panel cPanel/Nginx, Nginx intercepta .js/.css
+            # Si no están físicamente en el disco host, devuelve 404 ignorando Apache.
+            echo "📂 Extrayendo assets visuales al host para Nginx..."
+            docker cp hitdash-server:/app/dist/. /home/ballbottel/dash.ballbot.tel/
+
+            # ── PASO 8: Limpieza de imágenes huérfanas ────────────────
             docker image prune -f
 
             echo "🚀 Despliegue SecOps completado. Sistema Hitdash operativo."
