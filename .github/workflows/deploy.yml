@@ -95,9 +95,10 @@ jobs:
             echo "✅ Migraciones completadas"
 
             # ── PASO 5: Desplegar el servidor (zero-downtime) ─────────
-            # Solo reemplaza el contenedor hitdash-server.
-            # Postgres y Redis no se interrumpen.
-            docker compose up -d --no-deps hitdash-server
+            # --force-recreate libera el puerto 3001 del contenedor anterior
+            # y levanta el nuevo con la imagen recién construida.
+            # --no-deps garantiza que Postgres y Redis (memoria permanente) no se tocan.
+            docker compose up -d --force-recreate --no-deps hitdash-server
 
             # ── PASO 6: Validar que el servidor arrancó correctamente ─
             echo "⏳ Validando arranque del servidor (máx 60s)..."
