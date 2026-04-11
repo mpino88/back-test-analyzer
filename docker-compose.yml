@@ -1,10 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 # HITDASH — Docker Compose (VPS / dash.ballbot.tel)
-# Stack 100% aislado — no comparte nada con otros proyectos del VPS
 # Red interna privada: hitdash-net
 # ═══════════════════════════════════════════════════════════════
-
-version: '3.9'
 
 networks:
   hitdash-net:
@@ -90,6 +87,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      AGENT_API_KEY: ${AGENT_API_KEY}
       CORS_ORIGIN: https://dash.ballbot.tel
     ports:
       - "127.0.0.1:3001:3001"
