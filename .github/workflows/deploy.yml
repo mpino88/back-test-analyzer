@@ -95,9 +95,13 @@ jobs:
             echo "✅ Migraciones completadas"
 
             # ── PASO 5: Desplegar el servidor (zero-downtime) ─────────
-            # --force-recreate libera el puerto 3001 del contenedor anterior
-            # y levanta el nuevo con la imagen recién construida.
-            # --no-deps garantiza que Postgres y Redis (memoria permanente) no se tocan.
+            # Liberar puerto 3001 si lo ocupa algún proceso nativo del host
+            # (Node/PM2 de deploys pre-Docker). fuser -k mata SOLO ese proceso,
+            # sin afectar Postgres ni Redis que corren en puertos distintos.
+            fuser -k 3001/tcp 2>/dev/null || true
+            sleep 1
+            # --force-recreate garantiza reemplazo del contenedor anterior.
+            # --no-deps protege Postgres y Redis (memoria permanente del agente).
             docker compose up -d --force-recreate --no-deps hitdash-server
 
             # ── PASO 6: Validar que el servidor arrancó correctamente ─
