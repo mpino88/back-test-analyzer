@@ -939,8 +939,7 @@ Responde con este JSON exacto:
              (session_id, game_type, draw_type, draw_date, half,
               optimal_n, predicted_effectiveness, cognitive_basis,
               pairs, confidence, top_n_backtest, kelly_fraction, wilson_lower)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-           ON CONFLICT (session_id, half) DO NOTHING`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
           [
             session_id,
             game_type,

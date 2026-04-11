@@ -233,15 +233,16 @@ async function start(): Promise<void> {
     try {
       const CACHE_KEY = 'hitdash:meta:draws';
       const CACHE_TTL = 1800;
+      // draw_key format: "{game}:{period}:{YYYY-MM-DD}" e.g. "p3:m:2026-03-22"
       const { rows } = await agentPool.query(
-        `SELECT 
-           CASE WHEN game_type = 'pick3' THEN 'p3' ELSE 'p4' END AS game, 
-           CASE WHEN draw_type = 'midday' THEN 'm' ELSE 'e' END AS period,
-           COUNT(*)::text AS count,
-           MIN(draw_date)::text AS date_min,
-           MAX(draw_date)::text AS date_max
+        `SELECT
+           SPLIT_PART(draw_key, ':', 1)       AS game,
+           SPLIT_PART(draw_key, ':', 2)       AS period,
+           COUNT(*)::text                     AS count,
+           MIN(SPLIT_PART(draw_key, ':', 3))  AS date_min,
+           MAX(SPLIT_PART(draw_key, ':', 3))  AS date_max
          FROM hitdash.ingested_results
-         GROUP BY game_type, draw_type`
+         GROUP BY SPLIT_PART(draw_key, ':', 1), SPLIT_PART(draw_key, ':', 2)`
       );
       await redis.setex(CACHE_KEY, CACHE_TTL, JSON.stringify(rows));
       logger.info('✅ Metadata cache warmed up proactivamente');

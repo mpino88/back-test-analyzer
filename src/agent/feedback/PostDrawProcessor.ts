@@ -339,8 +339,43 @@ export class PostDrawProcessor {
       }
     }
 
+    // ─── Resolver pair_recommendations.hit para este sorteo ──────────
+    // Determinar el par real según game_type
+    const actualPairDU  = actualDU  ?? null;
+    const actualPairAB  = actualAB  ?? null;
+    const actualPairCD  = actualCD  ?? null;
+
+    // Buscar recomendaciones pendientes del sorteo
+    const { rows: pendingRecs } = await this.agentPool.query<{
+      id: string; half: string; pairs: string[];
+    }>(
+      `SELECT id, half, pairs
+       FROM hitdash.pair_recommendations
+       WHERE game_type = $1 AND draw_type = $2 AND draw_date = $3 AND hit IS NULL`,
+      [game_type, draw_type, draw_date]
+    ).catch(() => ({ rows: [] as Array<{ id: string; half: string; pairs: string[] }> }));
+
+    for (const rec of pendingRecs) {
+      let actualPair: string | null = null;
+      if (rec.half === 'du') actualPair = actualPairDU;
+      else if (rec.half === 'ab') actualPair = actualPairAB;
+      else if (rec.half === 'cd') actualPair = actualPairCD;
+
+      if (!actualPair) continue;
+
+      const hit    = rec.pairs.includes(actualPair);
+      const rank   = hit ? rec.pairs.indexOf(actualPair) + 1 : null;
+
+      await this.agentPool.query(
+        `UPDATE hitdash.pair_recommendations
+         SET hit = $1, actual_pair = $2, hit_at_rank = $3
+         WHERE id = $4`,
+        [hit, actualPair, rank, rec.id]
+      ).catch(() => undefined);
+    }
+
     logger.info(
-      { game_type, draw_type, draw_date, checked: rows.length },
+      { game_type, draw_type, draw_date, checked: rows.length, recs_resolved: pendingRecs.length },
       'Pair hit detection completado'
     );
   }

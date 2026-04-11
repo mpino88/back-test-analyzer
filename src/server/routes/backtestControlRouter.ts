@@ -24,7 +24,6 @@ import type { Redis } from 'ioredis';
 import {
   STRATEGY_CATALOG,
   jobs,
-  pruneJobs,
   runBacktestJob,
   type BacktestJob,
   type JobStatus,
@@ -65,8 +64,8 @@ export function createBacktestControlRouter(
         return;
       }
 
-      // 2. ═══ x10 PRO OPTIMIZATION ═══
-      // Consultar desde la base de datos LOCAL estructurada para anular la latencia
+      // 2. Consultar desde hitdash.ingested_results (LOCAL, baja latencia)
+      // draw_key format: "{game}:{period}:{YYYY-MM-DD}" e.g. "p3:m:2026-03-22"
       const { rows } = await agentPool.query<{
         game: string;
         period: string;
@@ -74,14 +73,14 @@ export function createBacktestControlRouter(
         date_min: string;
         date_max: string;
       }>(
-        `SELECT 
-           CASE WHEN game_type = 'pick3' THEN 'p3' ELSE 'p4' END AS game, 
-           CASE WHEN draw_type = 'midday' THEN 'm' ELSE 'e' END AS period,
-           COUNT(*)::text AS count,
-           MIN(draw_date)::text AS date_min,
-           MAX(draw_date)::text AS date_max
+        `SELECT
+           SPLIT_PART(draw_key, ':', 1)       AS game,
+           SPLIT_PART(draw_key, ':', 2)       AS period,
+           COUNT(*)::text                     AS count,
+           MIN(SPLIT_PART(draw_key, ':', 3))  AS date_min,
+           MAX(SPLIT_PART(draw_key, ':', 3))  AS date_max
          FROM hitdash.ingested_results
-         GROUP BY game_type, draw_type
+         GROUP BY SPLIT_PART(draw_key, ':', 1), SPLIT_PART(draw_key, ':', 2)
          ORDER BY game, period`
       );
 
