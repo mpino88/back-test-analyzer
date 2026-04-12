@@ -1,6 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — Migration runner
+// HITDASH — Migration runner (idempotente)
 // Ejecutar: npm run migrate
+//
+// Usa hitdash.schema_migrations para registrar migraciones aplicadas.
+// Solo corre migraciones nuevas — nunca re-ejecuta las ya aplicadas.
+// CRÍTICO: evita DROP TABLE en despliegues sucesivos (protege datos).
 // ═══════════════════════════════════════════════════════════════
 
 import { Pool } from 'pg';
@@ -26,28 +30,61 @@ const MIGRATIONS = [
 
 async function migrate(): Promise<void> {
   const pool = new Pool({ connectionString: process.env['AGENT_DATABASE_URL'] });
+  const client = await pool.connect();
 
-  for (const file of MIGRATIONS) {
-    console.log(`🔄 Ejecutando migración: ${file}`);
-    const sqlPath = join(__dirname, 'migrations', file);
-    const sql = readFileSync(sqlPath, 'utf-8');
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(sql);
-      await client.query('COMMIT');
-      console.log(`✅ ${file} completado`);
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(`❌ Error en ${file}:`, err);
-      process.exit(1);
-    } finally {
-      client.release();
+  try {
+    // ── Crear tracking table si no existe (siempre seguro) ──────
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS hitdash.schema_migrations (
+        filename    TEXT        PRIMARY KEY,
+        applied_at  TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // ── Leer migraciones ya aplicadas ────────────────────────────
+    const { rows } = await client.query<{ filename: string }>(
+      `SELECT filename FROM hitdash.schema_migrations`
+    );
+    const applied = new Set(rows.map(r => r.filename));
+
+    // ── Ejecutar solo las pendientes ─────────────────────────────
+    let ran = 0;
+    for (const file of MIGRATIONS) {
+      if (applied.has(file)) {
+        console.log(`⏭️  ${file} — ya aplicada, saltando`);
+        continue;
+      }
+
+      console.log(`🔄 Ejecutando migración: ${file}`);
+      const sqlPath = join(__dirname, 'migrations', file);
+      const sql = readFileSync(sqlPath, 'utf-8');
+
+      try {
+        await client.query('BEGIN');
+        await client.query(sql);
+        await client.query(
+          `INSERT INTO hitdash.schema_migrations (filename) VALUES ($1)`,
+          [file]
+        );
+        await client.query('COMMIT');
+        console.log(`✅ ${file} completado`);
+        ran++;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(`❌ Error en ${file}:`, err);
+        process.exit(1);
+      }
     }
-  }
 
-  await pool.end();
-  console.log('✅ Todas las migraciones completadas');
+    if (ran === 0) {
+      console.log('✅ Schema actualizado — ninguna migración pendiente');
+    } else {
+      console.log(`✅ ${ran} migración(es) aplicada(s)`);
+    }
+  } finally {
+    client.release();
+    await pool.end();
+  }
 }
 
 migrate();
