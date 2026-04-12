@@ -120,6 +120,11 @@ redis.on('ready', () => {
 // ─── App Express ────────────────────────────────────────────────
 const app = express();
 
+// Confiar en el proxy inverso (Nginx/Apache en cPanel) para leer la IP real
+// del cliente desde X-Forwarded-For. Sin esto, express-rate-limit lanza
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR y no puede aplicar rate limiting por IP.
+app.set('trust proxy', 1);
+
 app.use(helmet()); // Refuerzo estructural de cabeceras HTTP
 app.use(createGlobalLimiter(telegramNotifier)); // Deflector Anti-Bots + Sentinel alerta Rate Limit
 

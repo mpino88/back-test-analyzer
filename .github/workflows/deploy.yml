@@ -13,7 +13,7 @@ jobs:
     steps:
       # ─── 1. Checkout ──────────────────────────────────────────────
       - name: 📥 Extraer Código Fuente
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ─── 2. SCP — solo código fuente, sin artefactos ni historial ──
       # Excluimos: node_modules (se instalan en el servidor), dist (se
