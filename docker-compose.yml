@@ -7,6 +7,12 @@ networks:
   hitdash-net:
     driver: bridge
     name: hitdash-net
+  # ─── Red de ballbot_core — declarada como externa (creada por ballbot compose) ──
+  # Permite que hitdash-server alcance ballbot_db (safety net + backfill)
+  # sin exponer el puerto 5432 al host.
+  ballbot_ballbot_net:
+    external: true
+    name: ballbot_ballbot_net
 
 volumes:
   hitdash_pgdata:
@@ -71,6 +77,7 @@ services:
     restart: unless-stopped
     networks:
       - hitdash-net
+      - ballbot_ballbot_net   # alcanza ballbot_db (IngestionWorker safety net)
     depends_on:
       hitdash-postgres:
         condition: service_healthy
