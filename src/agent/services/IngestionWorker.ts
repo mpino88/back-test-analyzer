@@ -80,21 +80,51 @@ export class IngestionWorker {
     logger.info('IngestionWorker: TelegramNotifier vinculado — logs de servicio ACTIVOS');
   }
 
-  // Registra el job repetible cada 15 minutos con jobId fijo (deduplicación)
+  // ═══════════════════════════════════════════════════════════════
+  // ARQUITECTURA CORRECTA — Safety Net 2×/día
+  // ─────────────────────────────────────────────────────────────
+  // ball-monitor ya envía cada sorteo via webhook POST /api/ingest
+  // en el instante exacto en que lo detecta → ingesta real-time.
+  //
+  // El IngestionWorker ya NO necesita correr cada 15 min (96×/día).
+  // Su único rol ahora es: fallback de reconciliación si el webhook
+  // falla (crash de ball-monitor, error de red, proceso caído).
+  //
+  // Horarios de sorteo Florida (ET):
+  //   Midday:  ~12:30 PM ET = 17:00 UTC (EDT) / 18:00 UTC (EST)
+  //   Evening: ~21:45 ET   = 02:15 UTC+1 (EDT) / 03:15 UTC+1 (EST)
+  //
+  // Safety net: 30 minutos después de cada draw time esperado:
+  //   Post-Midday:  17:30 UTC — si webhook falló, catch aquí
+  //   Post-Evening: 02:30 UTC — si webhook falló, catch aquí
+  // ═══════════════════════════════════════════════════════════════
   async register(): Promise<void> {
+    // Eliminar el scheduler de 15 minutos si aún existía en Redis
+    await this.queue.removeJobScheduler('ingestion-scheduler').catch(() => {});
+
+    // Post-Midday safety net — 17:30 UTC (12:30 PM EDT / 11:30 AM EST)
     await this.queue.upsertJobScheduler(
-      'ingestion-scheduler',
-      { every: 15 * 60 * 1000 }, // 15 minutos
+      'ingestion-post-midday',
+      { pattern: '30 17 * * *' },
       {
         name: 'ingest',
         data: { trigger: 'cron' } satisfies IngestionJobData,
-        opts: {
-          removeOnComplete: { count: 10 },
-          removeOnFail: { count: 5 },
-        },
+        opts: { removeOnComplete: { count: 5 }, removeOnFail: { count: 3 } },
       }
     );
-    logger.info('IngestionWorker: job cron registrado (cada 15 min)');
+
+    // Post-Evening safety net — 02:30 UTC (21:30 ET siguiente día)
+    await this.queue.upsertJobScheduler(
+      'ingestion-post-evening',
+      { pattern: '30 2 * * *' },
+      {
+        name: 'ingest',
+        data: { trigger: 'cron' } satisfies IngestionJobData,
+        opts: { removeOnComplete: { count: 5 }, removeOnFail: { count: 3 } },
+      }
+    );
+
+    logger.info('IngestionWorker: safety net 2×/día registrado (17:30 UTC + 02:30 UTC)');
   }
 
   // Inicia el worker que procesa los jobs de la cola
@@ -108,7 +138,7 @@ export class IngestionWorker {
       },
       {
         connection: parseRedisUrl(),
-        concurrency: 1, // un solo job a la vez
+        concurrency: 1, // un solo job a la vez — safety net, no compite con webhook
       }
     );
 

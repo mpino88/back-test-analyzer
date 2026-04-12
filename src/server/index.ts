@@ -215,7 +215,7 @@ async function start(): Promise<void> {
   try {
     await ingestionWorker.register();
     ingestionWorker.start();
-    logger.info('✅ IngestionWorker iniciado');
+    logger.info('✅ IngestionWorker iniciado (safety net 2×/día: 17:30 + 02:30 UTC — webhook es el camino primario)');
   } catch (err) {
     logger.warn({ error: err }, '⚠️  IngestionWorker no iniciado — Redis requerido');
   }
