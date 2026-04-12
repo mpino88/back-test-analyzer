@@ -315,8 +315,12 @@ export class IngestionWorker {
     const drawType = row.period === 'm' ? 'midday' : 'evening';
 
     // Convertir MM/DD/YY → YYYY-MM-DD
+    // Regla de corte: YY <= 30 → 20YY (2000-2030), YY > 30 → 19YY (1931-1999)
+    // Evita que datos históricos de los 90s se almacenen como 2092.
     const [mm, dd, yy] = row.date.split('/');
-    const drawDate = `20${yy}-${mm!.padStart(2, '0')}-${dd!.padStart(2, '0')}`;
+    const yyNum   = parseInt(yy!, 10);
+    const century = yyNum <= 30 ? '20' : '19';
+    const drawDate = `${century}${yy}-${mm!.padStart(2, '0')}-${dd!.padStart(2, '0')}`;
 
     const posText = gameType === 'pick3'
       ? `P1=${digits.p1} P2=${digits.p2} P3=${digits.p3}`
