@@ -74,11 +74,11 @@ export function createBacktestControlRouter(
         date_max: string;
       }>(
         `SELECT
-           SPLIT_PART(draw_key, ':', 1)       AS game,
-           SPLIT_PART(draw_key, ':', 2)       AS period,
-           COUNT(*)::text                     AS count,
-           MIN(SPLIT_PART(draw_key, ':', 3))  AS date_min,
-           MAX(SPLIT_PART(draw_key, ':', 3))  AS date_max
+           SPLIT_PART(draw_key, ':', 1)  AS game,
+           SPLIT_PART(draw_key, ':', 2)  AS period,
+           COUNT(*)::text                AS count,
+           MIN(draw_date)::text          AS date_min,
+           MAX(draw_date)::text          AS date_max
          FROM hitdash.ingested_results
          GROUP BY SPLIT_PART(draw_key, ':', 1), SPLIT_PART(draw_key, ':', 2)
          ORDER BY game, period`

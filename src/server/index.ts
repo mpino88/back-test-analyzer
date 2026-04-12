@@ -15,6 +15,7 @@ import { createHealthRouter } from './routes/healthRouter.js';
 import { createAgentRouter } from './routes/agentRouter.js';
 import { createSSERouter } from './routes/sseRouter.js';
 import { createBacktestControlRouter } from './routes/backtestControlRouter.js';
+import { createIngestRouter } from './routes/ingestRouter.js';
 import { IngestionWorker } from '../agent/services/IngestionWorker.js';
 import { RAGService } from '../agent/services/RAGService.js';
 import { AgentScheduler } from '../agent/core/AgentScheduler.js';
@@ -157,6 +158,10 @@ const DIST_PATH  = join(__dirname, '../../dist');
 
 // ─── Rutas ──────────────────────────────────────────────────────
 app.use(createHealthRouter(agentPool, redis));
+// ─── ball-monitor webhook — NO API key, autenticado por body.secret ──
+// Ball-monitor envía el resultado del sorteo en el MISMO instante que lo detecta.
+// Elimina el lag de 15 min del IngestionWorker cron. Sin cambios de red Docker.
+app.use('/api/ingest', createIngestRouter(agentPool, ragService, postDrawProcessor, redis));
 app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
 app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool, redis));
 app.use(createSSERouter(agentPool, redis));
@@ -251,11 +256,11 @@ async function start(): Promise<void> {
       // draw_key format: "{game}:{period}:{YYYY-MM-DD}" e.g. "p3:m:2026-03-22"
       const { rows } = await agentPool.query(
         `SELECT
-           SPLIT_PART(draw_key, ':', 1)       AS game,
-           SPLIT_PART(draw_key, ':', 2)       AS period,
-           COUNT(*)::text                     AS count,
-           MIN(SPLIT_PART(draw_key, ':', 3))  AS date_min,
-           MAX(SPLIT_PART(draw_key, ':', 3))  AS date_max
+           SPLIT_PART(draw_key, ':', 1)  AS game,
+           SPLIT_PART(draw_key, ':', 2)  AS period,
+           COUNT(*)::text                AS count,
+           MIN(draw_date)::text          AS date_min,
+           MAX(draw_date)::text          AS date_max
          FROM hitdash.ingested_results
          GROUP BY SPLIT_PART(draw_key, ':', 1), SPLIT_PART(draw_key, ':', 2)`
       );
