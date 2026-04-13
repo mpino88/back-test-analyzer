@@ -118,7 +118,18 @@ export class PostDrawProcessor {
   private async process(data: FeedbackJobData): Promise<void> {
     const { draw_id, game_type, draw_type, draw_date, actual_digits } = data;
 
-    // ─── 1. Obtener cartones pendientes del sorteo ────────────────
+    // ─── FASE A: Pair hit detection SIEMPRE corre primero ────────────────────
+    // CRÍTICO: No debe bloquearse por el estado de carton_generations.
+    // Antes: crash en ResultComparator (num.digits=undefined para pair-mode cartones)
+    // impedía que estas funciones corrieran. Ahora corren incondicionalmente.
+    await this.updateLivePairHits(game_type, draw_type, draw_date, actual_digits);
+    await this.updateLiveAdaptiveTopN(game_type, draw_type);
+    await this.updateLiveAdaptiveWeights(game_type, draw_type);
+
+    // ─── FASE B: Comparación de cartones legacy (solo cartones con digits) ────
+    // Pair-mode cartones tienen numbers=[{value:"37"}] sin campo digits.
+    // Filtrar antes de pasar al ResultComparator evita el crash
+    // "Cannot read properties of undefined (reading 'p1')".
     const cartonRows = await this.agentPool.query<CartonRow>(
       `SELECT id, game_type, carton_size, numbers, strategy_id
        FROM hitdash.carton_generations
@@ -129,51 +140,46 @@ export class PostDrawProcessor {
       [game_type, draw_type, draw_date]
     );
 
-    const cartones = cartonRows.rows;
-    if (cartones.length === 0) {
-      logger.info({ game_type, draw_type, draw_date }, 'No hay cartones pendientes para este sorteo');
-      return;
-    }
-
-    logger.info({ count: cartones.length, game_type, draw_type }, 'Cartones pendientes encontrados');
-
-    // ─── 2. Comparar cada cartón contra el resultado real ─────────
-    const comparisons = this.comparator.compareMany(
-      cartones.map(c => ({ ...c, numbers: c.numbers as Array<{ value: string; digits: LotteryDigits }> })),
-      actual_digits,
-      draw_id
+    // Solo cartones donde TODOS los números tienen el campo digits (formato legacy)
+    const cartones = cartonRows.rows.filter(
+      c => (c.numbers as Array<{ value: string; digits?: LotteryDigits }>).every(n => n.digits != null)
     );
 
-    // ─── 3. Persistir feedback + embeddings ──────────────────────
-    const { embedded, skipped } = await this.embedder.embedMany(comparisons);
-    logger.info({ embedded, skipped }, 'Feedback embeddings persistidos');
+    if (cartones.length === 0) {
+      logger.info({ game_type, draw_type, draw_date }, 'Sin cartones legacy — pair hit detection ya procesado en Fase A');
+      // Drift + accuracy aún corren aunque no haya cartones legacy
+    } else {
+      logger.info({ count: cartones.length, game_type, draw_type }, 'Cartones legacy pendientes encontrados');
 
-    // ─── 4. Actualizar win_rate por estrategia ────────────────────
-    const byStrategy = new Map<string, typeof comparisons>();
-    for (const comp of comparisons) {
-      const carton = cartones.find(c => c.id === comp.carton_id);
-      const stratId = carton?.strategy_id ?? 'unknown';
-      const existing = byStrategy.get(stratId) ?? [];
-      existing.push(comp);
-      byStrategy.set(stratId, existing);
-    }
+      // ─── 2. Comparar cada cartón contra el resultado real ───────
+      const comparisons = this.comparator.compareMany(
+        cartones.map(c => ({ ...c, numbers: c.numbers as Array<{ value: string; digits: LotteryDigits }> })),
+        actual_digits,
+        draw_id
+      );
 
-    for (const [stratId, results] of byStrategy) {
-      if (stratId !== 'unknown') {
-        await this.evaluator.evaluate(stratId, results);
+      // ─── 3. Persistir feedback + embeddings ─────────────────────
+      const { embedded, skipped } = await this.embedder.embedMany(comparisons);
+      logger.info({ embedded, skipped }, 'Feedback embeddings persistidos');
+
+      // ─── 4. Actualizar win_rate por estrategia ───────────────────
+      const byStrategy = new Map<string, typeof comparisons>();
+      for (const comp of comparisons) {
+        const carton = cartones.find(c => c.id === comp.carton_id);
+        const stratId = carton?.strategy_id ?? 'unknown';
+        const existing = byStrategy.get(stratId) ?? [];
+        existing.push(comp);
+        byStrategy.set(stratId, existing);
       }
+
+      for (const [stratId, results] of byStrategy) {
+        if (stratId !== 'unknown') {
+          await this.evaluator.evaluate(stratId, results);
+        }
+      }
+
+      await this.evaluator.rebalanceStatuses();
     }
-
-    await this.evaluator.rebalanceStatuses();
-
-    // ─── 4b. Actualizar pesos adaptativos desde win_rate live ─────
-    // Después de cada sorteo real, las estrategias que acertaron suben de peso
-    // Factor = win_rate / median_win_rate, clamped [0.5, 2.0], EMA(α=0.15)
-    await this.updateLiveAdaptiveWeights(game_type, draw_type);
-
-    // ─── 4c. Pair hit detection + adaptive top-N live update ─────
-    await this.updateLivePairHits(game_type, draw_type, draw_date, actual_digits);
-    await this.updateLiveAdaptiveTopN(game_type, draw_type);
 
     // ─── 5. Drift detection ───────────────────────────────────────
     const driftReport = await this.drift.detect(game_type, draw_type);
@@ -221,8 +227,6 @@ export class PostDrawProcessor {
     logger.info(
       {
         game_type, draw_type, draw_date,
-        total_cartones: comparisons.length,
-        hits: comparisons.filter(c => c.hits_exact > 0).length,
         drift: driftReport.detected,
         accuracy_30d: accuracy.avg_accuracy,
       },

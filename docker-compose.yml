@@ -88,7 +88,9 @@ services:
       PORT: 3001
       AGENT_DATABASE_URL: postgresql://${POSTGRES_USER:-hitdash}:${POSTGRES_PASSWORD}@hitdash-postgres:5432/${POSTGRES_DB:-hitdash}
       BALLBOT_DATABASE_URL: ${BALLBOT_DATABASE_URL}
-      BALLBOT_SSL: "true"
+      # SSL=false cuando BALLBOT_DATABASE_URL apunta a ballbot_db Docker local.
+      # SSL=true cuando apunta a Render externo. Controlado via GitHub Secret BALLBOT_SSL.
+      BALLBOT_SSL: ${BALLBOT_SSL:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD}@hitdash-redis:6379
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
