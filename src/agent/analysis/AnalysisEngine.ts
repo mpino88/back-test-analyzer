@@ -611,7 +611,13 @@ export class AnalysisEngine {
       for (const rp of ranked_pairs) {
         rp.score = (freqScores[rp.pair] ?? 0) / maxFreq;
       }
-      ranked_pairs.sort((a, b) => b.score - a.score);
+      ranked_pairs.sort((a, b) => {
+        if (Math.abs(a.score - b.score) > 1e-9) return b.score - a.score;
+        // Deterministic fallback to avoid sequential output
+        const hashA = (parseInt(a.pair, 10) * 1103515245 + 12345) % 997;
+        const hashB = (parseInt(b.pair, 10) * 1103515245 + 12345) % 997;
+        return hashB - hashA;
+      });
       logger.info(
         { maxRankedScore, fallback: 'frequency' },
         'AnalysisEngine: scores degenerados — fallback a FrequencyAnalysis para ranking de pares'

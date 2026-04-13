@@ -49,8 +49,6 @@
       <div class="lobby__brand">
         <span class="lobby__logo">⚡</span>
         <span class="lobby__brand-name">Hitdash</span>
-        <span class="lobby__brand-sep">by</span>
-        <span class="lobby__brand-sub">Bliss Systems</span>
       </div>
       <div class="lobby__status-chip" :class="agentOnline ? 'chip--live' : 'chip--off'">
         <span class="chip__dot"></span>

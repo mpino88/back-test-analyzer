@@ -186,21 +186,25 @@ export class HitdashAgent {
     // pair_recommendations already exist for this game_type+draw_type+draw_date.
     if (trigger_type !== 'manual') {
       try {
-        const { rows: dup } = await this.agentPool.query<{ session_id: string }>(
+        const { rows: dup } = await this.agentPool.query<{ id: string }>(
           `SELECT session_id FROM hitdash.pair_recommendations
            WHERE game_type = $1 AND draw_type = $2 AND draw_date = $3
+           UNION
+           SELECT id as session_id FROM hitdash.agent_sessions
+           WHERE game_type = $1 AND draw_type = $2 AND created_at > now() - interval '2 hours'
+             AND status IN ('running', 'completed')
            LIMIT 1`,
           [game_type, draw_type, draw_date]
         );
         if (dup.length > 0) {
           logger.info(
             { game_type, draw_type, draw_date, existing_session: dup[0]!.session_id },
-            'HitdashAgent: recomendaciones ya existen para este sorteo — omitiendo ciclo duplicado'
+            'HitdashAgent: ciclo bloqueado por restricción de idempotencia (previamente ejecutado)'
           );
           return dup[0]!.session_id;
         }
       } catch {
-        // pair_recommendations table may not exist yet — proceed normally
+        // Fallback natural 
       }
     }
 
@@ -633,9 +637,11 @@ export class HitdashAgent {
       memoryBlock = `\n\nCONTEXTO HISTÓRICO (memoria RAG del agente):\n${parts.join('\n\n')}`;
     }
 
-    const systemPrompt = `Eres un analista estadístico de lotería. Validas listas de pares ordenados (XY) para Florida Lottery ${game_type === 'pick3' ? 'Pick 3 (decena+unidad)' : 'Pick 4 (AB y CD)'}.
-Consideras el contexto histórico para detectar patrones recurrentes o evitar errores pasados.
-Responde SOLO con JSON válido. No uses markdown fuera del JSON.`;
+    const systemPrompt = `Eres el Analista Principal (APEX) de un modelo estadístico de lotería tipo Hedge Fund.
+Validas pares (XY) para Florida Lottery ${game_type === 'pick3' ? 'Pick 3 (decena+unidad)' : 'Pick 4 (AB y CD)'}.
+Consideras el contexto histórico para optimizar el Edge.
+Responde SOLO con JSON válido.
+REGLA CRÍTICA INVIOLABLE: La explicación "reasoning" será leída por inversionistas institucionales. Tono ejecutivo, impecable y de alta convicción. NUNCA utilices jerga excluyente, variables de base de datos ni desincentivos puros (ej. PROHIBIDO decir "kelly<=0", "no_edge", "p@5", "Sharpe negativo", o admitir falta de ventaja aleatoria). Enfócate en "mitigación de riesgo", "consolidación de data", o "confluencia algorítmica".`;
 
     const userPrompt = `Sorteo: ${game_type.toUpperCase()} ${draw_type} del ${draw_date}${centenaNote}
 
