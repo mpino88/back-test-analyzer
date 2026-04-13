@@ -461,7 +461,12 @@ export class AnalysisEngine {
 
     logger.info({ game_type, draw_type, half, period }, 'AnalysisEngine: analyzePairs iniciado');
 
-    const [rFreq, rGap, rHC, rPairs, rFib, rStreak, rPos, rMA] = await Promise.allSettled([
+    // C2: Multi-window temporal — run base algorithms at primary period, PLUS
+    // short-term (30d) frequency + hot_cold for momentum detection.
+    // Blend: primary consensus + 25% momentum overlay captures both stability and trend.
+    const SHORT_PERIOD: AnalysisPeriod = 30;
+    const [rFreq, rGap, rHC, rPairs, rFib, rStreak, rPos, rMA,
+           rFreqShort, rHCShort] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
       this.hc.runPairs(game_type, draw_type, half, period),
@@ -470,6 +475,13 @@ export class AnalysisEngine {
       this.streak.runPairs(game_type, draw_type, half, period),
       this.pos.runPairs(game_type, draw_type, half, 365),
       this.ma.runPairs(game_type, draw_type, half, period),
+      // Short-term momentum windows (only when primary period > 30d)
+      period > SHORT_PERIOD
+        ? this.freq.runPairs(game_type, draw_type, half, SHORT_PERIOD)
+        : Promise.reject(new Error('same_period')),
+      period > SHORT_PERIOD
+        ? this.hc.runPairs(game_type, draw_type, half, SHORT_PERIOD)
+        : Promise.reject(new Error('same_period')),
     ]);
 
     const algorithms_succeeded: string[] = [];

@@ -1,5 +1,17 @@
 <template>
-  <div class="agent-layout">
+  <div class="agent-layout" :class="{ 'demo-active': demoMode }">
+
+    <!-- C4: Mode banner — shown when ?demo=1 or toggled manually -->
+    <div v-if="demoMode" class="demo-banner">
+      <span class="demo-banner__icon">⚠️</span>
+      <span class="demo-banner__text">
+        <strong>MODO PRESENTACIÓN</strong> — Sistema de análisis estadístico experimental.
+        Las predicciones son inferencias probabilísticas, <strong>no garantizan resultados</strong>.
+        &nbsp;|&nbsp; Bliss Systems LLC © 2026
+      </span>
+      <button class="demo-banner__close" @click="demoMode = false" title="Cerrar banner">✕</button>
+    </div>
+
     <!-- Sidebar nav -->
     <aside class="agent-nav">
       <div class="agent-nav__brand">
@@ -8,31 +20,34 @@
       </div>
 
       <nav class="agent-nav__links">
-        <RouterLink to="/agent/dashboard"  class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/dashboard"    class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🎯</span> Dashboard
         </RouterLink>
-        <RouterLink to="/agent/cartones"   class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/rendimiento"  class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">📊</span> Rendimiento
+        </RouterLink>
+        <RouterLink to="/agent/cartones"     class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🎰</span> Cartones
         </RouterLink>
-        <RouterLink to="/agent/accuracy"   class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/accuracy"     class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📈</span> Accuracy
         </RouterLink>
-        <RouterLink to="/agent/strategies" class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/strategies"   class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🧠</span> Estrategias
         </RouterLink>
-        <RouterLink to="/agent/backtest"         class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/backtest"     class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔬</span> Backtest
         </RouterLink>
         <RouterLink to="/agent/backtest-control" class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">⚙️</span> BT Control
         </RouterLink>
-        <RouterLink to="/agent/progressive" class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/progressive"  class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">▶</span> Play Signal
         </RouterLink>
-        <RouterLink to="/agent/tracking"   class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/tracking"     class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📡</span> Tracking
         </RouterLink>
-        <RouterLink to="/agent/alerts"     class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/alerts"       class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>
           Alertas
           <span v-if="pendingAlerts > 0" class="nav-link__badge">{{ pendingAlerts }}</span>
@@ -43,6 +58,9 @@
         <RouterLink to="/" class="nav-link nav-link--secondary">
           <span class="nav-link__icon">◀</span> Analyzer
         </RouterLink>
+        <button class="demo-toggle" @click="demoMode = !demoMode" :class="{ 'demo-toggle--on': demoMode }">
+          {{ demoMode ? '🔒 Demo ON' : '🎤 Demo' }}
+        </button>
         <div class="agent-nav__status" :class="connected ? 'status--live' : 'status--offline'">
           <span class="status__dot"></span>
           {{ connected ? 'Live' : 'Offline' }}
@@ -58,15 +76,69 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { RouterLink, RouterView } from 'vue-router';
+import { computed, ref, onMounted } from 'vue';
+import { RouterLink, RouterView, useRoute } from 'vue-router';
 import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
 
 const { status, connected } = useAgentStatus();
 const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
+
+// C4: Demo mode — activated via ?demo=1 URL param or sidebar toggle
+const route = useRoute();
+const demoMode = ref(false);
+onMounted(() => {
+  demoMode.value = route.query['demo'] === '1' || route.query['demo'] === 'true';
+});
 </script>
 
 <style scoped>
+/* ─── Demo Banner ────────────────────────────────────────────── */
+.demo-banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 9999;
+  background: linear-gradient(90deg, #7c3aed, #1d4ed8);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 1.25rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+.demo-banner__icon { font-size: 1rem; flex-shrink: 0; }
+.demo-banner__text { flex: 1; line-height: 1.4; }
+.demo-banner__close {
+  background: rgba(255,255,255,0.15);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+.demo-banner__close:hover { background: rgba(255,255,255,0.3); }
+
+.demo-toggle {
+  background: #1a2535;
+  border: 1px solid #2d3f55;
+  color: #94a3b8;
+  border-radius: 6px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.78rem;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: all 0.15s;
+}
+.demo-toggle:hover { background: #1d3a5f; color: #e2e8f0; }
+.demo-toggle--on { background: #2d1b69; color: #a78bfa; border-color: #7c3aed; }
+
+/* Push content down when demo banner is active */
+.demo-active { padding-top: 38px; }
+
 .agent-layout {
   display: flex;
   min-height: 100vh;

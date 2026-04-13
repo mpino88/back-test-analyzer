@@ -787,5 +787,82 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
     }
   });
 
+  // ─── GET /api/agent/rendimiento ─────────────────────────────────
+  // C3: Live performance dashboard — prediction vs actual for all sorteos
+  // Returns: summary stats + chronological list of pair recommendations with hit status
+  router.get('/rendimiento', async (req: Request, res: Response) => {
+    const game_type = (req.query['game_type'] as string) ?? 'pick3';
+    const days      = Math.min(90, Math.max(7, parseInt((req.query['days'] as string) ?? '30', 10)));
+
+    try {
+      // ── Summary: hit rates by game/draw/half ─────────────────────
+      const { rows: summary } = await agentPool.query<{
+        game_type: string; draw_type: string; half: string;
+        total: number; hits: number; hit_rate: number; avg_rank: number;
+        baseline: number; vs_azar: number;
+      }>(
+        `SELECT
+           game_type, draw_type, half,
+           COUNT(*)::int                                        AS total,
+           COUNT(*) FILTER (WHERE hit = true)::int             AS hits,
+           ROUND(AVG(CASE WHEN hit THEN 1.0 ELSE 0.0 END)::numeric, 4)::float AS hit_rate,
+           ROUND(AVG(hit_at_rank)::numeric, 1)::float          AS avg_rank,
+           ROUND(AVG(optimal_n::float / 100), 4)::float        AS baseline,
+           ROUND(
+             AVG(CASE WHEN hit THEN 1.0 ELSE 0.0 END) -
+             AVG(optimal_n::float / 100), 4
+           )::float                                             AS vs_azar
+         FROM hitdash.pair_recommendations
+         WHERE game_type = $1
+           AND created_at >= now() - ($2 || ' days')::interval
+           AND hit IS NOT NULL
+         GROUP BY game_type, draw_type, half
+         ORDER BY game_type, draw_type, half`,
+        [game_type, days]
+      );
+
+      // ── Timeline: last 60 sorteos with hit/miss ──────────────────
+      const { rows: timeline } = await agentPool.query<{
+        id: string; game_type: string; draw_type: string; draw_date: string;
+        half: string; pairs: string[]; optimal_n: number;
+        predicted_effectiveness: number; actual_pair: string | null;
+        hit: boolean | null; hit_at_rank: number | null; confidence: number;
+        created_at: string;
+      }>(
+        `SELECT
+           id, game_type, draw_type, draw_date::text, half,
+           pairs, optimal_n, predicted_effectiveness,
+           actual_pair, hit, hit_at_rank, confidence,
+           created_at::text
+         FROM hitdash.pair_recommendations
+         WHERE game_type = $1
+           AND created_at >= now() - ($2 || ' days')::interval
+         ORDER BY draw_date DESC, draw_type, half
+         LIMIT 120`,
+        [game_type, days]
+      );
+
+      // ── Strategy comparison: backtest v2 hit_rates ───────────────
+      const { rows: strategies } = await agentPool.query<{
+        strategy_name: string; half: string; hit_rate: number;
+        precision_at_5: number; precision_at_10: number;
+        expected_rank: number; sharpe: number; kelly_fraction: number;
+        total_eval_pts: number;
+      }>(
+        `SELECT strategy_name, half, hit_rate,
+                precision_at_5, precision_at_10,
+                expected_rank, sharpe, kelly_fraction, total_eval_pts
+         FROM hitdash.backtest_results_v2
+         WHERE game_type = $1
+         ORDER BY hit_rate DESC`,
+        [game_type]
+      );
+
+      res.json({ summary, timeline, strategies, days, game_type });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   return router;
 }

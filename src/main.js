@@ -15,9 +15,10 @@ const router = createRouter({
       path: '/agent',
       component: () => import('./views/agent/AgentLayout.vue'),
       children: [
-        { path: '',          redirect: '/agent/dashboard' },
-        { path: 'dashboard', component: () => import('./views/agent/DashboardView.vue') },
-        { path: 'cartones',  component: () => import('./views/agent/CartonesView.vue') },
+        { path: '',            redirect: '/agent/dashboard' },
+        { path: 'dashboard',   component: () => import('./views/agent/DashboardView.vue') },
+        { path: 'rendimiento', component: () => import('./views/agent/RendimientoView.vue') },
+        { path: 'cartones',    component: () => import('./views/agent/CartonesView.vue') },
         { path: 'accuracy',  component: () => import('./views/agent/AccuracyView.vue') },
         { path: 'strategies',component: () => import('./views/agent/StrategiesView.vue') },
         { path: 'backtest',         component: () => import('./views/agent/BacktestView.vue') },
