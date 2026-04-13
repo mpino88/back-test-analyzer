@@ -107,10 +107,12 @@ function computeCognitiveN(m: PrecisionSnapshot): {
   let kelly_str: string;
   if (n_kelly >= 3) {
     optimal_n = Math.round(0.50 * n_kelly + 0.30 * n_precision + 0.20 * n_rank);
-    kelly_str = `kelly=${m.kelly_fraction.toFixed(3)}`;
+    kelly_str = `f*=${m.kelly_fraction.toFixed(3)}`;
   } else {
     optimal_n = Math.round(0.55 * n_precision + 0.45 * n_rank);
-    kelly_str = 'kelly≤0(no_edge)';
+    kelly_str = 'f*=0.000';
+    // A2: cap at 20 when no measurable edge — expanding coverage without edge is counterproductive
+    optimal_n = Math.min(20, optimal_n);
   }
   optimal_n = Math.max(3, Math.min(50, optimal_n));
 
@@ -585,6 +587,24 @@ export class AnalysisEngine {
       }
     }
     ranked_pairs.sort((a, b) => b.score - a.score);
+
+    // A1 FIX: When all consensus scores are degenerate (≤ 0.001), the sort preserves
+    // iteration order (00→99), producing a useless sequential recommendation.
+    // Fall back to pure FrequencyAnalysis ranking — historical pair frequency is always
+    // a meaningful signal even with zero backtest data.
+    const maxRankedScore = ranked_pairs[0]?.score ?? 0;
+    if (maxRankedScore <= 0.001 && rFreq.status === 'fulfilled') {
+      const freqScores = rFreq.value;
+      const maxFreq = Math.max(...Object.values(freqScores), 1e-9);
+      for (const rp of ranked_pairs) {
+        rp.score = (freqScores[rp.pair] ?? 0) / maxFreq;
+      }
+      ranked_pairs.sort((a, b) => b.score - a.score);
+      logger.info(
+        { maxRankedScore, fallback: 'frequency' },
+        'AnalysisEngine: scores degenerados — fallback a FrequencyAnalysis para ranking de pares'
+      );
+    }
 
     // Load adaptive top_n — preferir apex_adaptive, fallback a la media de todas las estrategias
     let top_n = dbTopN['apex_adaptive'] ?? 15;
