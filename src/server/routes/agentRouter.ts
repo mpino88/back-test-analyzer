@@ -18,7 +18,7 @@ const logger = pino({ name: 'AgentRouter' });
 export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool, redis?: import('ioredis').Redis): Router {
   const router = Router();
   const backtestEngine      = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
-  const pairBacktestEngine  = ballbotPool ? new PairBacktestEngine(ballbotPool, agentPool) : null;
+  const pairBacktestEngine  = new PairBacktestEngine(agentPool);
   const progressiveEngine   = ballbotPool ? new ProgressiveEngine(ballbotPool) : null;
 
   const strictLimiter = createStrictLimiter();

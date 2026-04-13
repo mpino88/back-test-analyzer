@@ -304,13 +304,6 @@ function computePrecisionMetrics(
   };
 }
 
-// Normalizar array de scores a [0,1] dividiendo por max
-function normalizeScores(scores: Map<string, number>): Map<string, number> {
-  const max = Math.max(...scores.values(), 0.0001);
-  const out = new Map<string, number>();
-  for (const [p, s] of scores) out.set(p, s / max);
-  return out;
-}
 
 // ─── 1. frequency_rank ──────────────────────────────────────
 const pairFrequencyRank: PairRankFn = (draws, half) => {
@@ -613,8 +606,7 @@ function pick4PairHit(recommended: string[], actualAB: string, actualCD: string)
 // ─── PairBacktestEngine ───────────────────────────────────────
 export class PairBacktestEngine {
   constructor(
-    private readonly ballbotPool: Pool,
-    private readonly agentPool:   Pool
+    private readonly agentPool: Pool
   ) {}
 
   // ─── Cargar top_n state desde DB ────────────────────────────
@@ -987,35 +979,55 @@ export class PairBacktestEngine {
     );
   }
 
-  // ─── Actualizar adaptive top_n ───────────────────────────────
+  // ─── Actualizar adaptive top_n + seed weights desde backtest ────
   async updateAdaptiveTopN(
     summaries: PairBacktestSummary[],
     game_type: string,
     mode: string
   ): Promise<void> {
+    // B1 FIX: Seed adaptive_weights.weight from backtest hit_rates.
+    // Use relative scaling: weight = hit_rate / mean_hit_rate, clamped [0.5, 2.0].
+    // This matches the PostDrawProcessor EMA formula's clampedFactor convention.
+    const base = summaries.filter(s => s.strategy_name !== 'apex_adaptive');
+    const meanHitRate = base.length > 0
+      ? base.reduce((sum, s) => sum + s.hit_rate, 0) / base.length
+      : 0.01;  // fallback: random baseline 1/100
+
     for (const s of summaries) {
       if (s.strategy_name === 'apex_adaptive') continue;
       const state    = await this.loadAdaptiveTopN(s.strategy_name, game_type, mode);
       const newState = updateTopN(state, s.hit_rate);
 
+      // Relative weight: how much better than average is this strategy?
+      const relativeWeight = meanHitRate > 0 ? s.hit_rate / meanHitRate : 1.0;
+      const seedWeight = Math.max(0.5, Math.min(2.0, relativeWeight));
+
       await this.agentPool.query(
         `INSERT INTO hitdash.adaptive_weights (strategy, game_type, mode, top_n, hit_rate_history, weight, sample_size)
-         VALUES ($1, $2, $3, $4, $5::jsonb, 1.0, 0)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
          ON CONFLICT (strategy, game_type, mode)
          DO UPDATE SET
            top_n             = $4,
            hit_rate_history  = $5::jsonb,
+           weight            = $6,
+           sample_size       = GREATEST(hitdash.adaptive_weights.sample_size, $7),
            updated_at        = now()`,
         [
           s.strategy_name, game_type, mode,
           newState.current_top_n,
           JSON.stringify(newState.hit_rate_history),
+          seedWeight,
+          s.total_eval_pts,
         ]
       );
 
       logger.info(
-        { strategy: s.strategy_name, old_n: state.current_top_n, new_n: newState.current_top_n },
-        'Adaptive top_n actualizado'
+        {
+          strategy: s.strategy_name,
+          old_n: state.current_top_n, new_n: newState.current_top_n,
+          hit_rate: s.hit_rate, mean_hit_rate: meanHitRate, seed_weight: seedWeight,
+        },
+        'Adaptive top_n + weight actualizado desde backtest'
       );
     }
   }

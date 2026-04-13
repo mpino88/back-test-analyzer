@@ -37,11 +37,11 @@ const logger = pino({ name: 'BacktestControlRouter' });
 // ─── Router factory ───────────────────────────────────────────
 export function createBacktestControlRouter(
   agentPool: Pool,
-  ballbotPool: Pool,
+  _ballbotPool: Pool,
   redis: Redis
 ): Router {
   const router  = Router();
-  const engine  = new PairBacktestEngine(ballbotPool, agentPool);
+  const engine  = new PairBacktestEngine(agentPool);
 
   // ── Auth global para todo el router ─────────────────────────
   router.use(requireApiKey);

@@ -82,7 +82,7 @@ export class HitdashAgent {
     this.llmRouter           = new LLMRouter();
     this.notifier            = notifier ?? new TelegramNotifier();
     this.ragService          = ragService;
-    this.pairBacktestEngine  = new PairBacktestEngine(ballbotPool, agentPool);
+    this.pairBacktestEngine  = new PairBacktestEngine(agentPool);
   }
 
   // ─── Proactive backtest check ─────────────────────────────────────
@@ -180,6 +180,29 @@ export class HitdashAgent {
     const reasoning_chain: unknown[] = [];
 
     logger.info(params, 'HitdashAgent: iniciando ciclo');
+
+    // ─── B3: Dedup — skip automatic re-runs for the same draw ────
+    // Manual triggers always run regardless. Scheduled triggers skip if
+    // pair_recommendations already exist for this game_type+draw_type+draw_date.
+    if (trigger_type !== 'manual') {
+      try {
+        const { rows: dup } = await this.agentPool.query<{ session_id: string }>(
+          `SELECT session_id FROM hitdash.pair_recommendations
+           WHERE game_type = $1 AND draw_type = $2 AND draw_date = $3
+           LIMIT 1`,
+          [game_type, draw_type, draw_date]
+        );
+        if (dup.length > 0) {
+          logger.info(
+            { game_type, draw_type, draw_date, existing_session: dup[0]!.session_id },
+            'HitdashAgent: recomendaciones ya existen para este sorteo — omitiendo ciclo duplicado'
+          );
+          return dup[0]!.session_id;
+        }
+      } catch {
+        // pair_recommendations table may not exist yet — proceed normally
+      }
+    }
 
     // ─── 1. Crear sesión en DB ───────────────────────────────────
     const sessionId = await this.createSession(trigger_type, game_type, draw_type);
