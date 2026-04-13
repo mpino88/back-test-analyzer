@@ -369,7 +369,13 @@ export class HitdashAgent {
       );
 
       // ═══ COG-10 LLM OVERRIDE: Integrar votos del LLM ═══
-      const rec = this.pairRecommender.recommend(pairAnalysis, undefined, llmResult.validated_pairs);
+      const rawRec = this.pairRecommender.recommend(pairAnalysis, undefined, llmResult.validated_pairs);
+
+      // ═══ PROGRESSIVE SIGNAL: Ajustar optimal_n según historial de aciertos ═══
+      const playSignal = await this.getProgressivePlaySignal(game_type, draw_type, 'du');
+      const rec = this.applyPlaySignal(rawRec, playSignal);
+      reasoning_chain.push({ step: 'progressive_signal', ...playSignal, ts: new Date().toISOString() });
+
       allRecs = [rec];
 
       await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmResult.reasoning);
@@ -398,10 +404,21 @@ export class HitdashAgent {
       );
 
       // ═══ COG-10: Aplicar validación LLM a ambos mitades ═══
-      const recs = this.pairRecommender.recommendPick4(
+      const rawRecs = this.pairRecommender.recommendPick4(
         abAnalysis, cdAnalysis, undefined,
         llmResult.validated_pairs, llmResult.validated_pairs
       );
+
+      // ═══ PROGRESSIVE SIGNAL: señal independiente por mitad ═══
+      const [sigAB, sigCD] = await Promise.all([
+        this.getProgressivePlaySignal(game_type, draw_type, 'ab'),
+        this.getProgressivePlaySignal(game_type, draw_type, 'cd'),
+      ]);
+      const recs = [
+        this.applyPlaySignal(rawRecs[0]!, sigAB),
+        this.applyPlaySignal(rawRecs[1]!, sigCD),
+      ].filter(Boolean) as import('../types/agent.types.js').PairRecommendation[];
+      reasoning_chain.push({ step: 'progressive_signal_pick4', ab: sigAB, cd: sigCD, ts: new Date().toISOString() });
       allRecs = recs;
 
       await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmResult.reasoning);
@@ -589,6 +606,116 @@ export class HitdashAgent {
         'HitdashAgent: error en alerta prescriptiva — continuando'
       );
     }
+  }
+
+  // ─── Progressive play signal ─────────────────────────────────────
+  // Reads pair_recommendations history to compute a PLAY/WAIT/ALERT signal.
+  // Logic mirrors ballbot's ProgressiveEngine but runs on Hitdash pair hits,
+  // making it fully self-contained — no ballbotPool dependency.
+  //
+  //   PLAY  → current miss streak ≥ avg_pre_miss + std  (stat edge detected)
+  //   ALERT → current miss streak > max ever pre-miss   (anomalous drought)
+  //   WAIT  → otherwise
+  //
+  // Effect on optimal_n:
+  //   PLAY  → trust PairRecommender's computed N (no change)
+  //   WAIT  → cap at 10 (conservative; edge not confirmed yet)
+  //   ALERT → add 5   (expand coverage; historically rare miss streak)
+  private async getProgressivePlaySignal(
+    game_type: GameType,
+    draw_type: DrawType,
+    half: string
+  ): Promise<{
+    signal: 'PLAY' | 'WAIT' | 'ALERT';
+    current_miss_streak: number;
+    avg_pre_miss: number;
+    threshold: number;
+    max_pre_miss: number;
+    sample_size: number;
+  }> {
+    const DEFAULT: ReturnType<typeof this.getProgressivePlaySignal> extends Promise<infer T> ? T : never = {
+      signal: 'WAIT', current_miss_streak: 0,
+      avg_pre_miss: 0, threshold: 0, max_pre_miss: 0, sample_size: 0,
+    };
+
+    try {
+      // Fetch last 100 resolved recommendations (newest first)
+      const { rows } = await this.agentPool.query<{ hit: boolean }>(
+        `SELECT hit
+         FROM hitdash.pair_recommendations
+         WHERE game_type = $1
+           AND draw_type = $2
+           AND half      = $3
+           AND hit IS NOT NULL
+         ORDER BY draw_date DESC
+         LIMIT 100`,
+        [game_type, draw_type, half]
+      );
+
+      if (rows.length < 5) return DEFAULT; // not enough history
+
+      // Count current miss streak (from newest row going back)
+      let currentMisses = 0;
+      for (const row of rows) {
+        if (!row.hit) currentMisses++;
+        else break;
+      }
+
+      // Collect all pre-miss counts (misses before each hit)
+      const preMissCounts: number[] = [];
+      let streak = 0;
+      let inMissRun = false;
+      for (const row of rows) {
+        if (!row.hit) {
+          streak++;
+          inMissRun = true;
+        } else {
+          if (inMissRun && streak > 0) preMissCounts.push(streak);
+          streak = 0;
+          inMissRun = false;
+        }
+      }
+
+      if (preMissCounts.length < 2) return { ...DEFAULT, current_miss_streak: currentMisses };
+
+      const avg = preMissCounts.reduce((s, v) => s + v, 0) / preMissCounts.length;
+      const variance = preMissCounts.reduce((s, v) => s + (v - avg) ** 2, 0) / preMissCounts.length;
+      const std = Math.sqrt(variance);
+      const threshold = avg + std;
+      const maxPreMiss = Math.max(...preMissCounts);
+
+      let signal: 'PLAY' | 'WAIT' | 'ALERT';
+      if (currentMisses > maxPreMiss)     signal = 'ALERT';
+      else if (currentMisses >= threshold) signal = 'PLAY';
+      else                                 signal = 'WAIT';
+
+      return {
+        signal,
+        current_miss_streak: currentMisses,
+        avg_pre_miss: +avg.toFixed(2),
+        threshold: +threshold.toFixed(2),
+        max_pre_miss: maxPreMiss,
+        sample_size: rows.length,
+      };
+    } catch (err) {
+      logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'getProgressivePlaySignal: error — defaulting to WAIT');
+      return DEFAULT;
+    }
+  }
+
+  // ─── Apply play signal to a PairRecommendation ───────────────────────
+  private applyPlaySignal(
+    rec: import('../types/agent.types.js').PairRecommendation,
+    sig: Awaited<ReturnType<HitdashAgent['getProgressivePlaySignal']>>
+  ): import('../types/agent.types.js').PairRecommendation {
+    if (sig.signal === 'WAIT') {
+      return { ...rec, optimal_n: Math.min(rec.optimal_n, 10) };
+    }
+    if (sig.signal === 'ALERT') {
+      return { ...rec, optimal_n: Math.min(50, rec.optimal_n + 5) };
+    }
+    // PLAY: trust cognitive N as-is
+    return rec;
   }
 
   // ═══ BN-02: Consultar memoria RAG con vector reutilizado ═══════════
