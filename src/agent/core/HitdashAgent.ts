@@ -518,12 +518,12 @@ export class HitdashAgent {
       const res = await this.agentPool.query(
         `INSERT INTO hitdash.proactive_alerts
            (alert_type, priority, game_type, message, data)
-         SELECT 'strategy_opportunity', 'medium', $1, $2, $3
+         SELECT 'strategy_opportunity', 'medium', $1::text, $2::text, $3::jsonb
          WHERE NOT EXISTS (
            SELECT 1 FROM hitdash.proactive_alerts
            WHERE alert_type = 'strategy_opportunity'
-             AND game_type = $1
-             AND message = $2
+             AND game_type = $1::text
+             AND message = $2::text
              AND created_at > now() - interval '12 hours'
          ) RETURNING id`,
         [

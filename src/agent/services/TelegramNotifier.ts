@@ -26,7 +26,7 @@ export class TelegramNotifier {
   private readonly enabled: boolean;
 
   constructor() {
-    const token  = process.env['TELEGRAM_BOT_TOKEN'];
+    const token = process.env['TELEGRAM_BOT_TOKEN'];
     const rawIds = process.env['TELEGRAM_CHAT_ID'] ?? '';
 
     // Support comma-separated list: "123456789,987654321"
@@ -48,8 +48,8 @@ export class TelegramNotifier {
 
   // ─── Formatear cartón como bloque de texto ────────────────────
   private formatCarton(carton: Carton, idx: number): string {
-    const header = `🎰 *Cartón #${idx + 1}* (${carton.size} números | conf: ${(carton.confidence_carton * 100).toFixed(0)}%)`;
-    const strategy = `📊 Estrategia: \`${carton.strategy}\``;
+    const header = `🎰 *Matriz #${idx + 1}* (${carton.size} líneas de impacto | certeza: ${(carton.confidence_carton * 100).toFixed(0)}%)`;
+    const strategy = `📊 Patrón Operativo: \`${carton.strategy}\``;
 
     // Dividir números en filas de 5
     const nums = carton.numbers.map(n => n.value);
@@ -74,9 +74,9 @@ export class TelegramNotifier {
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
     const header = [
-      `🎯 *HITDASH — ${gameLabel} ${drawLabel}*`,
-      `📅 Sorteo: ${draw_date}`,
-      `🤖 Análisis: ${cartones.length} cartón(es) generado(s)`,
+      `💎 *HITDASH APEX — ${gameLabel} ${drawLabel}*`,
+      `📅 Target: ${draw_date}`,
+      `🤖 Análisis Confidencial: ${cartones.length} matrices de impacto generadas`,
       '─────────────────────────',
     ].join('\n');
 
@@ -147,9 +147,9 @@ export class TelegramNotifier {
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
     const header = [
-      `🎯 *HITDASH — ${gameLabel} ${drawLabel}*`,
-      `📅 Sorteo: ${draw_date}`,
-      '─────────────────────',
+      `💎 *HITDASH — Inferencia Confirmada*`,
+      `📅 Sorteo: ${draw_date} | ${gameLabel} ${drawLabel}`,
+      '────────────────────────',
     ].join('\n');
 
     const blocks: string[] = [];
@@ -163,9 +163,9 @@ export class TelegramNotifier {
       const grid = rows.map(r => `\`${r}\``).join('\n');
 
       let halfLabel: string;
-      if (rec.half === 'du')       halfLabel = '🔢 Pares recomendados (decena+unidad):';
-      else if (rec.half === 'ab')  halfLabel = '🔢 AB recomendados (p1+p2):';
-      else                         halfLabel = '🔢 CD recomendados (p3+p4):';
+      if (rec.half === 'du') halfLabel = '🎯 Bloque Alfa (Decena+Unidad):';
+      else if (rec.half === 'ab') halfLabel = '🎯 Bloque AB (Posición 1+2):';
+      else halfLabel = '🎯 Bloque CD (Posición 3+4):';
 
       const block = [halfLabel, grid];
 
@@ -177,10 +177,10 @@ export class TelegramNotifier {
       // and the estimated effectiveness (Wilson CI lower bound)
       const effectPct = (rec.predicted_effectiveness * 100).toFixed(1);
       const cogLine = rec.predicted_effectiveness > 0
-        ? `🧠 *N=${rec.optimal_n} pares* · efectividad mínima estimada: *${effectPct}%* _(Wilson 95% CI)_`
-        : `🧠 *N=${rec.optimal_n} pares* _(calculado cognitivamente — sin datos de backtest aún)_`;
+        ? `📈 Rentabilidad Mínima Estimada: *${effectPct}%* _(Filtro Precisión Nivel ${rec.optimal_n})_`
+        : `🛡️ Configuración de Alta Exclucividad _(Filtro Precisión Nivel ${rec.optimal_n} Activo)_`;
       block.push(cogLine);
-      block.push(`📊 Score consensus: ${(rec.confidence * 100).toFixed(0)}% | Piso histórico: ${rec.top_n}`);
+      block.push(`📊 Nivel de Certeza Algorítmica: ${(rec.confidence * 100).toFixed(0)}%`);
       blocks.push(block.join('\n'));
     }
 
