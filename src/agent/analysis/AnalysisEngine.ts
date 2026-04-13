@@ -476,10 +476,10 @@ export class AnalysisEngine {
       this.pos.runPairs(game_type, draw_type, half, 365),
       this.ma.runPairs(game_type, draw_type, half, period),
       // Short-term momentum windows (only when primary period > 30d)
-      period > SHORT_PERIOD
+      (typeof period === 'number' && period > SHORT_PERIOD)
         ? this.freq.runPairs(game_type, draw_type, half, SHORT_PERIOD)
         : Promise.reject(new Error('same_period')),
-      period > SHORT_PERIOD
+      (typeof period === 'number' && period > SHORT_PERIOD)
         ? this.hc.runPairs(game_type, draw_type, half, SHORT_PERIOD)
         : Promise.reject(new Error('same_period')),
     ]);
@@ -577,6 +577,21 @@ export class AnalysisEngine {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });
         logger.warn({ algorithm: name, error: result.reason }, 'runPairs fallido — excluido del consensus');
+      }
+    }
+
+    // C2: Momentum overlay — blend short-term (30d) frequency + hot_cold into consensus
+    // Weight = 25% of the primary frequency weight → recent trends influence but don't dominate
+    const MOMENTUM_OVERLAY = effectiveWeight('frequency') * 0.25;
+    for (const [shortResult, label] of [[rFreqShort, 'freq_30d'], [rHCShort, 'hc_30d']] as const) {
+      if (shortResult.status === 'fulfilled') {
+        const scores = shortResult.value;
+        const maxScore = Math.max(...Object.values(scores), 1e-9);
+        for (const [key, score] of Object.entries(scores)) {
+          accumulated[key] = (accumulated[key] ?? 0) + (score / maxScore) * MOMENTUM_OVERLAY;
+        }
+        totalWeight += MOMENTUM_OVERLAY;
+        logger.debug({ window: label, weight: MOMENTUM_OVERLAY }, 'C2: ventana de momentum aplicada');
       }
     }
 

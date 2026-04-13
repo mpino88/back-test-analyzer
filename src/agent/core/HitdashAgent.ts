@@ -186,7 +186,7 @@ export class HitdashAgent {
     // pair_recommendations already exist for this game_type+draw_type+draw_date.
     if (trigger_type !== 'manual') {
       try {
-        const { rows: dup } = await this.agentPool.query<{ id: string }>(
+        const { rows: dup } = await this.agentPool.query<{ session_id: string }>(
           `SELECT session_id FROM hitdash.pair_recommendations
            WHERE game_type = $1 AND draw_type = $2 AND draw_date = $3
            UNION
