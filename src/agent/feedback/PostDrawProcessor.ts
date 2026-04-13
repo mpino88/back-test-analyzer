@@ -376,6 +376,21 @@ export class PostDrawProcessor {
          WHERE id = $4`,
         [hit, actualPair, rank, rec.id]
       ).catch(() => undefined);
+
+      // ─── N-rank EMA feedback → calibra computeCognitiveN() en tiempo real ──
+      // hit: usar rank real (1=perfecto); miss: penalizar con rango central 55
+      // Actualiza backtest_results_v2.expected_rank para 'apex_adaptive' con EMA(α=0.15)
+      // Esto cierra el bucle: PostDrawProcessor → expected_rank → AnalysisEngine.computeCognitiveN()
+      const emaRank = hit ? rank! : 55;
+      await this.agentPool.query(
+        `UPDATE hitdash.backtest_results_v2
+         SET expected_rank = $1 * 0.15 + expected_rank * 0.85,
+             updated_at    = now()
+         WHERE strategy_name = 'apex_adaptive'
+           AND game_type     = $2
+           AND half          = $3`,
+        [emaRank, game_type, rec.half]
+      ).catch(() => undefined);
     }
 
     logger.info(
