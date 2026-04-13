@@ -625,7 +625,7 @@ export class AnalysisEngine {
     // the mathematically optimal number of pairs to recommend right now.
     let optimal_n = top_n;
     let predicted_effectiveness = 0;
-    let cognitive_basis = 'no_precision_data:using_adaptive_top_n';
+    let cognitive_basis = 'base:adaptive_top_n';
 
     try {
       // ── Preferir métricas de apex_adaptive (la meta-estrategia que ya integra todos los pesos)
