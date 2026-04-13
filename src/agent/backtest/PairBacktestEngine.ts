@@ -189,16 +189,17 @@ function coefficientOfVariation(values: number[]): number {
 }
 
 // ─── 8. Sharpe Ratio (rendimiento ajustado por riesgo) ──────────
-// Sharpe = (hit_rate − baseline) / std_rolling
-// Análogo al Sharpe financiero: excess return / volatility
-// > 1.0 = buena señal ajustada por riesgo
-function sharpeRatio(hitRate: number, rollingRates: number[], baseline = 0.10): number {
+// Sharpe = (hit_rate − baseline) / std_rolling  clamped [-3, 3]
+// baseline = topN/100 (probabilidad aleatoria real de acertar un par)
+// std_min  = max(0.001, baseline*0.1) — evita explosión cuando todos los
+//            rolling windows tienen el mismo hit_rate (Pick 4 eval sets chicos)
+function sharpeRatio(hitRate: number, rollingRates: number[], topN: number): number {
+  const baseline = topN / 100;           // P(random hit) = topN pairs / 100 total
   if (rollingRates.length < 2) return 0;
-  const std = Math.sqrt(
-    rollingRates.reduce((sum, v) => sum + (v - hitRate) ** 2, 0) / rollingRates.length
-  );
-  if (std === 0) return hitRate > baseline ? 10 : 0;
-  return +((hitRate - baseline) / std).toFixed(4);
+  const variance = rollingRates.reduce((sum, v) => sum + (v - hitRate) ** 2, 0) / rollingRates.length;
+  const rawStd   = Math.sqrt(variance);
+  const std      = Math.max(rawStd, Math.max(0.001, baseline * 0.10)); // floor prevents ÷0 explosion
+  return +Math.max(-3, Math.min(3, (hitRate - baseline) / std)).toFixed(4);
 }
 
 // ─── 9. Max Miss Streak ─────────────────────────────────────────
@@ -297,7 +298,7 @@ function computePrecisionMetrics(
     cohens_h:        +cohensH(finalHitRate).toFixed(4),
     p_value:         +binomialPValue(hits.filter(Boolean).length, n).toFixed(6),
     cv_hit_rate:     coefficientOfVariation(rolling),
-    sharpe:          sharpeRatio(finalHitRate, rolling),
+    sharpe:          sharpeRatio(finalHitRate, rolling, finalTopN),
     max_miss_streak: maxMissStreak(hits),
     autocorr_lag1:   autocorrLag1(hits),
     kelly_fraction:  kellyFraction(finalHitRate, finalTopN),

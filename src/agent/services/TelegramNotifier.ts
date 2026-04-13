@@ -173,14 +173,19 @@ export class TelegramNotifier {
         block.push(`⭐ *Centena Plus:* \`${rec.centena_plus}\` _(opcional, agregar tu preferida)_`);
       }
 
-      // Cognitive N line: the agent states its own mathematically-determined N
-      // and the estimated effectiveness (Wilson CI lower bound)
-      const effectPct = (rec.predicted_effectiveness * 100).toFixed(1);
+      // Cognitive N line: effectiveness vs random baseline (B4)
+      // Baseline = optimal_n / 100 (random pair pick probability)
+      const randomBaseline = rec.optimal_n / 100;
+      const effectPct      = (rec.predicted_effectiveness * 100).toFixed(1);
+      const vsAzarDelta    = ((rec.predicted_effectiveness - randomBaseline) * 100);
+      const vsAzarStr      = vsAzarDelta >= 0
+        ? `+${vsAzarDelta.toFixed(1)}%`
+        : `${vsAzarDelta.toFixed(1)}%`;
       const cogLine = rec.predicted_effectiveness > 0
-        ? `📈 Rentabilidad Mínima Estimada: *${effectPct}%* _(Filtro Precisión Nivel ${rec.optimal_n})_`
-        : `🛡️ Configuración de Alta Exclucividad _(Filtro Precisión Nivel ${rec.optimal_n} Activo)_`;
+        ? `📈 *${effectPct}%* efectividad mínima · *${vsAzarStr}* vs azar _(N=${rec.optimal_n})_`
+        : `🛡️ Análisis estadístico activo _(N=${rec.optimal_n} pares · acumulando historial)_`;
       block.push(cogLine);
-      block.push(`📊 Nivel de Certeza Algorítmica: ${(rec.confidence * 100).toFixed(0)}%`);
+      block.push(`📊 Certeza algorítmica: ${(rec.confidence * 100).toFixed(0)}%`);
       blocks.push(block.join('\n'));
     }
 
