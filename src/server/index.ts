@@ -59,7 +59,7 @@ const redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379', {
 
 // ─── Servicios del agente ────────────────────────────────────────
 const ragService = new RAGService(agentPool);
-const ingestionWorker = new IngestionWorker(ballbotPool, agentPool, ragService, redis);
+const ingestionWorker = new IngestionWorker(ballbotPool, agentPool, redis);
 const agentScheduler = new AgentScheduler(ballbotPool, agentPool, ragService);
 const postDrawProcessor = new PostDrawProcessor(ballbotPool, agentPool, ragService);
 const telegramNotifier = new TelegramNotifier();

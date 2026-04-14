@@ -8,7 +8,6 @@
 import { Queue, Worker, type Job } from 'bullmq';
 import { Pool } from 'pg';
 import pino from 'pino';
-import { RAGService } from './RAGService.js';
 import type { PostDrawProcessor } from '../feedback/PostDrawProcessor.js';
 import type { TelegramNotifier } from './TelegramNotifier.js';
 import type { LotteryDigits, GameType, DrawType } from '../types/agent.types.js';
@@ -18,7 +17,6 @@ const logger = pino({ name: 'IngestionWorker' });
 // ═══ F04 FIX: BATCH_LIMIT 20 → 200 para cubrir gaps de hasta ~100 días sin pérdida de datos.
 // Con LIMIT=20 y 2 sorteos/día × 2 juegos = sistema pierde datos silenciosamente tras 5 días offline.
 // 200 draws = ~50 días de cobertura por ciclo de 15 min. Si el gap es mayor, ver `backfill-ultra.cjs`.
-const BATCH_SIZE = 20;
 const BATCH_LIMIT = 200;
 const QUEUE_NAME = 'hitdash-ingestion';
 
@@ -46,17 +44,15 @@ interface IngestionStats {
 export class IngestionWorker {
   private readonly ballbotPool: Pool;   // READ-ONLY — Render PostgreSQL
   private readonly agentPool: Pool;     // READ-WRITE — VPS PostgreSQL
-  private readonly ragService: RAGService;
   private readonly redis: Redis;
   private readonly queue: Queue;
   private worker: Worker | null = null;
   private feedbackProcessor: PostDrawProcessor | null = null;
   private notifier: TelegramNotifier | null = null;
 
-  constructor(ballbotPool: Pool, agentPool: Pool, ragService: RAGService, redis: Redis) {
+  constructor(ballbotPool: Pool, agentPool: Pool, redis: Redis) {
     this.ballbotPool = ballbotPool;
     this.agentPool = agentPool;
-    this.ragService = ragService;
     this.redis = redis;
 
     this.queue = new Queue(QUEUE_NAME, { connection: parseRedisUrl() });
@@ -142,7 +138,7 @@ export class IngestionWorker {
       }
     );
 
-    this.worker.on('completed', (job, result: IngestionStats) => {
+    this.worker.on('completed', (_job, result: IngestionStats) => {
       logger.info({
         processed: result.processed,
         skipped: result.skipped,
@@ -277,9 +273,9 @@ export class IngestionWorker {
     for (const row of pending) {
       const drawKey = `${row.game}:${row.period}:${row.date}`;
       try {
-        const ragKnowledgeId = await this.processResult(row);
+        await this.processResult(row);
         stats.processed++;
-        logger.info({ draw_key: drawKey, rag_id: ragKnowledgeId }, 'Resultado ingestado');
+        logger.info({ draw_key: drawKey }, 'Resultado ingestado');
 
         // ═══ BN-01 FIX: Disparar feedback loop autónomo ═══
         // Cada resultado nuevo activa: comparar → aprender → ajustar pesos → drift
@@ -295,7 +291,7 @@ export class IngestionWorker {
           const drawDate = `20${yy}-${mm!.padStart(2, '0')}-${dd!.padStart(2, '0')}`;
 
           await this.feedbackProcessor.enqueue({
-            draw_id: ragKnowledgeId,
+            draw_id: drawKey,
             game_type: gameType,
             draw_type: drawType,
             draw_date: drawDate,
@@ -352,56 +348,26 @@ export class IngestionWorker {
     const century = yyNum <= 30 ? '20' : '19';
     const drawDate = `${century}${yy}-${mm!.padStart(2, '0')}-${dd!.padStart(2, '0')}`;
 
-    const posText = gameType === 'pick3'
-      ? `P1=${digits.p1} P2=${digits.p2} P3=${digits.p3}`
-      : `P1=${digits.p1} P2=${digits.p2} P3=${digits.p3} P4=${digits.p4}`;
+    const drawKey = `${row.game}:${row.period}:${row.date}`;
 
-    const content = `${gameType.toUpperCase()} ${drawType} ${drawDate}: ${posText}`;
-    const drawKey  = `${row.game}:${row.period}:${row.date}`;
-    const source   = `draw:${drawKey}`;
-
-    const agentClient = await this.agentPool.connect();
-    try {
-      await agentClient.query('BEGIN');
-
-      const ragKnowledgeId = await this.ragService.storeKnowledge({
-        content,
-        category: 'pattern',
-        source,
-        confidence: 0.9,
-        metadata: { game_type: gameType, draw_type: drawType, draw_date: drawDate, digits },
-      });
-
-      await agentClient.query(
-        `INSERT INTO hitdash.ingested_results 
-          (draw_key, rag_knowledge_id, p1, p2, p3, p4, draw_date, game_type, draw_type)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         ON CONFLICT (draw_key) DO UPDATE SET
-            p1 = EXCLUDED.p1,
-            p2 = EXCLUDED.p2,
-            p3 = EXCLUDED.p3,
-            p4 = EXCLUDED.p4,
-            draw_date = EXCLUDED.draw_date,
-            game_type = EXCLUDED.game_type,
-            draw_type = EXCLUDED.draw_type`,
-        [
-          drawKey, 
-          ragKnowledgeId, 
-          digits.p1, digits.p2, digits.p3, digits.p4 ?? null, 
-          drawDate, 
-          gameType, 
-          drawType
-        ]
-      );
-
-      await agentClient.query('COMMIT');
-      return ragKnowledgeId;
-    } catch (err) {
-      await agentClient.query('ROLLBACK');
-      throw err;
-    } finally {
-      agentClient.release();
-    }
+    // Sorteos van SOLO a ingested_results (datos tabulares, query SQL).
+    // NO se embiden en rag_knowledge — datos numéricos sin semántica narrativa
+    // no aportan valor al vector search y contaminan el contexto del chat.
+    await this.agentPool.query(
+      `INSERT INTO hitdash.ingested_results
+        (draw_key, p1, p2, p3, p4, draw_date, game_type, draw_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (draw_key) DO UPDATE SET
+          p1 = EXCLUDED.p1,
+          p2 = EXCLUDED.p2,
+          p3 = EXCLUDED.p3,
+          p4 = EXCLUDED.p4,
+          draw_date = EXCLUDED.draw_date,
+          game_type = EXCLUDED.game_type,
+          draw_type = EXCLUDED.draw_type`,
+      [drawKey, digits.p1, digits.p2, digits.p3, digits.p4 ?? null, drawDate, gameType, drawType]
+    );
+    return drawKey;
   }
 
   async stop(): Promise<void> {
