@@ -110,6 +110,22 @@ jobs:
               && echo "✅ Servidor respondiendo en /health" \
               || (echo "❌ El servidor no respondió — últimos logs:" && docker compose logs --tail=50 hitdash-server && exit 1)
 
+            # ── PASO 6.5: Genesis Backtest — poblar Accuracy + Rendimiento ─
+            # Fire-and-forget: el job corre async en el server, no bloqueamos el pipeline.
+            # Garantiza que los gráficos muestren datos reales en el primer login.
+            echo "📊 Disparando Genesis Backtest (pick3 + pick4, 90 días)..."
+            ALL_STRATS='["frequency_rank","momentum_ema","gap_overdue_focus","hot_cold_weighted","streak_reversal","fibonacci_pisano","pair_correlation","position_bias","moving_avg_signal","consensus_top","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","apex_adaptive"]'
+            curl -sf -X POST "http://localhost:3005/api/backtest-control/run" \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \
+              -d "{\"game_type\":\"pick3\",\"mode\":\"combined\",\"top_n\":15,\"strategies\":$ALL_STRATS}" \
+              && echo "✅ Genesis pick3 encolado" || echo "⚠️  Genesis pick3 no encolado (no crítico)"
+            curl -sf -X POST "http://localhost:3005/api/backtest-control/run" \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \
+              -d "{\"game_type\":\"pick4\",\"mode\":\"combined\",\"top_n\":15,\"strategies\":$ALL_STRATS}" \
+              && echo "✅ Genesis pick4 encolado" || echo "⚠️  Genesis pick4 no encolado (no crítico)"
+
             # ── PASO 7: Extraer Assets para Nginx (Bypass Cache) ──────
             # En alojamiento con panel cPanel/Nginx, Nginx intercepta .js/.css
             # Si no están físicamente en el disco host, devuelve 404 ignorando Apache.

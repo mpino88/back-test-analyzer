@@ -1075,7 +1075,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         // ───────────────────────────────────────────────────────────
         // CAPA 3 — PATH DE CONSULTA: contexto DB completo + LLM
         // ───────────────────────────────────────────────────────────
-        const [recRows, btRows, alertRows, awRows, sessionRow] = await Promise.all([
+        const [recRows, btRows, alertRows, awRows, sessionRow, drawRows] = await Promise.all([
           agentPool.query<{
             draw_date: string; draw_type: string; half: string;
             pairs: string[]; hit: boolean | null; hit_at_rank: number | null;
@@ -1116,6 +1116,15 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
             `SELECT status, created_at::text, model_used FROM hitdash.agent_sessions
              ORDER BY created_at DESC LIMIT 1`
           ).catch(() => ({ rows: [] as any[] })),
+
+          // Últimos 10 sorteos reales — para que Gemini sepa qué salió
+          agentPool.query<{ draw_date: string; draw_type: string; p1: number; p2: number; p3: number; p4: number | null }>(
+            `SELECT draw_date::text, draw_type, p1, p2, p3, p4
+             FROM hitdash.ingested_results
+             WHERE game_type = $1
+             ORDER BY draw_date DESC, draw_type DESC LIMIT 10`,
+            [gt]
+          ).catch(() => ({ rows: [] as any[] })),
         ]);
 
         const ragResults = await ragService.searchSimilar(message, 6, undefined, 0.42)
@@ -1143,6 +1152,14 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           ? `Última sesión: ${(sessionRow.rows[0] as any).status} | ${(sessionRow.rows[0] as any).created_at} | ${(sessionRow.rows[0] as any).model_used}`
           : 'Sin sesiones.';
 
+        const drawsSummary = drawRows.rows.length === 0 ? 'Sin sorteos registrados aún.'
+          : drawRows.rows.map((r: any) => {
+              const digits = gt === 'pick3'
+                ? `${r.p1}-${r.p2}-${r.p3}`
+                : `${r.p1}-${r.p2}-${r.p3}-${r.p4 ?? '?'}`;
+              return `[${r.draw_date} ${r.draw_type}] ${digits}`;
+            }).join('\n');
+
         const ragSummary = ragResults.length === 0 ? ''
           : '\nMEMORIA RAG (aprendizajes previos):\n' +
             ragResults.map(r => `[${r.category}] ${r.content.slice(0, 200)}`).join('\n');
@@ -1165,6 +1182,9 @@ ${alertSummary}
 ─── PESOS ADAPTATIVOS ───
 ${awSummary}
 
+─── ÚLTIMOS 10 SORTEOS REALES ───
+${drawsSummary}
+
 ─── ESTADO ───
 ${sessionSummary}
 ${ragSummary}`;
@@ -1178,11 +1198,12 @@ ${ragSummary}`;
         const llmResult = await llmRouter.complete(msgs, { temperature: 0.2, maxTokens: 800 });
         responseText = llmResult.content;
 
-        if (recRows.rows.length > 0)  sources.push('pair_recommendations');
-        if (btRows.rows.length > 0)   sources.push('backtest_results_v2');
+        if (recRows.rows.length > 0)   sources.push('pair_recommendations');
+        if (btRows.rows.length > 0)    sources.push('backtest_results_v2');
         if (alertRows.rows.length > 0) sources.push('proactive_alerts');
-        if (awRows.rows.length > 0)   sources.push('adaptive_weights');
-        if (ragResults.length > 0)    sources.push('rag_knowledge');
+        if (awRows.rows.length > 0)    sources.push('adaptive_weights');
+        if (drawRows.rows.length > 0)  sources.push('ingested_results');
+        if (ragResults.length > 0)     sources.push('rag_knowledge');
         actionMeta = { model: llmResult.model, rag_hits: ragResults.length };
       }
 
