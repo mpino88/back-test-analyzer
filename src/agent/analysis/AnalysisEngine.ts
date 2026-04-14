@@ -15,6 +15,13 @@ import { FibonacciPisano }    from './algorithms/FibonacciPisano.js';
 import { StreakDetection }    from './algorithms/StreakDetection.js';
 import { PositionAnalysis }   from './algorithms/PositionAnalysis.js';
 import { MovingAverages }     from './algorithms/MovingAverages.js';
+// ─── Ballbot Clones (agentic strategies v2) ────────────────────────────────
+import { BayesianScore }     from './algorithms/BayesianScore.js';
+import { TransitionFollow }  from './algorithms/TransitionFollow.js';
+import { MarkovOrder2 }      from './algorithms/MarkovOrder2.js';
+import { CalendarPattern }   from './algorithms/CalendarPattern.js';
+import { DecadeFamily }      from './algorithms/DecadeFamily.js';
+import { MaxPerWeekDay }     from './algorithms/MaxPerWeekDay.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
 import type {
@@ -53,6 +60,13 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   // MovingAverages.runPairs() computa (sma7-sma14)+ema → blend de moving_avg_signal + momentum_ema
   // Se promedian ambos pesos adaptativos para el efectivo
   moving_averages:   'moving_avg_signal',
+  // Ballbot Clones — strategy names match strategy_registry.name
+  bayesian_score:    'bayesian_score',
+  transition_follow: 'transition_follow',
+  markov_order2:     'markov_order2',
+  calendar_pattern:  'calendar_pattern',
+  decade_family:     'decade_family',
+  max_per_week_day:  'max_per_weekday',
 };
 
 // Default top_n si la estrategia aún no tiene historial adaptativo
@@ -67,6 +81,13 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   moving_avg_signal: 15,
   momentum_ema:      14,
   apex_adaptive:     15,
+  // Ballbot Clones
+  bayesian_score:    15,
+  transition_follow: 15,
+  markov_order2:     15,
+  calendar_pattern:  15,
+  decade_family:     15,
+  max_per_weekday:   15,
 };
 
 // ─── Cognitive N — auto-determines optimal pair count from precision metrics ──
@@ -151,6 +172,13 @@ export class AnalysisEngine {
   private readonly streak: StreakDetection;
   private readonly pos:   PositionAnalysis;
   private readonly ma:    MovingAverages;
+  // ─── Ballbot Clones ───────────────────────────────────────────
+  private readonly bayesian:    BayesianScore;
+  private readonly transition:  TransitionFollow;
+  private readonly markov2:     MarkovOrder2;
+  private readonly calendar:    CalendarPattern;
+  private readonly decade:      DecadeFamily;
+  private readonly maxDow:      MaxPerWeekDay;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -169,6 +197,13 @@ export class AnalysisEngine {
     this.streak = new StreakDetection(analysisPool);
     this.pos    = new PositionAnalysis(analysisPool);
     this.ma     = new MovingAverages(analysisPool);
+    // ─── Ballbot Clones — use agentPool (local hitdash.ingested_results) ──
+    this.bayesian   = new BayesianScore(agentPool);
+    this.transition = new TransitionFollow(agentPool);
+    this.markov2    = new MarkovOrder2(agentPool);
+    this.calendar   = new CalendarPattern(agentPool);
+    this.decade     = new DecadeFamily(agentPool);
+    this.maxDow     = new MaxPerWeekDay(agentPool);
   }
 
   async analyze(
@@ -466,7 +501,9 @@ export class AnalysisEngine {
     // Blend: primary consensus + 25% momentum overlay captures both stability and trend.
     const SHORT_PERIOD: AnalysisPeriod = 30;
     const [rFreq, rGap, rHC, rPairs, rFib, rStreak, rPos, rMA,
-           rFreqShort, rHCShort] = await Promise.allSettled([
+           rFreqShort, rHCShort,
+           rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
+    ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
       this.hc.runPairs(game_type, draw_type, half, period),
@@ -482,6 +519,13 @@ export class AnalysisEngine {
       (typeof period === 'number' && period > SHORT_PERIOD)
         ? this.hc.runPairs(game_type, draw_type, half, SHORT_PERIOD)
         : Promise.reject(new Error('same_period')),
+      // ─── Ballbot Clones ──────────────────────────────────────────────────
+      this.bayesian.runPairs(game_type, draw_type, half, period),
+      this.transition.runPairs(game_type, draw_type, half, period),
+      this.markov2.runPairs(game_type, draw_type, half, period),
+      this.calendar.runPairs(game_type, draw_type, half, period),
+      this.decade.runPairs(game_type, draw_type, half, period),
+      this.maxDow.runPairs(game_type, draw_type, half, period),
     ]);
 
     const algorithms_succeeded: string[] = [];
@@ -555,6 +599,13 @@ export class AnalysisEngine {
       ['position',          effectiveWeight('position'),          rPos],
       // moving_averages recibe su propio peso + el factor de momentum_ema (blend)
       ['moving_averages',   effectiveWeight('moving_averages') * momentumExtraFactor, rMA],
+      // ─── Ballbot Clones ───────────────────────────────────────────────────
+      ['bayesian_score',    effectiveWeight('bayesian_score'),    rBayesian],
+      ['transition_follow', effectiveWeight('transition_follow'), rTransition],
+      ['markov_order2',     effectiveWeight('markov_order2'),     rMarkov2],
+      ['calendar_pattern',  effectiveWeight('calendar_pattern'),  rCalendar],
+      ['decade_family',     effectiveWeight('decade_family'),     rDecade],
+      ['max_per_week_day',  effectiveWeight('max_per_week_day'),  rMaxDow],
     ];
 
     // Accumulate weighted scores per pair "00"-"99"

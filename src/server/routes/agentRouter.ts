@@ -7,8 +7,9 @@ import type { Pool } from 'pg';
 import type { AgentScheduler } from '../../agent/core/AgentScheduler.js';
 import type { GameType, DrawType } from '../../agent/types/agent.types.js';
 import { BacktestEngine, type BacktestMode, type StrategyName } from '../../agent/backtest/BacktestEngine.js';
-import { PairBacktestEngine } from '../../agent/backtest/PairBacktestEngine.js';
-import { ProgressiveEngine }  from '../../agent/backtest/ProgressiveEngine.js';
+import { PairBacktestEngine }       from '../../agent/backtest/PairBacktestEngine.js';
+import { ProgressiveEngine }        from '../../agent/backtest/ProgressiveEngine.js';
+import { AgenticProgressiveEngine } from '../../agent/backtest/AgenticProgressiveEngine.js';
 import { RAGService }         from '../../agent/services/RAGService.js';
 import { LLMRouter }          from '../../agent/services/LLMRouter.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
@@ -19,11 +20,12 @@ const logger = pino({ name: 'AgentRouter' });
 
 export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, ballbotPool?: Pool, redis?: import('ioredis').Redis): Router {
   const router = Router();
-  const backtestEngine      = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
-  const pairBacktestEngine  = new PairBacktestEngine(agentPool);
-  const progressiveEngine   = ballbotPool ? new ProgressiveEngine(ballbotPool) : null;
-  const ragService          = new RAGService(agentPool);
-  const llmRouter           = new LLMRouter();
+  const backtestEngine       = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
+  const pairBacktestEngine   = new PairBacktestEngine(agentPool);
+  const progressiveEngine    = ballbotPool ? new ProgressiveEngine(ballbotPool) : null;
+  const agenticEngine        = new AgenticProgressiveEngine(agentPool);
+  const ragService           = new RAGService(agentPool);
+  const llmRouter            = new LLMRouter();
 
   const strictLimiter = createStrictLimiter();
 
@@ -905,7 +907,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       // CAPA 1 — DETECCIÓN DE INTENCIÓN (rule-based, sin costo LLM)
       // Detecta si el mensaje es una orden de ejecución.
       // ─────────────────────────────────────────────────────────────
-      type CmdType = 'trigger_agent' | 'run_backtest' | 'acknowledge_alerts' | 'status_check';
+      type CmdType = 'trigger_agent' | 'run_backtest' | 'acknowledge_alerts' | 'status_check' | 'run_strategy' | 'run_conditions';
 
       function extractDrawType(text: string): DrawType {
         if (/midday|mediod[ií]a|del\s+d[ií]a|ma[ñn]an[ao]/.test(text)) return 'midday';
@@ -914,12 +916,16 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       }
 
       const COMMANDS: Array<{ regex: RegExp; type: CmdType }> = [
-        { regex: /\b(ejecuta|dispara|corre|trigger|lanza|activa|inicia)\b.{0,40}\bagent[e]?\b/i,  type: 'trigger_agent'       },
-        { regex: /\bagent[e]?\b.{0,30}\b(ejecuta|dispara|corre|trigger|lanza|activa|inicia)\b/i,  type: 'trigger_agent'       },
-        { regex: /\b(ejecuta|corre|lanza|inicia|run|realiza)\b.{0,30}\bbacktest\b/i,              type: 'run_backtest'        },
-        { regex: /\bbacktest\b.{0,30}\b(ahora|ya|ejecuta|manual|inicia|corre)\b/i,               type: 'run_backtest'        },
-        { regex: /\b(reconoc[e]?|limpia|clear|ack)\b.{0,30}\balertas?\b/i,                       type: 'acknowledge_alerts'  },
-        { regex: /\b(estado|status|c[oó]mo\s+est[áa]|reporte)\b.{0,20}\bagent[e]?\b/i,           type: 'status_check'        },
+        { regex: /\b(ejecuta|dispara|corre|trigger|lanza|activa|inicia)\b.{0,40}\bagent[e]?\b/i,                                                          type: 'trigger_agent'      },
+        { regex: /\bagent[e]?\b.{0,30}\b(ejecuta|dispara|corre|trigger|lanza|activa|inicia)\b/i,                                                          type: 'trigger_agent'      },
+        { regex: /\b(ejecuta|corre|lanza|inicia|run|realiza)\b.{0,30}\bbacktest\b/i,                                                                      type: 'run_backtest'       },
+        { regex: /\bbacktest\b.{0,30}\b(ahora|ya|ejecuta|manual|inicia|corre)\b/i,                                                                        type: 'run_backtest'       },
+        { regex: /\b(reconoc[e]?|limpia|clear|ack)\b.{0,30}\balertas?\b/i,                                                                                type: 'acknowledge_alerts' },
+        { regex: /\b(estado|status|c[oó]mo\s+est[áa]|reporte)\b.{0,20}\bagent[e]?\b/i,                                                                   type: 'status_check'       },
+        // Ballbot Clones — ejecutar análisis de estrategia específica
+        { regex: /\b(analiz[a]?|corre|run|ejecuta)\b.{0,40}\b(bayesian[o]?|markov|calendario|d[eé]cada|semana|transici[oó]n|estrategia)\b/i,              type: 'run_strategy'       },
+        // Condiciones de juego — cuándo jugar
+        { regex: /\b(condiciones|cu[aá]ndo\s+jugar|se[ñn]al\s+de\s+(juego|play)|play\s+signal|estado\s+de\s+estrategias)\b/i,                            type: 'run_conditions'     },
       ];
 
       let detectedCommand: CmdType | null = null;
@@ -931,13 +937,15 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       // CAPA 2 — EJECUCIÓN DE COMANDOS
       // Si es orden: ejecuta, construye respuesta sin LLM (rápido).
       // ─────────────────────────────────────────────────────────────
+      // dt is shared across all command handlers
+      const dt = extractDrawType(lower);
+
       let responseText = '';
       let actionTaken: string | null = null;
       let actionMeta: Record<string, unknown> = {};
       const sources: string[] = [];
 
       if (detectedCommand === 'trigger_agent') {
-        const dt = extractDrawType(lower);
         if (scheduler) {
           await scheduler.triggerManual(gt, dt);
           responseText = `✅ Agente disparado manualmente.\n**Juego:** ${gt.toUpperCase()} | **Turno:** ${dt}\nEl ciclo de análisis está en cola. Revisa el Dashboard para ver el estado. Te llegará notificación por Telegram cuando termine.`;
@@ -991,6 +999,77 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           : `ℹ️ No hay sesiones registradas aún. El agente no ha corrido todavía.`;
         actionTaken = 'status_check';
         sources.push('agent_sessions', 'proactive_alerts', 'rag_knowledge');
+
+      } else if (detectedCommand === 'run_strategy') {
+        // ── Ejecutar analyzePairs() con los 14 algoritmos (incluyendo 6 clones) ─
+        try {
+          const { AnalysisEngine } = await import('../../agent/analysis/AnalysisEngine.js');
+          const analysisPool = ballbotPool ?? agentPool;
+          const engine = new AnalysisEngine(analysisPool, agentPool);
+          const analysis = await engine.analyzePairs(gt, dt, 'du', 90);
+          const topPairs = analysis.ranked_pairs.slice(0, analysis.optimal_n).map(r => r.pair);
+          const algOk    = analysis.algorithms_succeeded.join(', ');
+          const algFail  = analysis.algorithms_failed.map(f => f.name).join(', ') || 'ninguno';
+          responseText =
+            `🧠 **Análisis de Pares — ${gt.toUpperCase()} ${dt}**\n` +
+            `📊 Algoritmos ejecutados: **${analysis.algorithms_succeeded.length}/14**\n` +
+            `✅ OK: ${algOk}\n` +
+            `⚠️ Fallidos: ${algFail}\n\n` +
+            `🔢 **Top ${analysis.optimal_n} pares recomendados:**\n` +
+            `\`${topPairs.join('  ')}\`\n\n` +
+            (analysis.centena_plus !== undefined ? `⭐ Centena Plus: \`${analysis.centena_plus}\`\n\n` : '') +
+            `📈 N cognitivo: ${analysis.optimal_n} | Efectividad estimada: ${(analysis.predicted_effectiveness * 100).toFixed(1)}%\n` +
+            `🧮 Base: ${analysis.cognitive_basis}`;
+          actionTaken = 'run_strategy';
+          actionMeta  = { game_type: gt, draw_type: dt, top_pairs: topPairs, optimal_n: analysis.optimal_n };
+          sources.push('analysis_engine', 'backtest_results_v2');
+        } catch (e) {
+          responseText = `❌ Error al ejecutar análisis: ${e instanceof Error ? e.message : String(e)}`;
+          actionTaken = 'run_strategy';
+        }
+
+      } else if (detectedCommand === 'run_conditions') {
+        // ── Cargar o calcular condiciones de estrategias (PLAY/WAIT/ALERT) ─
+        const refresh = lower.includes('refr') || lower.includes('recalcul') || lower.includes('actualiz');
+        try {
+          let conditions = refresh ? [] : await agenticEngine.loadConditions(gt, dt);
+          if (conditions.length === 0 || refresh) {
+            const half = gt === 'pick3' ? 'du' as const : 'ab' as const;
+            conditions = await agenticEngine.runConditionsAnalysis(gt, dt, half);
+            if (conditions.length > 0) {
+              await agenticEngine.persistConditions(conditions).catch(() => undefined);
+            }
+          }
+          if (conditions.length === 0) {
+            responseText = `⚠️ No hay condiciones calculadas para ${gt} ${dt}. Ejecuta el backtest primero para generar historial.`;
+          } else {
+            const plays  = conditions.filter(c => c.play_signal === 'PLAY');
+            const alerts = conditions.filter(c => c.play_signal === 'ALERT');
+            const waits  = conditions.filter(c => c.play_signal === 'WAIT');
+            const signalEmoji = (s: string) => s === 'PLAY' ? '🟢' : s === 'ALERT' ? '🔴' : '🟡';
+            const trendEmoji  = (t: string) => t === 'UP' ? '📈' : t === 'DOWN' ? '📉' : '➡️';
+            const topLines = conditions.slice(0, 8).map(c =>
+              `${signalEmoji(c.play_signal)} **${c.strategy_name}** — ${c.play_signal} | misses: ${c.current_misses}/${c.avg_pre_miss.toFixed(1)} ${trendEmoji(c.trend)} ${c.trend}`
+            ).join('\n');
+            responseText =
+              `🎯 **Condiciones de Estrategias — ${gt.toUpperCase()} ${dt}**\n` +
+              `_(${conditions.length} estrategias | ${plays.length} PLAY, ${alerts.length} ALERT, ${waits.length} WAIT)_\n\n` +
+              topLines + '\n\n' +
+              (plays.length > 0
+                ? `✅ **Estrategias en PLAY:** ${plays.map(c => c.strategy_name).join(', ')}\n`
+                : '') +
+              (alerts.length > 0
+                ? `🚨 **En ALERT (racha extrema):** ${alerts.map(c => c.strategy_name).join(', ')}\n`
+                : '') +
+              `\n_Calculado: ${conditions[0]?.computed_at?.substring(0, 16) ?? 'ahora'}_`;
+          }
+          actionTaken = 'run_conditions';
+          actionMeta  = { game_type: gt, draw_type: dt, total: conditions.length };
+          sources.push('strategy_conditions', 'agentic_progressive_engine');
+        } catch (e) {
+          responseText = `❌ Error al calcular condiciones: ${e instanceof Error ? e.message : String(e)}`;
+          actionTaken = 'run_conditions';
+        }
 
       } else {
         // ───────────────────────────────────────────────────────────
@@ -1152,6 +1231,42 @@ ${ragSummary}`;
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ error: msg }, 'chat endpoint error');
       res.status(500).json({ error: 'El agente no pudo responder. Verifica las API keys (GEMINI_API_KEY / ANTHROPIC_API_KEY).' });
+    }
+  });
+
+  // ── GET /api/agent/agentic-progressive ──────────────────────────
+  // Devuelve condiciones de juego PLAY/WAIT/ALERT por estrategia.
+  // ?game_type=pick3&draw_type=midday&half=du&refresh=false
+  router.get('/agentic-progressive', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query['game_type'] as GameType) ?? 'pick3';
+      const draw_type = (req.query['draw_type'] as DrawType) ?? 'midday';
+      const half      = (req.query['half'] as 'du' | 'ab' | 'cd') ?? (game_type === 'pick3' ? 'du' : 'ab');
+      const refresh   = req.query['refresh'] === 'true';
+
+      let conditions = refresh ? [] : await agenticEngine.loadConditions(game_type, draw_type);
+
+      if (conditions.length === 0 || refresh) {
+        logger.info({ game_type, draw_type, half, refresh }, 'agentic-progressive: calculando condiciones');
+        conditions = await agenticEngine.runConditionsAnalysis(game_type, draw_type, half);
+        if (conditions.length > 0) {
+          await agenticEngine.persistConditions(conditions).catch(e =>
+            logger.warn({ error: String(e) }, 'agentic-progressive: error persistiendo condiciones')
+          );
+        }
+      }
+
+      res.json({
+        game_type,
+        draw_type,
+        half,
+        total: conditions.length,
+        refreshed: refresh || conditions.length === 0,
+        conditions,
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'agentic-progressive error');
+      res.status(500).json({ error: 'Error calculando condiciones de estrategias' });
     }
   });
 

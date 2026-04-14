@@ -75,7 +75,14 @@ export type PairStrategyName =
   | 'pair_correlation'
   | 'fibonacci_pisano'
   | 'consensus_top'
-  | 'apex_adaptive';
+  | 'apex_adaptive'
+  // ─── Ballbot Clones ───────────────────────────────────────────
+  | 'bayesian_score'
+  | 'transition_follow'
+  | 'markov_order2'
+  | 'calendar_pattern'
+  | 'decade_family'
+  | 'max_per_weekday';
 
 // Función base de estrategia de pares
 type PairRankFn = (draws: DrawEntry[], half: PairHalf) => RankedPair[];
@@ -507,6 +514,190 @@ const pairFibonacciPisano: PairRankFn = (draws, half) => {
   }).sort((a, b) => b.score - a.score);
 };
 
+// ═══════════════════════════════════════════════════════════════
+// BALLBOT CLONES — 6 in-memory PairRankFn implementations
+// Declaradas ANTES de BASE_STRATEGIES para evitar temporal dead zone.
+// ═══════════════════════════════════════════════════════════════
+
+// ─── 12. bayesian_score ──────────────────────────────────────
+const pairBayesianScore: PairRankFn = (draws, half) => {
+  if (draws.length < 5) return pairFrequencyRank(draws, half);
+  const W_FREQ = 0.15, W_GAP = 0.20, W_MOM = 0.20, W_MARKOV = 0.20, W_STREAK = 0.10;
+  const allPairs = draws.map(d => extractPair(d, half));
+  const total    = allPairs.length;
+  const recent30 = allPairs.slice(-Math.min(30, total));
+  const recentTotal = recent30.length || 1;
+  const freqCount: Record<string, number> = {};
+  for (const p of allPairs) freqCount[p] = (freqCount[p] ?? 0) + 1;
+  const maxFreq = Math.max(...Object.values(freqCount), 1);
+  const lastSeen: Record<string, number> = {};
+  const gapSum: Record<string, number> = {}; const gapCnt: Record<string, number> = {};
+  for (let i = 0; i < allPairs.length; i++) {
+    const p = allPairs[i]!;
+    if (lastSeen[p] !== undefined) { const g = i - lastSeen[p]!; gapSum[p] = (gapSum[p] ?? 0) + g; gapCnt[p] = (gapCnt[p] ?? 0) + 1; }
+    lastSeen[p] = i;
+  }
+  const currentGap: Record<string, number> = {};
+  for (const [p, idx] of Object.entries(lastSeen)) currentGap[p] = total - 1 - idx;
+  const recentCount: Record<string, number> = {};
+  for (const p of recent30) recentCount[p] = (recentCount[p] ?? 0) + 1;
+  const matrix = new Map<string, Map<string, number>>();
+  for (let i = 0; i + 1 < allPairs.length; i++) {
+    const from = allPairs[i]!, to = allPairs[i + 1]!;
+    if (!matrix.has(from)) matrix.set(from, new Map());
+    matrix.get(from)!.set(to, (matrix.get(from)!.get(to) ?? 0) + 1);
+  }
+  const markovScore: Record<string, number> = {};
+  for (const prev of allPairs.slice(-5)) {
+    const row = matrix.get(prev); if (!row) continue;
+    const rowT = Array.from(row.values()).reduce((s, v) => s + v, 0);
+    for (const [to, cnt] of row) markovScore[to] = Math.max(markovScore[to] ?? 0, cnt / rowT);
+  }
+  const maxMarkov = Math.max(...Object.values(markovScore), 1e-9);
+  const run: Record<string, number> = {};
+  const curStreak: Record<string, number> = {};
+  const avgStreak: Record<string, number> = {};
+  { const streakAcc: Record<string, number[]> = {};
+    for (const p of allPairs) {
+      for (const k of ALL_PAIRS) { if (k !== p) run[k] = (run[k] ?? 0) + 1; }
+      if ((run[p] ?? 0) > 0) { streakAcc[p] = streakAcc[p] ?? []; streakAcc[p]!.push(run[p]!); }
+      run[p] = 0;
+    }
+    for (const p of ALL_PAIRS) { curStreak[p] = run[p] ?? 0; const arr = streakAcc[p] ?? []; avgStreak[p] = arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : total; }
+  }
+  return ALL_PAIRS.map(p => {
+    const s1 = (freqCount[p] ?? 0) / maxFreq;
+    const avgG = gapCnt[p] ? (gapSum[p]! / gapCnt[p]!) : total;
+    const s2 = Math.min(1, (currentGap[p] ?? total) / Math.max(avgG, 1) / 3);
+    const gRate = (freqCount[p] ?? 0) / total; const rRate = (recentCount[p] ?? 0) / recentTotal;
+    const s3 = gRate > 0 ? Math.min(1, (rRate / gRate) / 5) : 0;
+    const s5 = (markovScore[p] ?? 0) / maxMarkov;
+    const s6 = avgStreak[p]! > 0 ? Math.min(1, (curStreak[p] ?? 0) / avgStreak[p]! / 4) : 0;
+    return { pair: p, score: W_FREQ*s1 + W_GAP*s2 + W_MOM*s3 + W_MARKOV*s5 + W_STREAK*s6 };
+  }).sort((a, b) => b.score - a.score);
+};
+
+// ─── 13. transition_follow ───────────────────────────────────
+const pairTransitionFollow: PairRankFn = (draws, half) => {
+  if (draws.length < 3) return pairFrequencyRank(draws, half);
+  const allPairs = draws.map(d => extractPair(d, half));
+  const matrix = new Map<string, Map<string, number>>();
+  for (let i = 0; i + 1 < allPairs.length; i++) {
+    const from = allPairs[i]!, to = allPairs[i + 1]!;
+    if (!matrix.has(from)) matrix.set(from, new Map());
+    matrix.get(from)!.set(to, (matrix.get(from)!.get(to) ?? 0) + 1);
+  }
+  const votes: Record<string, number> = {};
+  const last5 = allPairs.slice(-5);
+  for (let lag = 0; lag < last5.length; lag++) {
+    const row = matrix.get(last5[lag]!); if (!row) continue;
+    const rowT = Array.from(row.values()).reduce((s, v) => s + v, 0);
+    const rW = 1.0 - (0.6 * lag) / last5.length;
+    Array.from(row.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).forEach(([to, cnt]) => {
+      votes[to] = (votes[to] ?? 0) + (cnt / rowT) * rW;
+    });
+  }
+  const maxV = Math.max(...Object.values(votes), 1e-9);
+  return ALL_PAIRS.map(p => ({ pair: p, score: (votes[p] ?? 0) / maxV })).sort((a, b) => b.score - a.score);
+};
+
+// ─── 14. markov_order2 ───────────────────────────────────────
+const pairMarkovOrder2: PairRankFn = (draws, half) => {
+  if (draws.length < 4) return pairFrequencyRank(draws, half);
+  const allPairs = draws.map(d => extractPair(d, half));
+  const table = new Map<string, Map<string, number>>();
+  for (let i = 1; i + 1 < allPairs.length; i++) {
+    const state = `${allPairs[i - 1]}_${allPairs[i]}`, to = allPairs[i + 1]!;
+    if (!table.has(state)) table.set(state, new Map());
+    table.get(state)!.set(to, (table.get(state)!.get(to) ?? 0) + 1);
+  }
+  const votes: Record<string, number> = {};
+  const states: string[] = [];
+  if (allPairs.length >= 2) states.push(`${allPairs[allPairs.length - 2]}_${allPairs[allPairs.length - 1]}`);
+  if (allPairs.length >= 3) states.push(`${allPairs[allPairs.length - 3]}_${allPairs[allPairs.length - 2]}`);
+  for (let si = 0; si < states.length; si++) {
+    const row = table.get(states[si]!); if (!row) continue;
+    const rowT = Array.from(row.values()).reduce((s, v) => s + v, 0);
+    const rW = si === 0 ? 1.0 : 0.5;
+    Array.from(row.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).forEach(([to, cnt]) => {
+      votes[to] = (votes[to] ?? 0) + (cnt / rowT) * rW;
+    });
+  }
+  const maxV = Math.max(...Object.values(votes), 1e-9);
+  return ALL_PAIRS.map(p => ({ pair: p, score: (votes[p] ?? 0) / maxV })).sort((a, b) => b.score - a.score);
+};
+
+// ─── 15. calendar_pattern ────────────────────────────────────
+const pairCalendarPattern: PairRankFn = (draws, half) => {
+  if (draws.length < 5) return pairFrequencyRank(draws, half);
+  const nextDate    = new Date(draws[draws.length - 1]!.created_at.getTime() + 86_400_000);
+  const targetDow   = nextDate.getDay(), targetMonth = nextDate.getMonth() + 1, targetDom = nextDate.getDate();
+  const dim1: Record<string, Record<string, number>> = {};
+  const dim2: Record<number, Record<string, number>> = {};
+  const dim3: Record<number, Record<string, number>> = {};
+  const dim4: Record<number, Record<string, number>> = {};
+  for (const d of draws) {
+    const pair = extractPair(d, half);
+    const dow = d.created_at.getDay(), month = d.created_at.getMonth() + 1, dom = d.created_at.getDate();
+    const k1 = `${dow}_${month}`;
+    dim1[k1] = dim1[k1] ?? {}; dim1[k1]![pair] = (dim1[k1]![pair] ?? 0) + 1;
+    dim2[dow]   = dim2[dow]   ?? {}; dim2[dow]![pair]   = (dim2[dow]![pair]   ?? 0) + 1;
+    dim3[month] = dim3[month] ?? {}; dim3[month]![pair] = (dim3[month]![pair] ?? 0) + 1;
+    dim4[dom]   = dim4[dom]   ?? {}; dim4[dom]![pair]   = (dim4[dom]![pair]   ?? 0) + 1;
+  }
+  function bScore(bucket: Record<string, number> | undefined, p: string): number {
+    if (!bucket) return 0; const t = Object.values(bucket).reduce((s, v) => s + v, 0);
+    return t > 0 ? (bucket[p] ?? 0) / t : 0;
+  }
+  const raw: Record<string, number> = {};
+  for (const p of ALL_PAIRS) {
+    raw[p] = 0.40 * bScore(dim1[`${targetDow}_${targetMonth}`], p) + 0.30 * bScore(dim2[targetDow], p)
+           + 0.20 * bScore(dim3[targetMonth], p) + 0.10 * bScore(dim4[targetDom], p);
+  }
+  const maxR = Math.max(...Object.values(raw), 1e-9);
+  return ALL_PAIRS.map(p => ({ pair: p, score: raw[p]! / maxR })).sort((a, b) => b.score - a.score);
+};
+
+// ─── 16. decade_family ───────────────────────────────────────
+const pairDecadeFamily: PairRankFn = (draws, half) => {
+  if (draws.length < 5) return pairFrequencyRank(draws, half);
+  const allPairs = draws.map(d => extractPair(d, half));
+  const total = allPairs.length;
+  const recent30 = allPairs.slice(-Math.min(30, total));
+  const recentTotal = recent30.length || 1;
+  const famTotal: number[] = new Array(10).fill(0) as number[];
+  const famRecent: number[] = new Array(10).fill(0) as number[];
+  const pairTotal: Record<string, number> = {};
+  for (const p of allPairs) { famTotal[parseInt(p[0]!)]!++; pairTotal[p] = (pairTotal[p] ?? 0) + 1; }
+  for (const p of recent30) famRecent[parseInt(p[0]!)]!++;
+  const momentum = famTotal.map((t, i) => t > 0 ? (famRecent[i]! / recentTotal) / (t / total) : 0);
+  const hot = momentum.map((m, i) => ({ m, i })).filter(o => o.m >= 1.0)
+    .sort((a, b) => b.m - a.m).slice(0, 4).map(o => o.i);
+  const active = hot.length > 0 ? hot : momentum.map((m, i) => ({ m, i })).sort((a, b) => b.m - a.m).slice(0, 4).map(o => o.i);
+  const raw: Record<string, number> = {};
+  for (const p of ALL_PAIRS) {
+    const fam = parseInt(p[0]!);
+    raw[p] = active.includes(fam) ? (momentum[fam] ?? 0) * ((pairTotal[p] ?? 0) / Math.max(famTotal[fam]!, 1)) : 0;
+  }
+  const maxR = Math.max(...Object.values(raw), 1e-9);
+  return ALL_PAIRS.map(p => ({ pair: p, score: raw[p]! / maxR })).sort((a, b) => b.score - a.score);
+};
+
+// ─── 17. max_per_weekday ─────────────────────────────────────
+const pairMaxPerWeekday: PairRankFn = (draws, half) => {
+  if (draws.length < 5) return pairFrequencyRank(draws, half);
+  const nextDate  = new Date(draws[draws.length - 1]!.created_at.getTime() + 86_400_000);
+  const targetDow = nextDate.getDay();
+  const bucket: Record<string, number> = {}; let bucketTotal = 0;
+  for (const d of draws) {
+    if (d.created_at.getDay() !== targetDow) continue;
+    const p = extractPair(d, half); bucket[p] = (bucket[p] ?? 0) + 1; bucketTotal++;
+  }
+  if (bucketTotal === 0) return pairFrequencyRank(draws, half);
+  const maxF = Math.max(...Object.values(bucket), 1e-9);
+  return ALL_PAIRS.map(p => ({ pair: p, score: (bucket[p] ?? 0) / maxF })).sort((a, b) => b.score - a.score);
+};
+
 // ─── 10. consensus_top (pesos fijos) ─────────────────────────
 const BASE_STRATEGIES: [PairRankFn, number][] = [
   [pairFrequencyRank,   1.0],
@@ -518,6 +709,13 @@ const BASE_STRATEGIES: [PairRankFn, number][] = [
   [pairMovingAvgSignal, 0.7],
   [pairStreakReversal,  0.65],
   [pairFibonacciPisano, 0.6],
+  // Ballbot Clones
+  [pairBayesianScore,   1.1],
+  [pairTransitionFollow,0.85],
+  [pairMarkovOrder2,    0.80],
+  [pairCalendarPattern, 0.70],
+  [pairDecadeFamily,    0.75],
+  [pairMaxPerWeekday,   0.55],
 ];
 
 const pairConsensusTop: PairRankFn = (draws, half) => {
@@ -555,6 +753,13 @@ function createPairApexAdaptive(weights: AdaptiveWeights, topNMap: Record<string
       [pairMovingAvgSignal, 'moving_avg_signal', 0.7],
       [pairStreakReversal,  'streak_reversal',   0.65],
       [pairFibonacciPisano, 'fibonacci_pisano',  0.6],
+      // Ballbot Clones
+      [pairBayesianScore,   'bayesian_score',    1.1],
+      [pairTransitionFollow,'transition_follow', 0.85],
+      [pairMarkovOrder2,    'markov_order2',     0.80],
+      [pairCalendarPattern, 'calendar_pattern',  0.70],
+      [pairDecadeFamily,    'decade_family',     0.75],
+      [pairMaxPerWeekday,   'max_per_weekday',   0.55],
     ];
 
     for (const [fn, name, baseWeight] of strategies) {
@@ -591,6 +796,13 @@ const PAIR_STRATEGY_FNS: Record<Exclude<PairStrategyName, 'apex_adaptive'>, Pair
   pair_correlation:  pairCorrelation,
   fibonacci_pisano:  pairFibonacciPisano,
   consensus_top:     pairConsensusTop,
+  // Ballbot Clones
+  bayesian_score:    pairBayesianScore,
+  transition_follow: pairTransitionFollow,
+  markov_order2:     pairMarkovOrder2,
+  calendar_pattern:  pairCalendarPattern,
+  decade_family:     pairDecadeFamily,
+  max_per_weekday:   pairMaxPerWeekday,
 };
 
 // ─── Hit detection para Pick 4 (cross-applicable) ────────────
@@ -1074,6 +1286,9 @@ export class PairBacktestEngine {
       'frequency_rank', 'hot_cold_weighted', 'gap_overdue_focus',
       'moving_avg_signal', 'momentum_ema', 'streak_reversal',
       'position_bias', 'pair_correlation', 'fibonacci_pisano', 'consensus_top',
+      // Ballbot Clones
+      'bayesian_score', 'transition_follow', 'markov_order2',
+      'calendar_pattern', 'decade_family', 'max_per_weekday',
     ];
 
     // Aplicar filtro de estrategias si se especificó

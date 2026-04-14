@@ -26,6 +26,7 @@ const MIGRATIONS = [
   '009_pair_recommendations.sql',
   '010_extend_alert_types.sql',
   '011_fix_ingested_results_schema.sql',
+  '012_agentic_strategies.sql',
 ];
 
 async function migrate(): Promise<void> {

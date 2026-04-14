@@ -175,6 +175,13 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   moving_averages:   0.7,
   streak:            0.65,
   fibonacci_pisano:  0.3,   // experimental — penalizado
+  // ─── Ballbot Clones (agentic strategies v2) ────────────────────
+  bayesian_score:    1.1,   // multi-señal 6 componentes — peso máximo
+  transition_follow: 0.85,  // Markov-1 secuencial sucesor
+  markov_order2:     0.80,  // Markov-2 estado compuesto (X→Y)→Z
+  calendar_pattern:  0.70,  // sesgo temporal DoW×mes diagonal
+  decade_family:     0.75,  // familias 00-09...90-99 momentum
+  max_per_week_day:  0.55,  // frecuencia por día de semana
 };
 
 // ─── Score por dígito/posición ───────────────────────────────────
@@ -292,6 +299,63 @@ export interface PairAnalysis {
   algorithms_succeeded: string[];
   algorithms_failed:    Array<{ name: string; error: string }>;
   total_execution_ms:   number;
+}
+
+// ─── Algoritmos Ballbot Clonados (agentic v2) ───────────────────
+
+export interface BayesianScoreResult extends AnalysisResult {
+  output_data: {
+    vectors: Array<{
+      pair:         string;
+      score:        number;   // 0-100 agregado
+      freq:         number;   // S1 frecuencia normalizada
+      gap:          number;   // S2 due-factor
+      momentum:     number;   // S3 reciente vs global
+      cycle:        number;   // S4 ciclo periódico
+      markov:       number;   // S5 max P(par|anterior)
+      cold_streak:  number;   // S6 racha fría normalizada
+    }>;
+  };
+}
+
+export interface TransitionFollowResult extends AnalysisResult {
+  output_data: {
+    matrix_size:      number;
+    top_transitions:  Array<{ from: string; to: string; count: number; probability: number }>;
+  };
+}
+
+export interface MarkovOrder2Result extends AnalysisResult {
+  output_data: {
+    state_count:      number;
+    top_transitions:  Array<{ state: string; to: string; count: number; probability: number }>;
+  };
+}
+
+export interface CalendarPatternResult extends AnalysisResult {
+  output_data: {
+    target_dow:   number;   // 0=Sunday…6=Saturday
+    target_month: number;   // 1-12
+    top_pairs:    Array<{ pair: string; score: number; dow_hits: number; month_hits: number }>;
+  };
+}
+
+export interface DecadeFamilyResult extends AnalysisResult {
+  output_data: {
+    families: Array<{
+      decade:    number;           // 0..9 → grupos 00-09, 10-19, …
+      momentum:  number;
+      top_pairs: string[];
+    }>;
+    top_pairs: Array<{ pair: string; score: number; family: number }>;
+  };
+}
+
+export interface MaxPerWeekDayResult extends AnalysisResult {
+  output_data: {
+    target_dow: number;
+    top_pairs:  Array<{ pair: string; count: number; freq: number }>;
+  };
 }
 
 // ─── Resultado agregado del motor completo ───────────────────────

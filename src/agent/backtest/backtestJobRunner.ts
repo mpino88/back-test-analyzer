@@ -110,6 +110,55 @@ export const STRATEGY_CATALOG: Array<{
     description: 'Votación ponderada de las 9 estrategias base con pesos fijos.',
     default_selected: false,
   },
+  // ── Ballbot-cloned strategies (señales genuinamente nuevas) ──
+  {
+    id: 'bayesian_score',
+    label: 'Bayesiano Multi-señal',
+    icon: '🔬',
+    category: 'meta',
+    description: '6 señales ponderadas (freq, gap, momentum, ciclo, Markov, racha fría) → score 0–100 por par.',
+    default_selected: true,
+  },
+  {
+    id: 'transition_follow',
+    label: 'Transición Markov-1',
+    icon: '➡️',
+    category: 'trend',
+    description: 'P(sucesor|anterior) Markov-1. Sigue la secuencia más probable del último par observado.',
+    default_selected: false,
+  },
+  {
+    id: 'markov_order2',
+    label: 'Markov Orden 2',
+    icon: '🔀',
+    category: 'structural',
+    description: 'Estado compuesto (X→Y)→Z. Markov-2 con memoria de dos sorteos previos.',
+    default_selected: false,
+  },
+  {
+    id: 'calendar_pattern',
+    label: 'Patrón Calendario',
+    icon: '📅',
+    category: 'cyclic',
+    description: 'Sesgo temporal DoW×mes estimado al próximo sorteo. Diagonal calendárica.',
+    default_selected: false,
+  },
+  {
+    id: 'decade_family',
+    label: 'Familias de Décadas',
+    icon: '🏘️',
+    category: 'structural',
+    description: 'Momentum por familia (00-09, 10-19, … 90-99). Selecciona miembros de familias calientes.',
+    default_selected: false,
+  },
+  {
+    id: 'max_per_weekday',
+    label: 'Máx. por Día Semana',
+    icon: '📆',
+    category: 'cyclic',
+    description: 'Top pares según frecuencia histórica en el día de semana del próximo sorteo.',
+    default_selected: false,
+  },
 ];
 
 // ─── Job tracker (en memoria — survives within process lifetime) ─

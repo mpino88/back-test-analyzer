@@ -41,8 +41,11 @@
           Alertas
           <span v-if="pendingAlerts > 0" class="nav-link__badge">{{ pendingAlerts }}</span>
         </RouterLink>
-        <RouterLink to="/agent/chat"         class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/chat"              class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🤖</span> Agente IA
+        </RouterLink>
+        <RouterLink to="/agent/ballbot-strategies" class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">🧬</span> Estrategias BB
         </RouterLink>
       </nav>
 
