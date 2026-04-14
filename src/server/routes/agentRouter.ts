@@ -813,7 +813,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
            COUNT(*) FILTER (WHERE hit = true)::int             AS hits,
            ROUND(AVG(CASE WHEN hit THEN 1.0 ELSE 0.0 END)::numeric, 4)::float AS hit_rate,
            ROUND(AVG(hit_at_rank)::numeric, 1)::float          AS avg_rank,
-           ROUND(AVG(optimal_n::float / 100), 4)::float        AS baseline,
+           ROUND(AVG(optimal_n::float / 100)::numeric, 4)::float AS baseline,
            ROUND(
              (AVG(CASE WHEN hit THEN 1.0 ELSE 0.0 END) -
               AVG(optimal_n::float / 100))::numeric, 4
