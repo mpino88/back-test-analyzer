@@ -870,9 +870,18 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
 
   // ═══════════════════════════════════════════════════════════════
   // POST /api/agent/chat
-  // Intercomunicador IA — responde preguntas desde el contexto
-  // real de la base de datos + memoria RAG del agente.
-  // Body: { message: string, game_type?: GameType, history?: {role,content}[] }
+  // Intercomunicador IA con capacidad de ejecución de tareas.
+  //
+  // CAPAS:
+  //   1. Intent detection  — ¿es una pregunta o una orden?
+  //   2. Command execution — si es orden, ejecuta directamente
+  //   3. LLM query path   — si es pregunta, responde con contexto DB
+  //   4. RAG feedback loop — SIEMPRE almacena el intercambio como aprendizaje
+  //
+  // El loop de retroalimentación cierra el ciclo cognitivo:
+  //   chat → acción/respuesta → RAG → próximo ciclo del agente usa ese saber
+  //
+  // Body: { message, game_type?, history?: [{role,content}] }
   // ═══════════════════════════════════════════════════════════════
   router.post('/chat', strictLimiter, async (req: Request, res: Response) => {
     const { message, game_type, history = [] } = req.body as {
@@ -882,129 +891,193 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
     };
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
-      res.status(400).json({ error: 'message requerido' });
-      return;
+      res.status(400).json({ error: 'message requerido' }); return;
     }
-    if (message.length > 600) {
-      res.status(400).json({ error: 'message demasiado largo (máx 600 caracteres)' });
-      return;
+    if (message.length > 800) {
+      res.status(400).json({ error: 'message demasiado largo (máx 800 caracteres)' }); return;
     }
 
     try {
       const gt = (game_type ?? 'pick3') as GameType;
+      const lower = message.toLowerCase();
 
-      // ─── 1. Contexto estructurado desde DB (parallel) ────────────
-      const [recRows, btRows, alertRows, awRows, sessionRow] = await Promise.all([
-        // Últimas 10 recomendaciones de pares con resultado
-        agentPool.query<{
-          draw_date: string; draw_type: string; half: string;
-          pairs: string[]; hit: boolean | null; hit_at_rank: number | null;
-          optimal_n: number; predicted_effectiveness: number;
-        }>(
-          `SELECT draw_date, draw_type, half, pairs, hit, hit_at_rank,
-                  optimal_n, predicted_effectiveness
-           FROM hitdash.pair_recommendations
-           WHERE game_type = $1
-           ORDER BY draw_date DESC, created_at DESC
-           LIMIT 10`,
-          [gt]
-        ).catch(() => ({ rows: [] })),
+      // ─────────────────────────────────────────────────────────────
+      // CAPA 1 — DETECCIÓN DE INTENCIÓN (rule-based, sin costo LLM)
+      // Detecta si el mensaje es una orden de ejecución.
+      // ─────────────────────────────────────────────────────────────
+      type CmdType = 'trigger_agent' | 'run_backtest' | 'acknowledge_alerts' | 'status_check';
 
-        // Top 5 estrategias por hit_rate
-        agentPool.query<{
-          strategy_name: string; half: string; hit_rate: number;
-          final_top_n: number; kelly_fraction: number; sharpe: number; total_eval_pts: number;
-        }>(
-          `SELECT strategy_name, half, hit_rate, final_top_n,
-                  kelly_fraction, sharpe, total_eval_pts
-           FROM hitdash.backtest_results_v2
-           WHERE game_type = $1
-           ORDER BY hit_rate DESC
-           LIMIT 5`,
-          [gt]
-        ).catch(() => ({ rows: [] })),
+      function extractDrawType(text: string): DrawType {
+        if (/midday|mediod[ií]a|del\s+d[ií]a|ma[ñn]an[ao]/.test(text)) return 'midday';
+        if (/evening|noct|noche|tarde/.test(text)) return 'evening';
+        return 'midday';
+      }
 
-        // Últimas 3 alertas sin reconocer
-        agentPool.query<{ alert_type: string; message: string; created_at: string }>(
-          `SELECT alert_type, message, created_at::text
-           FROM hitdash.proactive_alerts
-           WHERE acknowledged = false
-           ORDER BY created_at DESC
-           LIMIT 3`
-        ).catch(() => ({ rows: [] })),
+      const COMMANDS: Array<{ regex: RegExp; type: CmdType }> = [
+        { regex: /\b(ejecuta|dispara|corre|trigger|lanza|activa|inicia)\b.{0,40}\bagent[e]?\b/i,  type: 'trigger_agent'       },
+        { regex: /\bagent[e]?\b.{0,30}\b(ejecuta|dispara|corre|trigger|lanza|activa|inicia)\b/i,  type: 'trigger_agent'       },
+        { regex: /\b(ejecuta|corre|lanza|inicia|run|realiza)\b.{0,30}\bbacktest\b/i,              type: 'run_backtest'        },
+        { regex: /\bbacktest\b.{0,30}\b(ahora|ya|ejecuta|manual|inicia|corre)\b/i,               type: 'run_backtest'        },
+        { regex: /\b(reconoc[e]?|limpia|clear|ack)\b.{0,30}\balertas?\b/i,                       type: 'acknowledge_alerts'  },
+        { regex: /\b(estado|status|c[oó]mo\s+est[áa]|reporte)\b.{0,20}\bagent[e]?\b/i,           type: 'status_check'        },
+      ];
 
-        // Pesos adaptativos actuales
-        agentPool.query<{ strategy: string; weight: number; top_n: number; mode: string }>(
-          `SELECT strategy, weight, top_n, mode
-           FROM hitdash.adaptive_weights
-           WHERE game_type = $1
-           ORDER BY weight DESC
-           LIMIT 8`,
-          [gt]
-        ).catch(() => ({ rows: [] })),
+      let detectedCommand: CmdType | null = null;
+      for (const cmd of COMMANDS) {
+        if (cmd.regex.test(lower)) { detectedCommand = cmd.type; break; }
+      }
 
-        // Última sesión del agente
-        agentPool.query<{ status: string; created_at: string; duration_ms: number; model_used: string }>(
-          `SELECT status, created_at::text, duration_ms, model_used
-           FROM hitdash.agent_sessions
-           ORDER BY created_at DESC LIMIT 1`
-        ).catch(() => ({ rows: [] })),
-      ]);
+      // ─────────────────────────────────────────────────────────────
+      // CAPA 2 — EJECUCIÓN DE COMANDOS
+      // Si es orden: ejecuta, construye respuesta sin LLM (rápido).
+      // ─────────────────────────────────────────────────────────────
+      let responseText = '';
+      let actionTaken: string | null = null;
+      let actionMeta: Record<string, unknown> = {};
+      const sources: string[] = [];
 
-      // ─── 2. Búsqueda semántica RAG ────────────────────────────────
-      const ragResults = await ragService.searchSimilar(message, 5, undefined, 0.45)
-        .catch(() => [] as import('../../agent/types/agent.types.js').RagResult[]);
+      if (detectedCommand === 'trigger_agent') {
+        const dt = extractDrawType(lower);
+        if (scheduler) {
+          await scheduler.triggerManual(gt, dt);
+          responseText = `✅ Agente disparado manualmente.\n**Juego:** ${gt.toUpperCase()} | **Turno:** ${dt}\nEl ciclo de análisis está en cola. Revisa el Dashboard para ver el estado. Te llegará notificación por Telegram cuando termine.`;
+        } else {
+          responseText = `⚠️ El scheduler no está disponible en este momento. Usa el botón "Trigger Manual" del Dashboard o el endpoint directo.`;
+        }
+        actionTaken = 'trigger_agent';
+        actionMeta  = { game_type: gt, draw_type: dt };
+        sources.push('scheduler');
 
-      // ─── 3. Construir bloque de contexto ─────────────────────────
-      const recSummary = recRows.rows.length === 0
-        ? 'Sin recomendaciones registradas aún.'
-        : recRows.rows.map(r =>
-            `[${r.draw_date} ${r.draw_type} ${r.half}] Pares: ${r.pairs.slice(0, 8).join(' ')} | ` +
-            `${r.hit === null ? 'pendiente' : r.hit ? `HIT rank#${r.hit_at_rank}` : 'MISS'} | ` +
-            `N=${r.optimal_n} efectividad=${(r.predicted_effectiveness * 100).toFixed(1)}%`
-          ).join('\n');
+      } else if (detectedCommand === 'run_backtest') {
+        const mode = /midday|mediod[ií]a/.test(lower) ? 'midday'
+                   : /evening|noche/.test(lower) ? 'evening' : 'combined';
+        // Ejecutar en background sin bloquear la respuesta del chat
+        setImmediate(() => {
+          pairBacktestEngine.runAll(mode as 'midday' | 'evening' | 'combined', gt)
+            .catch(e => logger.error({ error: String(e) }, 'chat: backtest en background falló'));
+        });
+        responseText = `🔬 Backtest iniciado en background.\n**Juego:** ${gt.toUpperCase()} | **Modo:** ${mode}\nEsto toma 1-3 minutos. Cuando termine, los resultados estarán en la sección **BT Control** y en la tabla de estrategias de Rendimiento.`;
+        actionTaken = 'run_backtest';
+        actionMeta  = { game_type: gt, mode };
+        sources.push('pair_backtest_engine');
 
-      const btSummary = btRows.rows.length === 0
-        ? 'Sin datos de backtest aún.'
-        : btRows.rows.map(r =>
-            `${r.strategy_name}(${r.half}): hit_rate=${(r.hit_rate * 100).toFixed(1)}% ` +
-            `top_n=${r.final_top_n} kelly=${r.kelly_fraction?.toFixed(3) ?? 'n/a'} ` +
-            `sharpe=${r.sharpe?.toFixed(2) ?? 'n/a'} pts=${r.total_eval_pts}`
-          ).join('\n');
+      } else if (detectedCommand === 'acknowledge_alerts') {
+        const { rowCount } = await agentPool.query(
+          `UPDATE hitdash.proactive_alerts SET acknowledged = true WHERE acknowledged = false`
+        );
+        responseText = `✅ ${rowCount ?? 0} alerta(s) marcadas como reconocidas.`;
+        actionTaken = 'acknowledge_alerts';
+        actionMeta  = { cleared: rowCount ?? 0 };
+        sources.push('proactive_alerts');
 
-      const alertSummary = alertRows.rows.length === 0
-        ? 'Sin alertas activas.'
-        : alertRows.rows.map(r => `[${r.alert_type}] ${r.message} (${r.created_at})`).join('\n');
+      } else if (detectedCommand === 'status_check') {
+        const [sess, alerts, rag] = await Promise.all([
+          agentPool.query<{ status: string; created_at: string; game_type: string; draw_type: string }>(
+            `SELECT status, created_at::text, game_type, draw_type FROM hitdash.agent_sessions ORDER BY created_at DESC LIMIT 1`
+          ).catch(() => ({ rows: [] })),
+          agentPool.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM hitdash.proactive_alerts WHERE acknowledged = false`
+          ).catch(() => ({ rows: [{ count: '0' }] })),
+          agentPool.query<{ count: string }>(
+            `SELECT COUNT(*)::text AS count FROM hitdash.rag_knowledge`
+          ).catch(() => ({ rows: [{ count: '0' }] })),
+        ]);
+        const s = sess.rows[0];
+        responseText = s
+          ? `📊 **Estado del Agente HITDASH**\n` +
+            `Última sesión: **${s.status}** | ${s.game_type} ${s.draw_type} | ${s.created_at}\n` +
+            `Alertas activas: **${alerts.rows[0]?.count ?? 0}**\n` +
+            `Documentos RAG: **${rag.rows[0]?.count ?? 0}**`
+          : `ℹ️ No hay sesiones registradas aún. El agente no ha corrido todavía.`;
+        actionTaken = 'status_check';
+        sources.push('agent_sessions', 'proactive_alerts', 'rag_knowledge');
 
-      const awSummary = awRows.rows.length === 0
-        ? 'Sin pesos adaptativos aún.'
-        : awRows.rows.map(r =>
-            `${r.strategy}(${r.mode}): peso=${r.weight.toFixed(3)} top_n=${r.top_n}`
-          ).join('\n');
+      } else {
+        // ───────────────────────────────────────────────────────────
+        // CAPA 3 — PATH DE CONSULTA: contexto DB completo + LLM
+        // ───────────────────────────────────────────────────────────
+        const [recRows, btRows, alertRows, awRows, sessionRow] = await Promise.all([
+          agentPool.query<{
+            draw_date: string; draw_type: string; half: string;
+            pairs: string[]; hit: boolean | null; hit_at_rank: number | null;
+            optimal_n: number; predicted_effectiveness: number;
+          }>(
+            `SELECT draw_date, draw_type, half, pairs, hit, hit_at_rank,
+                    optimal_n, predicted_effectiveness
+             FROM hitdash.pair_recommendations
+             WHERE game_type = $1
+             ORDER BY draw_date DESC, created_at DESC LIMIT 10`,
+            [gt]
+          ).catch(() => ({ rows: [] as any[] })),
 
-      const sessionSummary = sessionRow.rows[0]
-        ? `Última sesión: ${sessionRow.rows[0].status} | ${sessionRow.rows[0].created_at} | modelo: ${sessionRow.rows[0].model_used}`
-        : 'Sin sesiones registradas.';
+          agentPool.query<{
+            strategy_name: string; half: string; hit_rate: number;
+            final_top_n: number; kelly_fraction: number; sharpe: number; total_eval_pts: number;
+          }>(
+            `SELECT strategy_name, half, hit_rate, final_top_n,
+                    kelly_fraction, sharpe, total_eval_pts
+             FROM hitdash.backtest_results_v2
+             WHERE game_type = $1
+             ORDER BY hit_rate DESC LIMIT 5`,
+            [gt]
+          ).catch(() => ({ rows: [] as any[] })),
 
-      const ragSummary = ragResults.length === 0
-        ? ''
-        : '\nMEMORIA RAG (patrones aprendidos):\n' +
-          ragResults.map(r => `[${r.category}] ${r.content.slice(0, 200)}`).join('\n');
+          agentPool.query<{ alert_type: string; message: string; created_at: string }>(
+            `SELECT alert_type, message, created_at::text FROM hitdash.proactive_alerts
+             WHERE acknowledged = false ORDER BY created_at DESC LIMIT 3`
+          ).catch(() => ({ rows: [] as any[] })),
 
-      // ─── 4. Historial de conversación (últimas 6 rondas) ─────────
-      const recentHistory = history.slice(-6);
+          agentPool.query<{ strategy: string; weight: number; top_n: number; mode: string }>(
+            `SELECT strategy, weight, top_n, mode FROM hitdash.adaptive_weights
+             WHERE game_type = $1 ORDER BY weight DESC LIMIT 8`,
+            [gt]
+          ).catch(() => ({ rows: [] as any[] })),
 
-      // ─── 5. Prompt al LLM ─────────────────────────────────────────
-      const systemPrompt = `Eres HITDASH, el agente estadístico de Bliss Systems LLC para análisis de lotería.
-Respondes ÚNICAMENTE desde el contexto de tu base de datos que se te proporciona.
+          agentPool.query<{ status: string; created_at: string; model_used: string }>(
+            `SELECT status, created_at::text, model_used FROM hitdash.agent_sessions
+             ORDER BY created_at DESC LIMIT 1`
+          ).catch(() => ({ rows: [] as any[] })),
+        ]);
+
+        const ragResults = await ragService.searchSimilar(message, 6, undefined, 0.42)
+          .catch(() => [] as import('../../agent/types/agent.types.js').RagResult[]);
+
+        const recSummary = recRows.rows.length === 0 ? 'Sin recomendaciones aún.'
+          : recRows.rows.map((r: any) =>
+              `[${r.draw_date} ${r.draw_type} ${r.half}] Pares: ${r.pairs.slice(0, 8).join(' ')} | ` +
+              `${r.hit === null ? 'pendiente' : r.hit ? `HIT rank#${r.hit_at_rank}` : 'MISS'} | ` +
+              `N=${r.optimal_n} ef=${(r.predicted_effectiveness * 100).toFixed(1)}%`
+            ).join('\n');
+
+        const btSummary = btRows.rows.length === 0 ? 'Sin datos de backtest aún.'
+          : btRows.rows.map((r: any) =>
+              `${r.strategy_name}(${r.half}): hit=${(r.hit_rate * 100).toFixed(1)}% top_n=${r.final_top_n} kelly=${r.kelly_fraction?.toFixed(3) ?? 'n/a'} sharpe=${r.sharpe?.toFixed(2) ?? 'n/a'} pts=${r.total_eval_pts}`
+            ).join('\n');
+
+        const alertSummary = alertRows.rows.length === 0 ? 'Sin alertas activas.'
+          : alertRows.rows.map((r: any) => `[${r.alert_type}] ${r.message}`).join('\n');
+
+        const awSummary = awRows.rows.length === 0 ? 'Sin pesos adaptativos aún.'
+          : awRows.rows.map((r: any) => `${r.strategy}(${r.mode}): peso=${r.weight.toFixed(3)} top_n=${r.top_n}`).join('\n');
+
+        const sessionSummary = sessionRow.rows[0]
+          ? `Última sesión: ${(sessionRow.rows[0] as any).status} | ${(sessionRow.rows[0] as any).created_at} | ${(sessionRow.rows[0] as any).model_used}`
+          : 'Sin sesiones.';
+
+        const ragSummary = ragResults.length === 0 ? ''
+          : '\nMEMORIA RAG (aprendizajes previos):\n' +
+            ragResults.map(r => `[${r.category}] ${r.content.slice(0, 200)}`).join('\n');
+
+        const systemPrompt = `Eres HITDASH, el agente estadístico de Bliss Systems LLC para análisis de lotería.
+Respondes ÚNICAMENTE desde el contexto de tu base de datos que se te proporciona a continuación.
 Si un dato no está en el contexto, di explícitamente "No tengo esa información en mi base de datos."
-No inventes números ni porcentajes. Sé directo, conciso y usa lenguaje profesional en español.
-Juego activo para esta consulta: ${gt.toUpperCase()}.
+No inventes números ni porcentajes. Sé directo, conciso y profesional en español.
+Juego activo: ${gt.toUpperCase()}.
 
 ─── RECOMENDACIONES RECIENTES ───
 ${recSummary}
 
-─── RENDIMIENTO DE ESTRATEGIAS (BACKTEST) ───
+─── ESTRATEGIAS (BACKTEST) ───
 ${btSummary}
 
 ─── ALERTAS ACTIVAS ───
@@ -1013,35 +1086,66 @@ ${alertSummary}
 ─── PESOS ADAPTATIVOS ───
 ${awSummary}
 
-─── ESTADO DEL AGENTE ───
+─── ESTADO ───
 ${sessionSummary}
 ${ragSummary}`;
 
-      const messages: import('../../agent/types/agent.types.js').Message[] = [
-        { role: 'system', content: systemPrompt },
-        ...recentHistory.map(h => ({ role: h.role, content: h.content } as import('../../agent/types/agent.types.js').Message)),
-        { role: 'user', content: message },
-      ];
+        const msgs: import('../../agent/types/agent.types.js').Message[] = [
+          { role: 'system', content: systemPrompt },
+          ...history.slice(-6).map(h => ({ role: h.role, content: h.content } as import('../../agent/types/agent.types.js').Message)),
+          { role: 'user', content: message },
+        ];
 
-      const llmResult = await llmRouter.complete(messages, { temperature: 0.2, maxTokens: 800 });
+        const llmResult = await llmRouter.complete(msgs, { temperature: 0.2, maxTokens: 800 });
+        responseText = llmResult.content;
 
-      // ─── 6. Fuentes utilizadas ────────────────────────────────────
-      const sources: string[] = [];
-      if (recRows.rows.length > 0)  sources.push('pair_recommendations');
-      if (btRows.rows.length > 0)   sources.push('backtest_results_v2');
-      if (alertRows.rows.length > 0) sources.push('proactive_alerts');
-      if (awRows.rows.length > 0)   sources.push('adaptive_weights');
-      if (ragResults.length > 0)    sources.push('rag_knowledge');
+        if (recRows.rows.length > 0)  sources.push('pair_recommendations');
+        if (btRows.rows.length > 0)   sources.push('backtest_results_v2');
+        if (alertRows.rows.length > 0) sources.push('proactive_alerts');
+        if (awRows.rows.length > 0)   sources.push('adaptive_weights');
+        if (ragResults.length > 0)    sources.push('rag_knowledge');
+        actionMeta = { model: llmResult.model, rag_hits: ragResults.length };
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // CAPA 4 — LOOP DE RETROALIMENTACIÓN RAG
+      // Almacena CADA intercambio (pregunta + respuesta + acción)
+      // como conocimiento en rag_knowledge.
+      //
+      // La próxima vez que HitdashAgent.run() llame a queryRAGContext(),
+      // encontrará estos aprendizajes y los usará como contexto adicional
+      // para sus validaciones LLM → predicciones más informadas.
+      //
+      // Este loop es lo que hace al agente exponencialmente más inteligente:
+      //   chat → conocimiento → agente → mejores preds → mejores respuestas chat
+      // ─────────────────────────────────────────────────────────────
+      const knowledgeEntry = [
+        `[Chat HITDASH | ${gt.toUpperCase()} | ${new Date().toISOString().slice(0, 10)}]`,
+        `Consulta: ${message.slice(0, 300)}`,
+        actionTaken ? `Acción ejecutada: ${actionTaken} | meta: ${JSON.stringify(actionMeta).slice(0, 100)}` : null,
+        `Respuesta: ${responseText.slice(0, 500)}`,
+      ].filter(Boolean).join('\n');
+
+      ragService.storeKnowledge({
+        content: knowledgeEntry,
+        category: 'learning',
+        source: `chat:${gt}:${Date.now()}`,
+        confidence: actionTaken ? 0.75 : 0.60,
+        metadata: {
+          type:       'chat_interaction',
+          game_type:  gt,
+          action:     actionTaken ?? 'query',
+          timestamp:  new Date().toISOString(),
+        },
+      }).catch(e => logger.warn({ error: String(e) }, 'chat: RAG ingestion falló (non-fatal)'));
+
+      logger.info({ game_type: gt, action: actionTaken ?? 'query', sources }, 'chat: respuesta generada');
 
       res.json({
-        response: llmResult.content,
+        response:     responseText,
+        action_taken: actionTaken,
+        action_meta:  Object.keys(actionMeta).length ? actionMeta : undefined,
         sources,
-        model: llmResult.model,
-        context_records: {
-          recommendations: recRows.rows.length,
-          strategies: btRows.rows.length,
-          rag_hits: ragResults.length,
-        },
       });
 
     } catch (err) {

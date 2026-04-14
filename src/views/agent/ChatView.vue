@@ -27,9 +27,16 @@
         <div class="chat-welcome__icon">⚡</div>
         <div class="chat-welcome__title">Pregúntame sobre los datos</div>
         <div class="chat-welcome__sub">Solo respondo desde mi base de datos real — sin inventar.</div>
+        <div class="chat-welcome__section-label">Consultas</div>
         <div class="chat-welcome__examples">
-          <button v-for="ex in examples" :key="ex" class="example-btn" @click="sendExample(ex)">
+          <button v-for="ex in examplesQuery" :key="ex" class="example-btn" @click="sendExample(ex)">
             {{ ex }}
+          </button>
+        </div>
+        <div class="chat-welcome__section-label chat-welcome__section-label--cmd">Comandos de ejecución</div>
+        <div class="chat-welcome__examples">
+          <button v-for="ex in examplesCmd" :key="ex" class="example-btn example-btn--cmd" @click="sendExample(ex)">
+            ⚡ {{ ex }}
           </button>
         </div>
       </div>
@@ -41,8 +48,22 @@
         class="msg-row"
         :class="msg.role === 'user' ? 'msg-row--user' : 'msg-row--agent'"
       >
-        <div v-if="msg.role === 'assistant'" class="msg-avatar">🤖</div>
-        <div class="msg-bubble" :class="msg.role === 'user' ? 'bubble--user' : 'bubble--agent'">
+        <div v-if="msg.role === 'assistant'" class="msg-avatar">
+          {{ msg.action_taken ? '⚡' : '🤖' }}
+        </div>
+        <div
+          class="msg-bubble"
+          :class="[
+            msg.role === 'user' ? 'bubble--user' : 'bubble--agent',
+            msg.action_taken ? 'bubble--action' : '',
+          ]"
+        >
+          <!-- Action badge -->
+          <div v-if="msg.action_taken" class="action-badge">
+            <span class="action-badge__icon">{{ actionIcon(msg.action_taken) }}</span>
+            <span class="action-badge__label">{{ actionLabel(msg.action_taken) }}</span>
+            <span class="action-badge__dot"></span>
+          </div>
           <div class="msg-text" v-html="formatText(msg.content)"></div>
           <div v-if="msg.sources && msg.sources.length" class="msg-sources">
             <span class="sources-label">Fuentes:</span>
@@ -107,13 +128,35 @@ const inputEl      = ref(null);
 // Conversation history (persisted in sessionStorage per game)
 const messages = ref(loadHistory());
 
-const examples = [
+const examplesQuery = [
   '¿Cuántos aciertos ha tenido el agente esta semana?',
   '¿Cuál es la estrategia con mayor hit rate?',
   '¿Qué pares recomienda actualmente el agente?',
   '¿Hay alguna alerta activa en el sistema?',
-  '¿Cuál es el Kelly fraction de apex_adaptive?',
 ];
+
+const examplesCmd = [
+  'ejecuta el agente pick3 midday',
+  'ejecuta el backtest ahora',
+  'muéstrame el estado del agente',
+  'reconoce las alertas',
+];
+
+const ACTION_ICONS = {
+  trigger_agent:       '🚀',
+  run_backtest:        '🔬',
+  acknowledge_alerts:  '✅',
+  status_check:        '📊',
+};
+const ACTION_LABELS = {
+  trigger_agent:       'Agente disparado',
+  run_backtest:        'Backtest iniciado',
+  acknowledge_alerts:  'Alertas reconocidas',
+  status_check:        'Estado consultado',
+};
+
+function actionIcon(type)  { return ACTION_ICONS[type]  ?? '⚡'; }
+function actionLabel(type) { return ACTION_LABELS[type] ?? type; }
 
 function loadHistory() {
   try {
@@ -195,11 +238,11 @@ async function send() {
     const data = await res.json();
 
     messages.value.push({
-      role:    'assistant',
-      content: data.response,
-      sources: data.sources ?? [],
-      model:   data.model,
-      time:    now(),
+      role:         'assistant',
+      content:      data.response,
+      sources:      data.sources ?? [],
+      action_taken: data.action_taken ?? null,
+      time:         now(),
     });
 
   } catch (err) {
@@ -439,6 +482,43 @@ function resetResize() {
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .spin { display: inline-block; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Action bubbles ─────────────────────────────────────────── */
+.bubble--action {
+  border-color: #1e3a5a;
+  background: #080f1e;
+}
+.action-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #1e2d40;
+}
+.action-badge__icon  { font-size: 1rem; }
+.action-badge__label { font-size: 0.72rem; font-weight: 700; color: #38bdf8; letter-spacing: 0.03em; text-transform: uppercase; }
+.action-badge__dot   {
+  margin-left: auto;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 5px #22c55e;
+}
+
+/* ─── Welcome: sections ──────────────────────────────────────── */
+.chat-welcome__section-label {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: #475569;
+  margin-top: 1rem; margin-bottom: 0.25rem; width: 100%; text-align: left;
+  padding-left: 0.5rem;
+}
+.chat-welcome__section-label--cmd { color: #1e3a5a; }
+.example-btn--cmd {
+  border-color: #1e3a5a;
+  color: #38bdf8;
+  background: #080f1e;
+}
+.example-btn--cmd:hover { background: #0f1e35; }
 
 @media (max-width: 768px) {
   .chat-view { height: calc(100vh - 8rem); }
