@@ -1127,8 +1127,12 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           ).catch(() => ({ rows: [] as any[] })),
         ]);
 
-        const ragResults = await ragService.searchSimilar(message, 6, undefined, 0.42)
-          .catch(() => [] as import('../../agent/types/agent.types.js').RagResult[]);
+        // Excluir category='pattern' (sorteos crudos) — ya están en ingested_results como contexto estructurado.
+        // RAG debe devolver aprendizajes reales (learning, insight, decision), no datos de sorteos.
+        const ragResults = (await ragService.searchSimilar(message, 8, undefined, 0.42)
+          .catch(() => [] as import('../../agent/types/agent.types.js').RagResult[]))
+          .filter(r => r.category !== 'pattern')
+          .slice(0, 6);
 
         const recSummary = recRows.rows.length === 0 ? 'Sin recomendaciones aún.'
           : recRows.rows.map((r: any) =>
