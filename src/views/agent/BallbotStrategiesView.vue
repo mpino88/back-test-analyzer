@@ -114,8 +114,8 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? '';
-const API_KEY  = import.meta.env.VITE_API_KEY  ?? '';
+const API_BASE = import.meta.env.VITE_API_BASE       ?? '';
+const API_KEY  = import.meta.env.VITE_AGENT_API_KEY  ?? '';
 
 const gameType   = ref('pick3');
 const drawType   = ref('midday');

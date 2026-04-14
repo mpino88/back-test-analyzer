@@ -85,8 +85,6 @@ export class LLMRouter {
         systemInstruction: systemMsg?.content,
         temperature: opts.temperature ?? 0.4,
         maxOutputTokens: opts.maxTokens ?? 4096,
-        // Don't return thoughts in the response — saves output token space
-        thinkingConfig: { includeThoughts: false },
       },
     });
 
@@ -167,9 +165,10 @@ export class LLMRouter {
       logger.warn('Circuit breaker OPEN — usando Claude directamente');
     }
 
-    // Fallback: Claude Sonnet 4.6 (solo si ANTHROPIC_API_KEY está configurado)
-    if (!process.env['ANTHROPIC_API_KEY']) {
-      throw new Error('Gemini falló y ANTHROPIC_API_KEY no configurado — sin fallback disponible');
+    // Fallback: Claude Sonnet 4.6 (solo si ANTHROPIC_API_KEY está configurado y no es placeholder)
+    const claudeKey = process.env['ANTHROPIC_API_KEY'];
+    if (!claudeKey || claudeKey === 'PENDING' || claudeKey.length < 20) {
+      throw new Error('Gemini no disponible temporalmente. Verifica GEMINI_API_KEY en el servidor.');
     }
     const result = await this.callClaude(messages, opts);
     logger.info(

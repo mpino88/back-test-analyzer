@@ -157,8 +157,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-
-const API = import.meta.env.VITE_API_URL ?? '';
+import { apiFetch } from '../../utils/apiClient.js';
 
 const gameType = ref('pick3');
 const days     = ref(30);
@@ -170,7 +169,7 @@ async function fetchData() {
   loading.value = true;
   error.value   = '';
   try {
-    const res = await fetch(`${API}/api/agent/rendimiento?game_type=${gameType.value}&days=${days.value}`);
+    const res = await apiFetch(`/api/agent/rendimiento?game_type=${gameType.value}&days=${days.value}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     data.value = await res.json();
   } catch (e) {
