@@ -9,6 +9,8 @@ import type { GameType, DrawType } from '../../agent/types/agent.types.js';
 import { BacktestEngine, type BacktestMode, type StrategyName } from '../../agent/backtest/BacktestEngine.js';
 import { PairBacktestEngine } from '../../agent/backtest/PairBacktestEngine.js';
 import { ProgressiveEngine }  from '../../agent/backtest/ProgressiveEngine.js';
+import { RAGService }         from '../../agent/services/RAGService.js';
+import { LLMRouter }          from '../../agent/services/LLMRouter.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -20,6 +22,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const backtestEngine      = ballbotPool ? new BacktestEngine(ballbotPool, agentPool) : null;
   const pairBacktestEngine  = new PairBacktestEngine(agentPool);
   const progressiveEngine   = ballbotPool ? new ProgressiveEngine(ballbotPool) : null;
+  const ragService          = new RAGService(agentPool);
+  const llmRouter           = new LLMRouter();
 
   const strictLimiter = createStrictLimiter();
 
@@ -861,6 +865,189 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       res.json({ summary, timeline, strategies, days, game_type });
     } catch (err) {
       res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // POST /api/agent/chat
+  // Intercomunicador IA — responde preguntas desde el contexto
+  // real de la base de datos + memoria RAG del agente.
+  // Body: { message: string, game_type?: GameType, history?: {role,content}[] }
+  // ═══════════════════════════════════════════════════════════════
+  router.post('/chat', strictLimiter, async (req: Request, res: Response) => {
+    const { message, game_type, history = [] } = req.body as {
+      message: string;
+      game_type?: GameType;
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    };
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      res.status(400).json({ error: 'message requerido' });
+      return;
+    }
+    if (message.length > 600) {
+      res.status(400).json({ error: 'message demasiado largo (máx 600 caracteres)' });
+      return;
+    }
+
+    try {
+      const gt = (game_type ?? 'pick3') as GameType;
+
+      // ─── 1. Contexto estructurado desde DB (parallel) ────────────
+      const [recRows, btRows, alertRows, awRows, sessionRow] = await Promise.all([
+        // Últimas 10 recomendaciones de pares con resultado
+        agentPool.query<{
+          draw_date: string; draw_type: string; half: string;
+          pairs: string[]; hit: boolean | null; hit_at_rank: number | null;
+          optimal_n: number; predicted_effectiveness: number;
+        }>(
+          `SELECT draw_date, draw_type, half, pairs, hit, hit_at_rank,
+                  optimal_n, predicted_effectiveness
+           FROM hitdash.pair_recommendations
+           WHERE game_type = $1
+           ORDER BY draw_date DESC, created_at DESC
+           LIMIT 10`,
+          [gt]
+        ).catch(() => ({ rows: [] })),
+
+        // Top 5 estrategias por hit_rate
+        agentPool.query<{
+          strategy_name: string; half: string; hit_rate: number;
+          final_top_n: number; kelly_fraction: number; sharpe: number; total_eval_pts: number;
+        }>(
+          `SELECT strategy_name, half, hit_rate, final_top_n,
+                  kelly_fraction, sharpe, total_eval_pts
+           FROM hitdash.backtest_results_v2
+           WHERE game_type = $1
+           ORDER BY hit_rate DESC
+           LIMIT 5`,
+          [gt]
+        ).catch(() => ({ rows: [] })),
+
+        // Últimas 3 alertas sin reconocer
+        agentPool.query<{ alert_type: string; message: string; created_at: string }>(
+          `SELECT alert_type, message, created_at::text
+           FROM hitdash.proactive_alerts
+           WHERE acknowledged = false
+           ORDER BY created_at DESC
+           LIMIT 3`
+        ).catch(() => ({ rows: [] })),
+
+        // Pesos adaptativos actuales
+        agentPool.query<{ strategy: string; weight: number; top_n: number; mode: string }>(
+          `SELECT strategy, weight, top_n, mode
+           FROM hitdash.adaptive_weights
+           WHERE game_type = $1
+           ORDER BY weight DESC
+           LIMIT 8`,
+          [gt]
+        ).catch(() => ({ rows: [] })),
+
+        // Última sesión del agente
+        agentPool.query<{ status: string; created_at: string; duration_ms: number; model_used: string }>(
+          `SELECT status, created_at::text, duration_ms, model_used
+           FROM hitdash.agent_sessions
+           ORDER BY created_at DESC LIMIT 1`
+        ).catch(() => ({ rows: [] })),
+      ]);
+
+      // ─── 2. Búsqueda semántica RAG ────────────────────────────────
+      const ragResults = await ragService.searchSimilar(message, 5, undefined, 0.45)
+        .catch(() => [] as import('../../agent/types/agent.types.js').RagResult[]);
+
+      // ─── 3. Construir bloque de contexto ─────────────────────────
+      const recSummary = recRows.rows.length === 0
+        ? 'Sin recomendaciones registradas aún.'
+        : recRows.rows.map(r =>
+            `[${r.draw_date} ${r.draw_type} ${r.half}] Pares: ${r.pairs.slice(0, 8).join(' ')} | ` +
+            `${r.hit === null ? 'pendiente' : r.hit ? `HIT rank#${r.hit_at_rank}` : 'MISS'} | ` +
+            `N=${r.optimal_n} efectividad=${(r.predicted_effectiveness * 100).toFixed(1)}%`
+          ).join('\n');
+
+      const btSummary = btRows.rows.length === 0
+        ? 'Sin datos de backtest aún.'
+        : btRows.rows.map(r =>
+            `${r.strategy_name}(${r.half}): hit_rate=${(r.hit_rate * 100).toFixed(1)}% ` +
+            `top_n=${r.final_top_n} kelly=${r.kelly_fraction?.toFixed(3) ?? 'n/a'} ` +
+            `sharpe=${r.sharpe?.toFixed(2) ?? 'n/a'} pts=${r.total_eval_pts}`
+          ).join('\n');
+
+      const alertSummary = alertRows.rows.length === 0
+        ? 'Sin alertas activas.'
+        : alertRows.rows.map(r => `[${r.alert_type}] ${r.message} (${r.created_at})`).join('\n');
+
+      const awSummary = awRows.rows.length === 0
+        ? 'Sin pesos adaptativos aún.'
+        : awRows.rows.map(r =>
+            `${r.strategy}(${r.mode}): peso=${r.weight.toFixed(3)} top_n=${r.top_n}`
+          ).join('\n');
+
+      const sessionSummary = sessionRow.rows[0]
+        ? `Última sesión: ${sessionRow.rows[0].status} | ${sessionRow.rows[0].created_at} | modelo: ${sessionRow.rows[0].model_used}`
+        : 'Sin sesiones registradas.';
+
+      const ragSummary = ragResults.length === 0
+        ? ''
+        : '\nMEMORIA RAG (patrones aprendidos):\n' +
+          ragResults.map(r => `[${r.category}] ${r.content.slice(0, 200)}`).join('\n');
+
+      // ─── 4. Historial de conversación (últimas 6 rondas) ─────────
+      const recentHistory = history.slice(-6);
+
+      // ─── 5. Prompt al LLM ─────────────────────────────────────────
+      const systemPrompt = `Eres HITDASH, el agente estadístico de Bliss Systems LLC para análisis de lotería.
+Respondes ÚNICAMENTE desde el contexto de tu base de datos que se te proporciona.
+Si un dato no está en el contexto, di explícitamente "No tengo esa información en mi base de datos."
+No inventes números ni porcentajes. Sé directo, conciso y usa lenguaje profesional en español.
+Juego activo para esta consulta: ${gt.toUpperCase()}.
+
+─── RECOMENDACIONES RECIENTES ───
+${recSummary}
+
+─── RENDIMIENTO DE ESTRATEGIAS (BACKTEST) ───
+${btSummary}
+
+─── ALERTAS ACTIVAS ───
+${alertSummary}
+
+─── PESOS ADAPTATIVOS ───
+${awSummary}
+
+─── ESTADO DEL AGENTE ───
+${sessionSummary}
+${ragSummary}`;
+
+      const messages: import('../../agent/types/agent.types.js').Message[] = [
+        { role: 'system', content: systemPrompt },
+        ...recentHistory.map(h => ({ role: h.role, content: h.content } as import('../../agent/types/agent.types.js').Message)),
+        { role: 'user', content: message },
+      ];
+
+      const llmResult = await llmRouter.complete(messages, { temperature: 0.2, maxTokens: 800 });
+
+      // ─── 6. Fuentes utilizadas ────────────────────────────────────
+      const sources: string[] = [];
+      if (recRows.rows.length > 0)  sources.push('pair_recommendations');
+      if (btRows.rows.length > 0)   sources.push('backtest_results_v2');
+      if (alertRows.rows.length > 0) sources.push('proactive_alerts');
+      if (awRows.rows.length > 0)   sources.push('adaptive_weights');
+      if (ragResults.length > 0)    sources.push('rag_knowledge');
+
+      res.json({
+        response: llmResult.content,
+        sources,
+        model: llmResult.model,
+        context_records: {
+          recommendations: recRows.rows.length,
+          strategies: btRows.rows.length,
+          rag_hits: ragResults.length,
+        },
+      });
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ error: msg }, 'chat endpoint error');
+      res.status(500).json({ error: 'El agente no pudo responder. Verifica las API keys (GEMINI_API_KEY / ANTHROPIC_API_KEY).' });
     }
   });
 

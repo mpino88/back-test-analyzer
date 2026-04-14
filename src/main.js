@@ -26,6 +26,7 @@ const router = createRouter({
         { path: 'tracking',         component: () => import('./views/agent/StrategyTrackingView.vue') },
         { path: 'alerts',      component: () => import('./views/agent/AlertsView.vue') },
         { path: 'progressive', component: () => import('./views/agent/ProgressiveView.vue') },
+        { path: 'chat',        component: () => import('./views/agent/ChatView.vue') },
       ],
     },
   ],
