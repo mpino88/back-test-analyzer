@@ -9,43 +9,31 @@
       </div>
 
       <nav class="agent-nav__links">
-        <RouterLink to="/agent/dashboard"    class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/dashboard"         class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🎯</span> Dashboard
         </RouterLink>
-        <RouterLink to="/agent/rendimiento"  class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/rendimiento"       class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📊</span> Rendimiento
         </RouterLink>
-        <RouterLink to="/agent/cartones"     class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">🎰</span> Cartones
-        </RouterLink>
-        <RouterLink to="/agent/accuracy"     class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">📈</span> Accuracy
-        </RouterLink>
-        <RouterLink to="/agent/strategies"   class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">🧠</span> Estrategias
-        </RouterLink>
-        <RouterLink to="/agent/backtest"     class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/backtest"          class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔬</span> Backtest
         </RouterLink>
-        <RouterLink to="/agent/backtest-control" class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/backtest-control"  class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">⚙️</span> BT Control
         </RouterLink>
-        <RouterLink to="/agent/progressive"  class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">▶</span> Play Signal
+        <RouterLink to="/agent/tracking"          class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">🧠</span> Estrategias
         </RouterLink>
-        <RouterLink to="/agent/tracking"     class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">📡</span> Tracking
+        <RouterLink to="/agent/ballbot-strategies" class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">▶</span> Señal
         </RouterLink>
-        <RouterLink to="/agent/alerts"       class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/alerts"            class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>
           Alertas
           <span v-if="pendingAlerts > 0" class="nav-link__badge">{{ pendingAlerts }}</span>
         </RouterLink>
         <RouterLink to="/agent/chat"              class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🤖</span> Agente IA
-        </RouterLink>
-        <RouterLink to="/agent/ballbot-strategies" class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">🧬</span> Estrategias BB
         </RouterLink>
       </nav>
 
