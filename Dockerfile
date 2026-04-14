@@ -13,6 +13,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --ignore-scripts
 
+# VITE_AGENT_API_KEY debe inyectarse en build-time para que Vite
+# lo incluya en el bundle estático (import.meta.env.VITE_AGENT_API_KEY)
+ARG VITE_AGENT_API_KEY
+ENV VITE_AGENT_API_KEY=$VITE_AGENT_API_KEY
+
 COPY . .
 RUN npm run build:client
 

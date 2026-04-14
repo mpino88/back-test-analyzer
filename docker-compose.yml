@@ -72,6 +72,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Inyectar API key en el build de Vite (import.meta.env.VITE_AGENT_API_KEY)
+        VITE_AGENT_API_KEY: ${AGENT_API_KEY}
     image: hitdash-server:latest
     container_name: hitdash-server
     restart: unless-stopped
