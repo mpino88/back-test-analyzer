@@ -1146,7 +1146,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           : alertRows.rows.map((r: any) => `[${r.alert_type}] ${r.message}`).join('\n');
 
         const awSummary = awRows.rows.length === 0 ? 'Sin pesos adaptativos aún.'
-          : awRows.rows.map((r: any) => `${r.strategy}(${r.mode}): peso=${r.weight.toFixed(3)} top_n=${r.top_n}`).join('\n');
+          : awRows.rows.map((r: any) => `${r.strategy}(${r.mode}): peso=${Number(r.weight).toFixed(3)} top_n=${r.top_n}`).join('\n');
 
         const sessionSummary = sessionRow.rows[0]
           ? `Última sesión: ${(sessionRow.rows[0] as any).status} | ${(sessionRow.rows[0] as any).created_at} | ${(sessionRow.rows[0] as any).model_used}`
