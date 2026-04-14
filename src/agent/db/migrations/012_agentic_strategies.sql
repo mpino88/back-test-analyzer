@@ -7,14 +7,14 @@
 -- ═══════════════════════════════════════════════════════════════
 
 -- ── 1. Seed strategy_registry ───────────────────────────────────
-INSERT INTO hitdash.strategy_registry (name, description, algorithm_version, win_rate, status)
+INSERT INTO hitdash.strategy_registry (name, description, algorithm, win_rate, status)
 VALUES
-  ('bayesian_score',    'Bayesiano multi-señal 6 componentes (freq+gap+mom+cycle+markov+streak)', '1.0.0', 0.0, 'active'),
-  ('transition_follow', 'Markov-1: P(sucesor|anterior) — cadena de transición secuencial',       '1.0.0', 0.0, 'active'),
-  ('markov_order2',     'Markov-2: estado compuesto (X→Y)→Z con memoria de 2 pasos',             '1.0.0', 0.0, 'active'),
-  ('calendar_pattern',  'Sesgo temporal DoW×mes diagonal — 4 dimensiones ponderadas',            '1.0.0', 0.0, 'active'),
-  ('decade_family',     'Familias 00-09…90-99: momentum familiar → selección de miembros',       '1.0.0', 0.0, 'active'),
-  ('max_per_weekday',   'Top-N por día de semana: frecuencia histórica en el DoW objetivo',      '1.0.0', 0.0, 'active')
+  ('bayesian_score',    'Bayesiano multi-señal 6 componentes (freq+gap+mom+cycle+markov+streak)', 'bayesian_score',    0.0, 'active'),
+  ('transition_follow', 'Markov-1: P(sucesor|anterior) — cadena de transición secuencial',       'transition_follow', 0.0, 'active'),
+  ('markov_order2',     'Markov-2: estado compuesto (X→Y)→Z con memoria de 2 pasos',             'markov_order2',     0.0, 'active'),
+  ('calendar_pattern',  'Sesgo temporal DoW×mes diagonal — 4 dimensiones ponderadas',            'calendar_pattern',  0.0, 'active'),
+  ('decade_family',     'Familias 00-09…90-99: momentum familiar → selección de miembros',       'decade_family',     0.0, 'active'),
+  ('max_per_weekday',   'Top-N por día de semana: frecuencia histórica en el DoW objetivo',      'max_per_weekday',   0.0, 'active')
 ON CONFLICT (name) DO NOTHING;
 
 -- ── 2. Seed adaptive_weights (peso inicial 1.0, top_n 15) ───────
