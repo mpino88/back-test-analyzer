@@ -21,11 +21,17 @@
         <RouterLink to="/agent/backtest-control"  class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">⚙️</span> BT Control
         </RouterLink>
-        <RouterLink to="/agent/tracking"          class="nav-link" active-class="nav-link--active">
+        <RouterLink to="/agent/strategies"        class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🧠</span> Estrategias
         </RouterLink>
+        <RouterLink to="/agent/tracking"          class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">📡</span> Cognición
+        </RouterLink>
+        <RouterLink to="/agent/progressive"       class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">▶</span> Play Signal
+        </RouterLink>
         <RouterLink to="/agent/ballbot-strategies" class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">▶</span> Señal
+          <span class="nav-link__icon">🧬</span> Estrategias BB
         </RouterLink>
         <RouterLink to="/agent/alerts"            class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>

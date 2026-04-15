@@ -113,10 +113,10 @@
 </template>
 
 <script setup>
-import { ref, nextTick, computed } from 'vue';
+import { ref, nextTick } from 'vue';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
-const API_KEY  = import.meta.env.VITE_API_KEY  ?? '';
+const API_KEY  = import.meta.env.VITE_AGENT_API_KEY ?? '';
 
 const selectedGame = ref('pick3');
 const inputText    = ref('');

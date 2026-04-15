@@ -24,11 +24,11 @@ const router = createRouter({
         { path: 'ballbot-strategies', component: () => import('./views/agent/BallbotStrategiesView.vue') },
         { path: 'alerts',          component: () => import('./views/agent/AlertsView.vue') },
         { path: 'chat',            component: () => import('./views/agent/ChatView.vue') },
+        { path: 'strategies',  component: () => import('./views/agent/StrategiesView.vue') },
+        { path: 'progressive', component: () => import('./views/agent/ProgressiveView.vue') },
         // Rutas legadas — redirect a equivalente activo
         { path: 'cartones',    redirect: '/agent/rendimiento' },
         { path: 'accuracy',    redirect: '/agent/rendimiento' },
-        { path: 'strategies',  redirect: '/agent/tracking' },
-        { path: 'progressive', redirect: '/agent/ballbot-strategies' },
       ],
     },
   ],
