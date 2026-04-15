@@ -75,7 +75,11 @@
             <button class="btn-ghost" @click="selectNone()">Ninguna</button>
           </div>
         </div>
-        <div class="strat-grid" v-if="!catalogLoading">
+        <div v-if="catalogLoading" class="state-msg"><div class="spinner"></div> Cargando catálogo…</div>
+        <div v-else-if="catalog.length === 0" class="state-msg state-msg--error">
+          ⚠️ No se pudo cargar el catálogo. Recarga la página o revisa la conexión.
+        </div>
+        <div class="strat-grid" v-else>
           <button
             v-for="s in catalog"
             :key="s.id"
@@ -94,7 +98,6 @@
             <span class="sb-check" v-if="selectedStrats.has(s.id)">✓</span>
           </button>
         </div>
-        <div v-else class="state-msg"><div class="spinner"></div> Cargando catálogo…</div>
       </div>
 
       <!-- Step 4: Top-N + Run -->
@@ -578,6 +581,7 @@ function statusLabel(s) {
 
 /* ── Misc ────────────────────────────────────────────────────────── */
 .state-msg { display: flex; align-items: center; gap: 0.5rem; color: #64748b; padding: 1rem; font-size: 0.8rem; }
+.state-msg--error { color: #f87171; background: #1f1010; border-radius: 8px; border: 1px solid #7f1d1d; }
 .spinner { width: 14px; height: 14px; border: 2px solid #1e2d40; border-top-color: #3b82f6; border-radius: 50%; animation: spin 0.7s linear infinite; }
 
 @media (max-width: 900px) {
