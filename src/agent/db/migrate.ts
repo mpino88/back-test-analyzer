@@ -27,6 +27,7 @@ const MIGRATIONS = [
   '010_extend_alert_types.sql',
   '011_fix_ingested_results_schema.sql',
   '012_agentic_strategies.sql',
+  '013_motor_sigma.sql',      // MOTOR-Σ: algo_rank_history, pps_state, algo_prediction_snapshot
 ];
 
 async function migrate(): Promise<void> {

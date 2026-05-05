@@ -182,6 +182,11 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   calendar_pattern:  0.70,  // sesgo temporal DoW×mes diagonal
   decade_family:     0.75,  // familias 00-09...90-99 momentum
   max_per_week_day:  0.55,  // frecuencia por día de semana
+  // ─── Nuevos algoritmos predictivos avanzados ───────────────────
+  pair_return_cycle:    0.90,  // ciclo de retorno por par — mayor impacto
+  sum_pattern_filter:   0.80,  // filtro por suma de dígitos — eliminador de ruido
+  double_triple:        0.65,  // detector de régimen dobles/triples
+  cross_draw:           0.70,  // correlación midday↔evening mismo día
 };
 
 // ─── Score por dígito/posición ───────────────────────────────────

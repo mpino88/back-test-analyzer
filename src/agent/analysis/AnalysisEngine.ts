@@ -1,11 +1,19 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — AnalysisEngine v1.0.0
-// Orquestador de los 8 algoritmos con consensus score ponderado
-// Todos los algoritmos se ejecutan en paralelo (Promise.allSettled)
+// HITDASH — AnalysisEngine v2.0.0  (MOTOR-Σ)
+// Orquestador de los 14 algoritmos con consensus ponderado por PPS.
+//
+// Cambios v2:
+//   • Pesos efectivos = base_weight × PPS(algo) / 100
+//     (PPS aprendido sorteo a sorteo, reemplaza adaptive_weights estáticos)
+//   • Snapshot por algo persistido para post-draw learning
+//   • optimal_n viene de PPSService.computeOptimalN()
+//     FUNCIÓN OBJETIVO: min N < 70 donde hit_rate(N)×$50/N ≥ 1%
+//     Si is_profitable=false → N reportado pero agente sabe que no hay borde
 // ═══════════════════════════════════════════════════════════════
 
 import type { Pool } from 'pg';
 import pino from 'pino';
+import { PPSService } from '../services/PPSService.js';
 
 import { FrequencyAnalysis }  from './algorithms/FrequencyAnalysis.js';
 import { GapAnalysis }        from './algorithms/GapAnalysis.js';
@@ -20,8 +28,13 @@ import { BayesianScore }     from './algorithms/BayesianScore.js';
 import { TransitionFollow }  from './algorithms/TransitionFollow.js';
 import { MarkovOrder2 }      from './algorithms/MarkovOrder2.js';
 import { CalendarPattern }   from './algorithms/CalendarPattern.js';
-import { DecadeFamily }      from './algorithms/DecadeFamily.js';
-import { MaxPerWeekDay }     from './algorithms/MaxPerWeekDay.js';
+import { DecadeFamily }          from './algorithms/DecadeFamily.js';
+import { MaxPerWeekDay }         from './algorithms/MaxPerWeekDay.js';
+// ─── Algoritmos predictivos avanzados (v3) ─────────────────────────────────
+import { PairReturnCycle }       from './algorithms/PairReturnCycle.js';
+import { SumPatternFilter }      from './algorithms/SumPatternFilter.js';
+import { DoubleTripleDetector }  from './algorithms/DoubleTripleDetector.js';
+import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
 import type {
@@ -67,6 +80,11 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   calendar_pattern:  'calendar_pattern',
   decade_family:     'decade_family',
   max_per_week_day:  'max_per_weekday',
+  // Algoritmos predictivos avanzados (v3)
+  pair_return_cycle:   'pair_return_cycle',
+  sum_pattern_filter:  'sum_pattern_filter',
+  double_triple:       'double_triple_detector',
+  cross_draw:          'cross_draw_correlation',
 };
 
 // Default top_n si la estrategia aún no tiene historial adaptativo
@@ -88,6 +106,11 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   calendar_pattern:  15,
   decade_family:     15,
   max_per_weekday:   15,
+  // Algoritmos predictivos avanzados (v3)
+  pair_return_cycle:       12,
+  sum_pattern_filter:      15,
+  double_triple_detector:  20,
+  cross_draw_correlation:  18,
 };
 
 // ─── Cognitive N — auto-determines optimal pair count from precision metrics ──
@@ -179,6 +202,13 @@ export class AnalysisEngine {
   private readonly calendar:    CalendarPattern;
   private readonly decade:      DecadeFamily;
   private readonly maxDow:      MaxPerWeekDay;
+  // ─── Algoritmos predictivos avanzados (v3) ────────────────────
+  private readonly pairReturn:  PairReturnCycle;
+  private readonly sumPattern:  SumPatternFilter;
+  private readonly dblTriple:   DoubleTripleDetector;
+  private readonly crossDraw:   CrossDrawCorrelation;
+  // ─── MOTOR-Σ: PPS learning service ───────────────────────────
+  private readonly ppsService:  PPSService;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -204,6 +234,13 @@ export class AnalysisEngine {
     this.calendar   = new CalendarPattern(agentPool);
     this.decade     = new DecadeFamily(agentPool);
     this.maxDow     = new MaxPerWeekDay(agentPool);
+    // ─── Algoritmos predictivos avanzados (v3) ───────────────────
+    this.pairReturn = new PairReturnCycle(agentPool);
+    this.sumPattern = new SumPatternFilter(agentPool);
+    this.dblTriple  = new DoubleTripleDetector(agentPool);
+    this.crossDraw  = new CrossDrawCorrelation(agentPool);
+    // ─── MOTOR-Σ ─────────────────────────────────────────────────
+    this.ppsService = new PPSService(agentPool);
   }
 
   async analyze(
@@ -503,6 +540,7 @@ export class AnalysisEngine {
     const [rFreq, rGap, rHC, rPairs, rFib, rStreak, rPos, rMA,
            rFreqShort, rHCShort,
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
+           rPairReturn, rSumPattern, rDoubleTriple, rCrossDraw,
     ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
@@ -526,15 +564,31 @@ export class AnalysisEngine {
       this.calendar.runPairs(game_type, draw_type, half, period),
       this.decade.runPairs(game_type, draw_type, half, period),
       this.maxDow.runPairs(game_type, draw_type, half, period),
+      // ─── Algoritmos predictivos avanzados (v3) ──────────────────────────
+      this.pairReturn.runPairs(game_type, draw_type, half, period),
+      this.sumPattern.runPairs(game_type, draw_type, half, period),
+      this.dblTriple.runPairs(game_type, draw_type, half, period),
+      this.crossDraw.runPairs(game_type, draw_type, half, period),
     ]);
 
     const algorithms_succeeded: string[] = [];
     const algorithms_failed: Array<{ name: string; error: string }> = [];
 
-    // ── Cargar pesos adaptativos y top_n por estrategia desde DB ──────────────
-    // Esto conecta el ciclo de aprendizaje (backtest+EMA) con la ruta live del agente.
-    // Si no hay datos aún, se degradan a ALGORITHM_WEIGHTS estáticos.
     const hitdashPool = this.agentPool ?? this.ballbotPool;
+
+    // ── MOTOR-Σ: Cargar PPS actuales (señal de aprendizaje real) ──────────────
+    // PPS(algo) = EMA(101 − rank_ganador, α=0.15) — aprendido sorteo a sorteo.
+    // Si no hay historial aún: PPS=50 (neutral) → fallback a ALGORITHM_WEIGHTS base.
+    const ppsMap = await this.ppsService.loadPPS(game_type, draw_type, half);
+    const hasPPS = ppsMap.size > 0;
+
+    if (hasPPS) {
+      logger.info({ algos_with_pps: ppsMap.size }, 'AnalysisEngine: pesos PPS cargados desde MOTOR-Σ');
+    }
+
+    // ── Mantener adaptive_weights como capa de compatibilidad ─────────────────
+    // Mientras PPS acumula historial, adaptive_weights sirve de respaldo.
+    // Cuando PPS tiene ≥10 sorteos, domina el 80% del peso efectivo.
     let dbWeights: Record<string, number> = {};
     let dbTopN:    Record<string, number> = {};
 
@@ -543,44 +597,43 @@ export class AnalysisEngine {
         `SELECT strategy, weight, top_n FROM hitdash.adaptive_weights
          WHERE game_type = $1
            AND mode IN ($2, 'combined')
-         ORDER BY CASE mode WHEN $2 THEN 0 ELSE 1 END`,  // prefer draw_type-specific over combined
+         ORDER BY CASE mode WHEN $2 THEN 0 ELSE 1 END`,
         [game_type, draw_type]
       );
       for (const r of awRows) {
         if (dbWeights[r.strategy] === undefined) dbWeights[r.strategy] = Number(r.weight);
         if (dbTopN[r.strategy]    === undefined) dbTopN[r.strategy]    = r.top_n;
       }
-      if (Object.keys(dbWeights).length > 0) {
-        logger.info({ strategies: Object.keys(dbWeights).length }, 'AnalysisEngine: pesos adaptativos cargados desde DB');
-      }
-    } catch {
-      // adaptive_weights table may not exist yet — fallback to static weights
-    }
+    } catch { /* adaptive_weights aún no existe — ok */ }
 
-    // ── Construir pesos efectivos: adaptive × precision_bonus (= DEFAULT_TOP_N / learned_top_n)
-    // Replica exactamente la lógica de createPairApexAdaptive en PairBacktestEngine.ts.
-    // Estrategia con top_n=10 aprendido → bonus=1.5× (más precisa → más influencia).
-    // Estrategia sin datos → fallback a ALGORITHM_WEIGHTS estático.
+    // ── Peso efectivo MOTOR-Σ: PPS(algo) × base_weight ───────────────────────
+    // PPS normalizado al rango [0.1, 2.0] para que un algo con PPS=100 pese 2×
+    // y uno con PPS=0 pese 0.1× (no cero — siempre mantiene voz mínima).
     const GLOBAL_DEFAULT_N = 15;
     function effectiveWeight(algName: string): number {
-      const stratName = ALG_TO_STRATEGY[algName] ?? algName;
       const baseW     = ALGORITHM_WEIGHTS[algName] ?? 0.5;
+      const ppsScore  = ppsMap.get(algName);
 
-      // Si no hay peso adaptativo aún, usar el estático sin bonus
+      // Si hay PPS: normalizar PPS[0–100] → factor[0.1–2.0]
+      // Formula: factor = 0.1 + (pps / 100) × 1.9
+      if (ppsScore !== undefined) {
+        const ppsFactor = 0.1 + (ppsScore / 100) * 1.9;
+        return baseW * ppsFactor;
+      }
+
+      // Sin PPS aún: usar adaptive_weights como antes
+      const stratName      = ALG_TO_STRATEGY[algName] ?? algName;
       const adaptiveFactor = dbWeights[stratName] ?? 1.0;
-      const hasAdaptive    = dbWeights[stratName] !== undefined;
-
-      const learnedTopN   = dbTopN[stratName] ?? DEFAULT_TOP_N_MAP[stratName] ?? GLOBAL_DEFAULT_N;
+      const learnedTopN    = dbTopN[stratName] ?? DEFAULT_TOP_N_MAP[stratName] ?? GLOBAL_DEFAULT_N;
       const precisionBonus = Math.min(2.0, GLOBAL_DEFAULT_N / learnedTopN);
-
-      return hasAdaptive
-        ? baseW * adaptiveFactor * precisionBonus  // aprendido: adaptive × precision
-        : baseW;                                   // sin datos: peso estático base
+      return dbWeights[stratName] !== undefined
+        ? baseW * adaptiveFactor * precisionBonus
+        : baseW;
     }
 
-    // momentum_ema comparte el runPairs de MovingAverages (blend de sma+ema)
-    // Se le aplica su propio peso adaptativo aprendido como factor adicional al moving_averages
     const momentumExtraFactor = (() => {
+      const ppsScore = ppsMap.get('moving_averages');
+      if (ppsScore !== undefined) return 0.1 + (ppsScore / 100) * 1.9;
       const stratName = 'momentum_ema';
       if (dbWeights[stratName] === undefined) return 1.0;
       const learnedTopN    = dbTopN[stratName] ?? DEFAULT_TOP_N_MAP[stratName] ?? GLOBAL_DEFAULT_N;
@@ -606,22 +659,41 @@ export class AnalysisEngine {
       ['calendar_pattern',  effectiveWeight('calendar_pattern'),  rCalendar],
       ['decade_family',     effectiveWeight('decade_family'),     rDecade],
       ['max_per_week_day',  effectiveWeight('max_per_week_day'),  rMaxDow],
+      // ─── Algoritmos predictivos avanzados (v3) ──────────────────────────
+      ['pair_return_cycle',  effectiveWeight('pair_return_cycle'),  rPairReturn],
+      ['sum_pattern_filter', effectiveWeight('sum_pattern_filter'), rSumPattern],
+      ['double_triple',      effectiveWeight('double_triple'),      rDoubleTriple],
+      ['cross_draw',         effectiveWeight('cross_draw'),         rCrossDraw],
     ];
 
     // Accumulate weighted scores per pair "00"-"99"
     const accumulated: Record<string, number> = {};
     let totalWeight = 0;
 
+    // ── MOTOR-Σ: capturar scores por algo para snapshot de predicción ─────────
+    // Cada entrada = scores normalizados {pair: score} por algoritmo.
+    // Se persiste al final para que PostDrawProcessor pueda computar rank_of_winner.
+    const algoScores = new Map<string, Record<string, number>>();
+
     for (const [name, weight, result] of algResults) {
       if (result.status === 'fulfilled') {
         algorithms_succeeded.push(name);
         const scores = result.value;
-        // Normalizar por max score de la estrategia antes de ponderar (= comparable entre estrategias)
         const maxScore = Math.max(...Object.values(scores), 1e-9);
+        // Scores normalizados para el consensus
+        const normalized: Record<string, number> = {};
         for (const [key, score] of Object.entries(scores)) {
-          accumulated[key] = (accumulated[key] ?? 0) + (score / maxScore) * weight;
+          const ns = score / maxScore;
+          normalized[key]     = ns;
+          accumulated[key]    = (accumulated[key] ?? 0) + ns * weight;
         }
         totalWeight += weight;
+        // Guardar para snapshot solo si el algoritmo produjo diferenciación real.
+        // Un score uniforme (varianza ≈ 0) no aporta señal al PPS — lo excluimos.
+        const vals = Object.values(normalized);
+        const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+        const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+        if (maxScore > 1e-9 && variance > 1e-6) algoScores.set(name, normalized);
       } else {
         algorithms_failed.push({
           name,
@@ -690,55 +762,70 @@ export class AnalysisEngine {
       );
     }
 
-    // Load adaptive top_n — preferir apex_adaptive, fallback a la media de todas las estrategias
+    // ── MOTOR-Σ: optimal_n desde PPSService (percentile_70 del historial real) ─
+    // "Si el ganador aterrizó en rank ≤N el 70% de los últimos 30 sorteos → N"
+    // Fallback: Cognitive N desde backtest_results_v2 (mientras PPS acumula datos).
     let top_n = dbTopN['apex_adaptive'] ?? 15;
-    if (!dbTopN['apex_adaptive']) {
-      // Si apex no tiene top_n propio aún, estimar desde las estrategias base con mayor peso
-      try {
-        const topNValues = Object.entries(dbTopN)
-          .filter(([s]) => s !== 'apex_adaptive' && s !== 'consensus_top')
-          .map(([, v]) => v);
-        if (topNValues.length > 0) {
-          top_n = Math.round(topNValues.reduce((a, b) => a + b, 0) / topNValues.length);
-        }
-      } catch { /* keep default */ }
-    }
-
-    // ── Cognitive N: load precision metrics from backtest_results_v2 ─────────
-    // The agent reads its own accumulated metrics to autonomously determine
-    // the mathematically optimal number of pairs to recommend right now.
     let optimal_n = top_n;
     let predicted_effectiveness = 0;
     let cognitive_basis = 'base:adaptive_top_n';
 
-    try {
-      // ── Preferir métricas de apex_adaptive (la meta-estrategia que ya integra todos los pesos)
-      // Si apex no tiene datos propios, usar la fila con mejor MRR (estrategia más rankeable).
-      const { rows: pRows } = await hitdashPool.query<PrecisionSnapshot>(
-        `SELECT kelly_fraction, wilson_lower,
-                precision_at_3, precision_at_5, precision_at_10,
-                expected_rank, sharpe, mrr
-         FROM hitdash.backtest_results_v2
-         WHERE game_type = $1 AND half = $2
-         ORDER BY
-           CASE WHEN strategy_name = 'apex_adaptive' THEN 0 ELSE 1 END,
-           mrr DESC, hit_rate DESC
-         LIMIT 1`,
-        [game_type, half]
+    // ── Intentar MOTOR-Σ primero ────────────────────────────────────────────
+    const ppsN = await this.ppsService.computeOptimalN(game_type, draw_type, half);
+    if (ppsN.sample_size >= 5) {
+      optimal_n      = ppsN.optimal_n;
+      top_n          = ppsN.optimal_n;
+      cognitive_basis = `motor_sigma:${ppsN.basis}`;
+      logger.info(
+        {
+          optimal_n,
+          hit_rate:      ppsN.hit_rate,
+          expected_roi:  ppsN.expected_roi,
+          is_profitable: ppsN.is_profitable,
+          p70_rank:      ppsN.p70_rank,
+          sample_size:   ppsN.sample_size,
+          basis:         cognitive_basis,
+        },
+        ppsN.is_profitable
+          ? `AnalysisEngine: N=${optimal_n} rentable — ROI esperado ${(ppsN.expected_roi * 100).toFixed(1)}%/sorteo`
+          : `AnalysisEngine: N=${optimal_n} (mejor disponible — sin borde ≥1% aún, ${ppsN.sample_size} sorteos)`
       );
-      if (pRows[0]) {
-        const cog = computeCognitiveN(pRows[0]);
-        optimal_n              = cog.optimal_n;
-        predicted_effectiveness = cog.predicted_effectiveness;
-        cognitive_basis        = cog.cognitive_basis;
-        logger.info(
-          { optimal_n, predicted_effectiveness, cognitive_basis },
-          'AnalysisEngine: cognitive N determinado'
+    } else {
+      // Fallback: Cognitive N clásico desde backtest_results_v2
+      try {
+        const { rows: pRows } = await hitdashPool.query<PrecisionSnapshot>(
+          `SELECT kelly_fraction, wilson_lower,
+                  precision_at_3, precision_at_5, precision_at_10,
+                  expected_rank, sharpe, mrr
+           FROM hitdash.backtest_results_v2
+           WHERE game_type = $1 AND half = $2
+           ORDER BY
+             CASE WHEN strategy_name = 'apex_adaptive' THEN 0 ELSE 1 END,
+             mrr DESC, hit_rate DESC
+           LIMIT 1`,
+          [game_type, half]
         );
-      }
-    } catch {
-      // backtest_results_v2 may be empty — degrade gracefully
+        if (pRows[0]) {
+          const cog = computeCognitiveN(pRows[0]);
+          optimal_n               = cog.optimal_n;
+          predicted_effectiveness = cog.predicted_effectiveness;
+          cognitive_basis         = `cognitive_n(${ppsN.sample_size} draws PPS):${cog.cognitive_basis}`;
+        }
+      } catch { /* backtest_results_v2 vacío — ok */ }
+      logger.info(
+        { optimal_n, basis: cognitive_basis, pps_sample: ppsN.sample_size },
+        'AnalysisEngine: N óptimo (cognitive_n fallback — PPS aún acumulando)'
+      );
     }
+
+    // ── MOTOR-Σ: persistir snapshot para aprendizaje post-sorteo ──────────────
+    // draw_date = hoy (el snapshot se usa cuando llegue el resultado real)
+    const today = new Date().toISOString().split('T')[0]!;
+    this.ppsService.persistSnapshot(game_type, draw_type, today, half, algoScores)
+      .catch(err => logger.warn(
+        { error: err instanceof Error ? err.message : String(err) },
+        'AnalysisEngine: error persistiendo snapshot PPS — no bloquea predicción'
+      ));
 
     // Centena Plus: top digit at p1 for half='du' (pick3 only)
     let centena_plus: number | undefined;

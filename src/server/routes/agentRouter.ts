@@ -12,6 +12,7 @@ import { ProgressiveEngine }        from '../../agent/backtest/ProgressiveEngine
 import { AgenticProgressiveEngine } from '../../agent/backtest/AgenticProgressiveEngine.js';
 import { RAGService }         from '../../agent/services/RAGService.js';
 import { LLMRouter }          from '../../agent/services/LLMRouter.js';
+import { PPSService }          from '../../agent/services/PPSService.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -26,6 +27,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const agenticEngine        = new AgenticProgressiveEngine(agentPool);
   const ragService           = new RAGService(agentPool);
   const llmRouter            = new LLMRouter();
+  const ppsService           = new PPSService(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -1001,7 +1003,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         sources.push('agent_sessions', 'proactive_alerts', 'rag_knowledge');
 
       } else if (detectedCommand === 'run_strategy') {
-        // ── Ejecutar analyzePairs() con los 14 algoritmos (incluyendo 6 clones) ─
+        // ── Ejecutar analyzePairs() con los 18 algoritmos (MOTOR-Σ v3) ─
         try {
           const { AnalysisEngine } = await import('../../agent/analysis/AnalysisEngine.js');
           const analysisPool = ballbotPool ?? agentPool;
@@ -1012,7 +1014,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           const algFail  = analysis.algorithms_failed.map(f => f.name).join(', ') || 'ninguno';
           responseText =
             `🧠 **Análisis de Pares — ${gt.toUpperCase()} ${dt}**\n` +
-            `📊 Algoritmos ejecutados: **${analysis.algorithms_succeeded.length}/14**\n` +
+            `📊 Algoritmos ejecutados: **${analysis.algorithms_succeeded.length}/18**\n` +
             `✅ OK: ${algOk}\n` +
             `⚠️ Fallidos: ${algFail}\n\n` +
             `🔢 **Top ${analysis.optimal_n} pares recomendados:**\n` +
@@ -1292,6 +1294,48 @@ ${ragSummary}`;
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'agentic-progressive error');
       res.status(500).json({ error: 'Error calculando condiciones de estrategias' });
+    }
+  });
+
+  // ─── GET /api/agent/pps ─────────────────────────────────────────
+  // MOTOR-Σ: Ranking de algoritmos por Predictive Power Score (PPS).
+  // ?game_type=pick3&draw_type=evening&half=du
+  router.get('/pps', async (req: Request, res: Response) => {
+    const game_type = (req.query['game_type'] as string) ?? 'pick3';
+    const draw_type = (req.query['draw_type'] as string) ?? 'evening';
+    const half      = (req.query['half']      as string) ?? (game_type === 'pick3' ? 'du' : 'ab');
+
+    const validGames = ['pick3', 'pick4'];
+    const validDraws = ['midday', 'evening'];
+    const validHalves = ['du', 'ab', 'cd'];
+
+    if (!validGames.includes(game_type) || !validDraws.includes(draw_type) || !validHalves.includes(half)) {
+      res.status(400).json({ error: 'Parámetros inválidos' });
+      return;
+    }
+
+    try {
+      const [ranking, optimalN] = await Promise.all([
+        ppsService.getPPSRanking(game_type, draw_type, half),
+        ppsService.computeOptimalN(game_type, draw_type, half),
+      ]);
+
+      res.json({
+        game_type,
+        draw_type,
+        half,
+        generated_at: new Date().toISOString(),
+        optimal_n:       optimalN.optimal_n,
+        hit_rate:        optimalN.hit_rate,
+        expected_roi:    optimalN.expected_roi,
+        is_profitable:   optimalN.is_profitable,
+        sample_size:     optimalN.sample_size,
+        motor_basis:     optimalN.basis,
+        algorithms:      ranking,
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo PPS ranking');
+      res.status(500).json({ error: 'Error obteniendo PPS ranking' });
     }
   });
 

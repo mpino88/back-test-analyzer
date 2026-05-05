@@ -1,8 +1,22 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — PostDrawProcessor v1.0.0
+// HITDASH — PostDrawProcessor v2.1.0  (MOTOR-Σ + Drift Action)
 // Orquestador del ciclo feedback completo post-sorteo
-// Trigger: IngestionWorker detecta resultado nuevo → encolado en BullMQ
-// Flujo: buscar cartones pendientes → comparar → embed → evaluar → drift → alert
+//
+// Flujo MOTOR-Σ:
+//   FASE A: Pair hit detection (pair_recommendations.hit)
+//   FASE B: PPS update por algoritmo  ← MOTOR-Σ
+//   FASE C: Adaptive top_n + weights (legacy)
+//   FASE D: Comparación cartones legacy
+//   FASE E: Drift detection + acción automática  ← CERRADO (antes PARCIAL)
+//   FASE F: Accuracy alert
+//
+// FASE E — Acción automática al detectar drift:
+//   • adaptive_weights.weight → blend hacia neutro 1.0  (÷2 + 0.5)
+//   • pps_state.pps           → blend hacia neutro 50.0 (×0.7 + 15)
+//   Razonamiento: si la distribución de dígitos cambió estadísticamente,
+//   el historial de rendimiento de cada estrategia/algoritmo tiene menos
+//   valor predictivo. Recentrar los pesos fuerza reaprendizaje rápido
+//   desde datos frescos sin destruir la señal completamente.
 // ═══════════════════════════════════════════════════════════════
 
 import { Queue, Worker, type Job } from 'bullmq';
@@ -15,6 +29,7 @@ import { LearningEmbedder }  from './LearningEmbedder.js';
 import { DriftDetector }     from './DriftDetector.js';
 import { RAGService }        from '../services/RAGService.js';
 import { TelegramNotifier }  from '../services/TelegramNotifier.js';
+import { PPSService }        from '../services/PPSService.js';
 
 import type { GameType, DrawType, LotteryDigits } from '../types/agent.types.js';
 
@@ -56,6 +71,7 @@ export class PostDrawProcessor {
   private readonly evaluator:   StrategyEvaluator;
   private readonly embedder:    LearningEmbedder;
   private readonly drift:       DriftDetector;
+  private readonly ppsService:  PPSService;        // MOTOR-Σ
   // ═══ ANO-01 FIX: No instanciar TelegramNotifier aquí.
   // El singleton se inyecta desde server/index.ts via setNotifier().
   // Evita conexiones duplicadas al bot + garantiza credenciales válidas al boot.
@@ -71,6 +87,7 @@ export class PostDrawProcessor {
     this.evaluator  = new StrategyEvaluator(agentPool);
     this.embedder   = new LearningEmbedder(agentPool, ragService);
     this.drift      = new DriftDetector(ballbotPool);
+    this.ppsService = new PPSService(agentPool);   // MOTOR-Σ
     // notifier se asigna vía setNotifier() — NO en el constructor
   }
 
@@ -119,14 +136,18 @@ export class PostDrawProcessor {
     const { draw_id, game_type, draw_type, draw_date, actual_digits } = data;
 
     // ─── FASE A: Pair hit detection SIEMPRE corre primero ────────────────────
-    // CRÍTICO: No debe bloquearse por el estado de carton_generations.
-    // Antes: crash en ResultComparator (num.digits=undefined para pair-mode cartones)
-    // impedía que estas funciones corrieran. Ahora corren incondicionalmente.
     await this.updateLivePairHits(game_type, draw_type, draw_date, actual_digits);
+
+    // ─── FASE B: MOTOR-Σ — actualizar PPS por algoritmo ──────────────────────
+    // Para cada half relevante, calcular rank_of_winner en cada algoritmo
+    // y actualizar su PPS(EMA). Esto ES el aprendizaje real del motor.
+    await this.updatePPSPostDraw(game_type, draw_type, draw_date, actual_digits);
+
+    // ─── FASE C: Adaptive top_n + weights (legacy — mientras PPS madura) ─────
     await this.updateLiveAdaptiveTopN(game_type, draw_type);
     await this.updateLiveAdaptiveWeights(game_type, draw_type);
 
-    // ─── FASE B: Comparación de cartones legacy (solo cartones con digits) ────
+    // ─── FASE D: Comparación de cartones legacy (solo cartones con digits) ────
     // Pair-mode cartones tienen numbers=[{value:"37"}] sin campo digits.
     // Filtrar antes de pasar al ResultComparator evita el crash
     // "Cannot read properties of undefined (reading 'p1')".
@@ -206,6 +227,12 @@ export class PostDrawProcessor {
           game_type,
         });
       }
+
+      // ─── ACCIÓN AUTOMÁTICA: recentrar pesos cuando hay drift ─────
+      // Si la distribución cambió (p<0.05), los pesos históricos valen menos.
+      // Blend adaptive_weights → neutro (1.0) y pps_state → neutro (50.0)
+      // para que el motor reaprenda desde datos frescos en los próximos sorteos.
+      await this.applyDriftWeightReduction(game_type, draw_type);
     }
 
     // ─── 6. Calcular accuracy reciente y notificar si es relevante ─
@@ -232,6 +259,66 @@ export class PostDrawProcessor {
       },
       'PostDrawProcessor: ciclo feedback completado'
     );
+  }
+
+  // ─── MOTOR-Σ: Actualizar PPS por algoritmo post-sorteo ──────────────────────
+  // Determina el par ganador real para cada half del juego,
+  // luego llama a PPSService.processPostDraw() que:
+  //   1. Lee el snapshot de predicción de ese día
+  //   2. Calcula rank_of_winner por algoritmo
+  //   3. Actualiza PPS vía EMA y persiste en algo_rank_history
+  private async updatePPSPostDraw(
+    game_type:     GameType,
+    draw_type:     DrawType,
+    draw_date:     string,
+    actual_digits: LotteryDigits
+  ): Promise<void> {
+    try {
+      const halves: Array<{ half: string; winning_pair: string }> = [];
+
+      if (game_type === 'pick3') {
+        // Pick 3: half='du' (decena + unidad = p2+p3)
+        halves.push({
+          half:         'du',
+          winning_pair: `${actual_digits.p2}${actual_digits.p3}`,
+        });
+      } else {
+        // Pick 4: half='ab' (p1+p2) y half='cd' (p3+p4)
+        halves.push(
+          { half: 'ab', winning_pair: `${actual_digits.p1}${actual_digits.p2}` },
+          { half: 'cd', winning_pair: `${actual_digits.p3}${actual_digits.p4 ?? 0}` }
+        );
+      }
+
+      for (const { half, winning_pair } of halves) {
+        const records = await this.ppsService.processPostDraw(
+          game_type, draw_type, draw_date, half, winning_pair
+        );
+
+        if (records.length > 0 && this.notifier) {
+          // Notificar top-3 ganadores y el peor — útil para el dashboard de Bliss
+          const sorted = [...records].sort((a, b) => a.rank_of_winner - b.rank_of_winner);
+          const top3   = sorted.slice(0, 3).map(r =>
+            `${r.algo_name}: rank ${r.rank_of_winner} (PPS ${r.pps_before.toFixed(0)}→${r.pps_after.toFixed(0)})`
+          ).join(', ');
+
+          // Solo notificar si hay algún algoritmo que acertó en top-15
+          const hasHit = sorted[0] && sorted[0].rank_of_winner <= 15;
+          if (hasHit) {
+            await this.notifier.sendAdminLog(
+              `🎯 *MOTOR-Σ* ${game_type.toUpperCase()} ${draw_type} ${draw_date}\n` +
+              `Par ganador: \`${winning_pair}\` | Half: ${half}\n` +
+              `📊 Mejores algos: ${top3}`
+            ).catch(() => undefined);
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { error: err instanceof Error ? err.message : String(err) },
+        'PostDrawProcessor: error en updatePPSPostDraw — no bloquea el flujo'
+      );
+    }
   }
 
   // ─── Recalcular pesos adaptativos desde win_rate live ────────
@@ -473,6 +560,79 @@ export class PostDrawProcessor {
     }
 
     logger.info({ game_type, draw_type, strategies: strategies.length }, 'Adaptive top-N live actualizado');
+  }
+
+  // ─── FASE E — Acción automática de recentrado post-drift ─────────────────────
+  // Llamado únicamente cuando DriftDetector confirma drift (p<0.05 en ≥1 posición).
+  //
+  // ① adaptive_weights.weight: blend hacia neutro 1.0
+  //    nueva_w = 0.5 × actual_w + 0.5 × 1.0
+  //    → reduce por la mitad la distancia al neutro; nunca destruye la señal
+  //    → tras ~4 sorteos con datos frescos el peso vuelve a diferenciarse
+  //
+  // ② pps_state.pps: blend hacia neutro 50.0
+  //    nueva_pps = 0.7 × actual_pps + 0.3 × 50
+  //    → preserva el 70% del historial de cada algoritmo
+  //    → si el algo seguía siendo bueno con la nueva distribución, PPS sube rápido
+  //    → si era bueno solo con la vieja distribución, PPS cae hacia 50 gradualmente
+  //
+  // Nota: no tocamos backtest_results_v2 ni strategy_registry — esos tienen
+  // su propio ciclo de actualización y el backtest_job recalculará cuando
+  // haya suficientes datos nuevos (>7 días o ≥30 draws, trigger existente).
+  private async applyDriftWeightReduction(
+    game_type: GameType,
+    draw_type: DrawType
+  ): Promise<void> {
+    const mode = draw_type as string;
+
+    try {
+      // ① Recentrar adaptive_weights hacia 1.0 (neutro)
+      const { rowCount: wRows } = await this.agentPool.query(
+        `UPDATE hitdash.adaptive_weights
+         SET    weight     = weight * 0.5 + 0.5,
+                updated_at = now()
+         WHERE  game_type = $1
+           AND  mode      = $2`,
+        [game_type, mode]
+      );
+
+      // ② Recentrar pps_state hacia 50.0 (neutro) — solo el game_type afectado
+      const { rowCount: pRows } = await this.agentPool.query(
+        `UPDATE hitdash.pps_state
+         SET    pps        = pps * 0.7 + 15.0,
+                updated_at = now()
+         WHERE  game_type = $1
+           AND  draw_type = $2`,
+        [game_type, draw_type]
+      );
+
+      logger.info(
+        {
+          game_type,
+          draw_type,
+          adaptive_weights_updated: wRows ?? 0,
+          pps_states_nudged:        pRows ?? 0,
+        },
+        'PostDrawProcessor DRIFT ACTION: pesos y PPS recentrados hacia neutro'
+      );
+
+      // Notificar acción tomada si hay notifier
+      if (this.notifier) {
+        await this.notifier.sendAdminLog(
+          `⚡ *DRIFT ACTION* ${game_type.toUpperCase()} ${draw_type}\n` +
+          `Pesos adaptativos recentrados → neutro 1.0 (${wRows ?? 0} estrategias)\n` +
+          `PPS algoritmos nudge → neutro 50 (${pRows ?? 0} estados)\n` +
+          `El motor reaprende desde datos frescos los próximos sorteos.`
+        ).catch(() => undefined);
+      }
+
+    } catch (err) {
+      // No bloquear el flujo principal si falla el recentrado
+      logger.warn(
+        { error: err instanceof Error ? err.message : String(err), game_type, draw_type },
+        'PostDrawProcessor: error en applyDriftWeightReduction — ignorado'
+      );
+    }
   }
 
   async stop(): Promise<void> {

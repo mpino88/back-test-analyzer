@@ -23,8 +23,16 @@ import type { ComprehensiveAnalysis, Position } from '../types/analysis.types.js
 
 const logger = pino({ name: 'HitdashAgent' });
 
-// ─── Feature flag: flip to false to instantly revert to carton mode ──
+// ─── Feature flag: pair mode (siempre true en MOTOR-Σ) ───────────────
 const USE_PAIR_MODE = true;
+
+// ─── MOTOR-Σ: desactivar validación LLM circular ─────────────────────
+// La "validación" LLM recibía los mismos pares que el motor ya rankeó
+// y los reordenaba con sesgo narrativo. No añadía señal real.
+// Con MOTOR-Σ los pesos PPS ya aprenden quién predice mejor — el LLM
+// no tiene información que el motor no tenga. Se puede reactivar con true
+// si en el futuro se conecta a una fuente de datos externa real.
+const USE_LLM_VALIDATION = false;
 
 // ─── Fallback static sizes (only used if optimal_n unavailable) ──────
 const CARTON_SIZES_PICK3: CartonSize[] = [9, 16];
@@ -359,17 +367,23 @@ export class HitdashAgent {
         ts: new Date().toISOString(),
       });
 
-      // ═══ BN-02: Consultar RAG con vector pre-calculado ═══
-      const ragContext = await this.queryRAGContextWithVector(queryVector);
+      // ═══ MOTOR-Σ: LLM validation desactivada (USE_LLM_VALIDATION=false) ═══
+      // Los pesos PPS ya aprenden qué algoritmo predice mejor — no se necesita
+      // un LLM que reordene la lista con sesgo narrativo.
+      let llmReasoning = 'MOTOR-Σ consensus estadístico (pesos PPS adaptativos).';
+      let validatedPairs: string[] = [];
 
-      // LLM pair validation
-      const llmResult = await this.validateWithLLMPairs(
-        pairAnalysis.ranked_pairs.slice(0, 20), game_type, draw_type, draw_date,
-        pairAnalysis.centena_plus, ragContext
-      );
+      if (USE_LLM_VALIDATION) {
+        const ragContext = await this.queryRAGContextWithVector(queryVector);
+        const llmResult = await this.validateWithLLMPairs(
+          pairAnalysis.ranked_pairs.slice(0, 20), game_type, draw_type, draw_date,
+          pairAnalysis.centena_plus, ragContext
+        );
+        llmReasoning   = llmResult.reasoning;
+        validatedPairs = llmResult.validated_pairs;
+      }
 
-      // ═══ COG-10 LLM OVERRIDE: Integrar votos del LLM ═══
-      const rawRec = this.pairRecommender.recommend(pairAnalysis, undefined, llmResult.validated_pairs);
+      const rawRec = this.pairRecommender.recommend(pairAnalysis, undefined, validatedPairs);
 
       // ═══ PROGRESSIVE SIGNAL: Ajustar optimal_n según historial de aciertos ═══
       const playSignal = await this.getProgressivePlaySignal(game_type, draw_type, 'du');
@@ -378,7 +392,7 @@ export class HitdashAgent {
 
       allRecs = [rec];
 
-      await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmResult.reasoning);
+      await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmReasoning);
       await this.persistPairRecommendations([rec], game_type, draw_type, draw_date, sessionId);
 
       // ═══ RESTAURACIÓN COG-N: Generar cartones desde optimal_n ════════
@@ -395,18 +409,25 @@ export class HitdashAgent {
         this.analysisEngine.analyzePairs(game_type, draw_type, 'cd', 90),
       ]);
 
-      // ═══ BN-02: Consultar RAG con vector pre-calculado (Pick 4) ═══
-      const ragContext = await this.queryRAGContextWithVector(queryVector);
+      // ═══ MOTOR-Σ: LLM desactivado para Pick 4 también ═══
+      let llmReasoningP4 = 'MOTOR-Σ consensus estadístico Pick 4 (pesos PPS adaptativos).';
+      let validatedPairsAB: string[] = [];
+      let validatedPairsCD: string[] = [];
 
-      const llmResult = await this.validateWithLLMPairs(
-        [...abAnalysis.ranked_pairs.slice(0, 10), ...cdAnalysis.ranked_pairs.slice(0, 10)],
-        game_type, draw_type, draw_date, undefined, ragContext
-      );
+      if (USE_LLM_VALIDATION) {
+        const ragContext = await this.queryRAGContextWithVector(queryVector);
+        const llmResult = await this.validateWithLLMPairs(
+          [...abAnalysis.ranked_pairs.slice(0, 10), ...cdAnalysis.ranked_pairs.slice(0, 10)],
+          game_type, draw_type, draw_date, undefined, ragContext
+        );
+        llmReasoningP4   = llmResult.reasoning;
+        validatedPairsAB = llmResult.validated_pairs;
+        validatedPairsCD = llmResult.validated_pairs;
+      }
 
-      // ═══ COG-10: Aplicar validación LLM a ambos mitades ═══
       const rawRecs = this.pairRecommender.recommendPick4(
         abAnalysis, cdAnalysis, undefined,
-        llmResult.validated_pairs, llmResult.validated_pairs
+        validatedPairsAB, validatedPairsCD
       );
 
       // ═══ PROGRESSIVE SIGNAL: señal independiente por mitad ═══
@@ -421,7 +442,7 @@ export class HitdashAgent {
       reasoning_chain.push({ step: 'progressive_signal_pick4', ab: sigAB, cd: sigCD, ts: new Date().toISOString() });
       allRecs = recs;
 
-      await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmResult.reasoning);
+      await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmReasoningP4);
       await this.persistPairRecommendations(recs, game_type, draw_type, draw_date, sessionId);
 
       // ═══ RESTAURACIÓN COG-N: Generar cartones Pick 4 ════════════════
