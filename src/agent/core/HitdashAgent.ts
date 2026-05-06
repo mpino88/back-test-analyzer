@@ -383,13 +383,8 @@ export class HitdashAgent {
         validatedPairs = llmResult.validated_pairs;
       }
 
-      const rawRec = this.pairRecommender.recommend(pairAnalysis, undefined, validatedPairs);
-
-      // ═══ PROGRESSIVE SIGNAL: Ajustar optimal_n según historial de aciertos ═══
-      const playSignal = await this.getProgressivePlaySignal(game_type, draw_type, 'du');
-      const rec = this.applyPlaySignal(rawRec, playSignal);
-      reasoning_chain.push({ step: 'progressive_signal', ...playSignal, ts: new Date().toISOString() });
-
+      // N viene directamente de MOTOR-Σ computeOptimalN() — un solo eje de verdad
+      const rec = this.pairRecommender.recommend(pairAnalysis, undefined, validatedPairs);
       allRecs = [rec];
 
       await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmReasoning);
@@ -425,21 +420,11 @@ export class HitdashAgent {
         validatedPairsCD = llmResult.validated_pairs;
       }
 
-      const rawRecs = this.pairRecommender.recommendPick4(
+      // N viene directamente de MOTOR-Σ computeOptimalN() — un solo eje de verdad
+      const recs = this.pairRecommender.recommendPick4(
         abAnalysis, cdAnalysis, undefined,
         validatedPairsAB, validatedPairsCD
       );
-
-      // ═══ PROGRESSIVE SIGNAL: señal independiente por mitad ═══
-      const [sigAB, sigCD] = await Promise.all([
-        this.getProgressivePlaySignal(game_type, draw_type, 'ab'),
-        this.getProgressivePlaySignal(game_type, draw_type, 'cd'),
-      ]);
-      const recs = [
-        this.applyPlaySignal(rawRecs[0]!, sigAB),
-        this.applyPlaySignal(rawRecs[1]!, sigCD),
-      ].filter(Boolean) as import('../types/agent.types.js').PairRecommendation[];
-      reasoning_chain.push({ step: 'progressive_signal_pick4', ab: sigAB, cd: sigCD, ts: new Date().toISOString() });
       allRecs = recs;
 
       await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmReasoningP4);

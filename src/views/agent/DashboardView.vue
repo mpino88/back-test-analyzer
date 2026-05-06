@@ -127,7 +127,33 @@
               {{ (rec.predicted_effectiveness * 100).toFixed(1) }}% efectividad mínima
             </span>
           </div>
-          <div class="rec-pairs">
+          <div class="rec-tiers" v-if="rec.tiers">
+            <div class="tier-row" v-if="rec.tiers.must?.length">
+              <span class="tier-label tier-label--must">CERTEZA</span>
+              <span
+                v-for="pair in rec.tiers.must" :key="'m'+pair"
+                class="pair-chip pair-chip--must"
+                :class="{ 'pair-chip--hit': rec.actual_pair === pair }"
+              >{{ pair }}</span>
+            </div>
+            <div class="tier-row" v-if="rec.tiers.cover?.length">
+              <span class="tier-label tier-label--cover">COBERTURA</span>
+              <span
+                v-for="pair in rec.tiers.cover" :key="'c'+pair"
+                class="pair-chip pair-chip--cover"
+                :class="{ 'pair-chip--hit': rec.actual_pair === pair }"
+              >{{ pair }}</span>
+            </div>
+            <div class="tier-row" v-if="rec.tiers.watch?.length">
+              <span class="tier-label tier-label--watch">VIGILANCIA</span>
+              <span
+                v-for="pair in rec.tiers.watch" :key="'w'+pair"
+                class="pair-chip pair-chip--watch"
+                :class="{ 'pair-chip--hit': rec.actual_pair === pair }"
+              >{{ pair }}</span>
+            </div>
+          </div>
+          <div class="rec-pairs" v-else>
             <span
               v-for="pair in rec.pairs.slice(0, rec.optimal_n)"
               :key="pair"
@@ -306,18 +332,29 @@ function formatDate(iso) {
   flex-wrap: wrap;
   gap: 0.3rem;
 }
-.pair-chip {
-  font-size: 0.75rem;
-  font-weight: 600;
-  font-family: monospace;
-  background: #131c2b;
-  border: 1px solid #1e2d40;
-  color: #94a3b8;
-  padding: 0.15rem 0.4rem;
-  border-radius: 4px;
+/* ── Tiered pairs ──────────────────────────────────────────────── */
+.rec-tiers { display: flex; flex-direction: column; gap: 0.4rem; }
+.tier-row  { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem; }
+
+.tier-label {
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em;
+  padding: 0.1rem 0.4rem; border-radius: 3px; white-space: nowrap;
+  margin-right: 0.2rem;
 }
+.tier-label--must  { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; }
+.tier-label--cover { background: #451a03; color: #fb923c; border: 1px solid #7c2d12; }
+.tier-label--watch { background: #1a2535; color: #64748b; border: 1px solid #1e2d40; }
+
+.pair-chip {
+  font-size: 0.75rem; font-weight: 600; font-family: monospace;
+  padding: 0.15rem 0.4rem; border-radius: 4px;
+  background: #131c2b; border: 1px solid #1e2d40; color: #94a3b8;
+}
+.pair-chip--must  { background: #1f0a0a; color: #fca5a5; border-color: #7f1d1d55; }
+.pair-chip--cover { background: #1a1005; color: #fdba74; border-color: #7c2d1244; }
+.pair-chip--watch { color: #64748b; }
+.pair-chip--hit   { background: #052e16 !important; color: #4ade80 !important; border-color: #22c55e !important; }
 .pair-chip--top3  { color: #e2e8f0; border-color: #3b82f644; }
-.pair-chip--hit   { background: #052e16; color: #4ade80; border-color: #22c55e; }
 
 .rec-meta { font-size: 0.65rem; color: #334155; margin-top: 0.2rem; }
 

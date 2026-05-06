@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PairAnalysis } from '../types/analysis.types.js';
-import type { PairRecommendation } from '../types/agent.types.js';
+import type { PairRecommendation, ConfidenceTiers } from '../types/agent.types.js';
 
 export class PairRecommender {
   /**
@@ -46,10 +46,23 @@ export class PairRecommender {
       ? topSlice.reduce((sum, r) => sum + r.score, 0) / (topSlice.length || 1) / topScore
       : 0;
 
+    // ── Confidence tiers (decisión magistral) ──────────────────────
+    // MUST:  top 30% del ranking → máxima convicción PPS-ponderada
+    // COVER: siguiente 50%       → cobertura estadística
+    // WATCH: último 20%          → borderline, sin convicción
+    const mustCount  = Math.max(1, Math.ceil(finalPairs.length * 0.30));
+    const coverCount = Math.ceil(finalPairs.length * 0.50);
+    const tiers: ConfidenceTiers = {
+      must:  finalPairs.slice(0, mustCount),
+      cover: finalPairs.slice(mustCount, mustCount + coverCount),
+      watch: finalPairs.slice(mustCount + coverCount),
+    };
+
     return {
       game_type:               analysis.game_type,
       half:                    analysis.half,
       pairs:                   finalPairs,
+      tiers,
       centena_plus:            analysis.centena_plus,
       top_n:                   n,
       confidence:              +Math.min(1, avgScore).toFixed(3),

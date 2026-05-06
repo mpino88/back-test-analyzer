@@ -135,70 +135,75 @@ export class TelegramNotifier {
     await this.send(message);
   }
 
-  // ─── Notificar recomendaciones de pares (v2) ─────────────────
+  // ─── Notificar recomendaciones de pares — decisión magistral ────
   async notifyPairs(
     recs: PairRecommendation[],
     game_type: GameType,
     draw_type: DrawType,
     draw_date: string,
-    reasoning?: string
+    _reasoning?: string
   ): Promise<void> {
     const gameLabel = game_type === 'pick3' ? 'Pick 3' : 'Pick 4';
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
     const header = [
-      `💎 *HITDASH — Inferencia Confirmada*`,
-      `📅 Sorteo: ${draw_date} | ${gameLabel} ${drawLabel}`,
+      `💎 *HITDASH — Decisión Magistral*`,
+      `📅 ${draw_date} | ${gameLabel} ${drawLabel}`,
       '────────────────────────',
     ].join('\n');
 
     const blocks: string[] = [];
 
     for (const rec of recs) {
-      // Chunk pairs into rows of 8 for readability
-      const rows: string[] = [];
-      for (let i = 0; i < rec.pairs.length; i += 8) {
-        rows.push(rec.pairs.slice(i, i + 8).join('  '));
+      const halfLabel =
+        rec.half === 'du' ? 'Alfa (D+U)' :
+        rec.half === 'ab' ? 'Bloque AB (P1+P2)' : 'Bloque CD (P3+P4)';
+
+      const fmt = (pairs: string[]) =>
+        pairs.length ? `\`${pairs.join('  ')}\`` : '—';
+
+      const block: string[] = [
+        `*${halfLabel}*`,
+        '',
+        `🔴 *CERTEZA ALTA* — apostar`,
+        fmt(rec.tiers.must),
+        '',
+        `🟡 *COBERTURA* — mínimo`,
+        fmt(rec.tiers.cover),
+      ];
+
+      if (rec.tiers.watch.length > 0) {
+        block.push('', `⚪ *VIGILANCIA* — no apostar aún`, fmt(rec.tiers.watch));
       }
-      const grid = rows.map(r => `\`${r}\``).join('\n');
-
-      let halfLabel: string;
-      if (rec.half === 'du') halfLabel = '🎯 Bloque Alfa (Decena+Unidad):';
-      else if (rec.half === 'ab') halfLabel = '🎯 Bloque AB (Posición 1+2):';
-      else halfLabel = '🎯 Bloque CD (Posición 3+4):';
-
-      const block = [halfLabel, grid];
 
       if (rec.centena_plus !== undefined) {
-        block.push(`⭐ *Centena Plus:* \`${rec.centena_plus}\` _(opcional, agregar tu preferida)_`);
+        block.push('', `⭐ *Centena Plus:* \`${rec.centena_plus}\``);
       }
 
-      // Cognitive N line: effectiveness vs random baseline (B4)
-      // Baseline = optimal_n / 100 (random pair pick probability)
+      block.push('');
+
       const randomBaseline = rec.optimal_n / 100;
-      const effectPct      = (rec.predicted_effectiveness * 100).toFixed(1);
-      const vsAzarDelta    = ((rec.predicted_effectiveness - randomBaseline) * 100);
-      const vsAzarStr      = vsAzarDelta >= 0
-        ? `+${vsAzarDelta.toFixed(1)}%`
-        : `${vsAzarDelta.toFixed(1)}%`;
-      const cogLine = rec.predicted_effectiveness > 0
-        ? `📈 *${effectPct}%* efectividad mínima · *${vsAzarStr}* vs azar _(N=${rec.optimal_n})_`
-        : `🛡️ Análisis estadístico activo _(N=${rec.optimal_n} pares · acumulando historial)_`;
-      block.push(cogLine);
-      block.push(`📊 Certeza algorítmica: ${(rec.confidence * 100).toFixed(0)}%`);
+      const vsAzarDelta    = (rec.predicted_effectiveness - randomBaseline) * 100;
+      const vsAzarStr      = `${vsAzarDelta >= 0 ? '+' : ''}${vsAzarDelta.toFixed(1)}%`;
+
+      block.push(
+        rec.predicted_effectiveness > 0
+          ? `📊 N=${rec.optimal_n} · ${(rec.predicted_effectiveness * 100).toFixed(1)}% efectividad · *${vsAzarStr}* vs azar`
+          : `📊 N=${rec.optimal_n} · MOTOR-Σ acumulando historial`
+      );
+
       blocks.push(block.join('\n'));
     }
 
-    const footer = reasoning
-      ? `\n💡 _${reasoning.slice(0, 300)}_`
-      : '';
-
-    const disclaimer = '\n⚠️ _Solo análisis estadístico. No garantía de resultados._';
-
-    const message = [header, blocks.join('\n\n'), footer, disclaimer].join('\n');
+    const message = [
+      header,
+      blocks.join('\n\n'),
+      '\n💡 _MOTOR-Σ consensus estadístico (pesos PPS adaptativos)._',
+      '⚠️ _Solo análisis estadístico. Sin garantía de resultados._',
+    ].join('\n');
 
     await this.send(message);
-    logger.info({ game_type, draw_type, halves: recs.map(r => r.half) }, 'Pares enviados a Telegram');
+    logger.info({ game_type, draw_type, halves: recs.map(r => r.half) }, 'Decisión magistral enviada a Telegram');
   }
 
   // ════════════════════════════════════════════════════════════

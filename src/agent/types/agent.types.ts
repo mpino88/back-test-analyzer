@@ -97,18 +97,28 @@ export interface Carton {
 }
 
 // ─── Pair Recommendation (v2 — reemplaza Carton en modo par) ────
+// ─── Confidence tiers — decisión magistral ──────────────────────
+// must:  top 30% del ranking PPS-ponderado → apostar con convicción
+// cover: siguiente 50%                     → cobertura mínima
+// watch: último 20%                        → no apostar aún
+export interface ConfidenceTiers {
+  must:  string[];   // máxima convicción algorítmica
+  cover: string[];   // cobertura de borde
+  watch: string[];   // borderline — incluidos en N pero sin convicción
+}
+
 export interface PairRecommendation {
   game_type:     GameType;
   half:          'du' | 'ab' | 'cd';
-  pairs:         string[];       // top-N pares, e.g. ["37","23","15"]
-  centena_plus?: number;         // solo para pick3 half='du'
+  pairs:         string[];       // top-N pares en orden de ranking
+  tiers:         ConfidenceTiers; // stratificación de decisión
+  centena_plus?: number;
   top_n:         number;
   confidence:    number;         // score promedio normalizado [0,1]
   strategy:      string;
-  // ── Cognitive N (self-determined from precision metrics) ─────
-  optimal_n:               number;  // N óptimo calculado por el agente
-  predicted_effectiveness: number;  // Efectividad mínima [0,1] (Wilson CI lower + Sharpe bonus)
-  cognitive_basis:         string;  // Traza: "kelly=0.12 p@5=18% rank_avg=41"
+  optimal_n:               number;
+  predicted_effectiveness: number;
+  cognitive_basis:         string;
 }
 
 // ─── Alertas ────────────────────────────────────────────────────
