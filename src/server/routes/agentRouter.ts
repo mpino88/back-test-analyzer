@@ -14,6 +14,7 @@ import { RAGService }         from '../../agent/services/RAGService.js';
 import { LLMRouter }          from '../../agent/services/LLMRouter.js';
 import { PPSService }          from '../../agent/services/PPSService.js';
 import { TrendMomentum }       from '../../agent/analysis/algorithms/TrendMomentum.js';
+import { CognitiveLearner }    from '../../agent/learning/CognitiveLearner.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -30,6 +31,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const llmRouter            = new LLMRouter();
   const ppsService           = new PPSService(agentPool);
   const trendMomentumAlgo    = new TrendMomentum(agentPool);
+  const cognitiveLearner     = new CognitiveLearner(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -1477,6 +1479,56 @@ ${ragSummary}`;
 
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'trend-momentum endpoint error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ─── POST /api/agent/cognitive-learn ────────────────────────────
+  // Dispara el CognitiveLearner en background.
+  // Aprende de TODO el historial, siembra pps_state, guarda pesos óptimos.
+  // Body: { game_type, draw_type, half }
+  router.post('/cognitive-learn', strictLimiter, async (req: Request, res: Response) => {
+    const { game_type = 'pick3', draw_type = 'evening', half } =
+      req.body as { game_type?: string; draw_type?: string; half?: string };
+    const resolvedHalf = (half ?? (game_type === 'pick3' ? 'du' : 'ab')) as any;
+
+    if (!['pick3','pick4'].includes(game_type) || !['midday','evening'].includes(draw_type)) {
+      res.status(400).json({ error: 'Parámetros inválidos' }); return;
+    }
+
+    // ACK inmediato — el aprendizaje puede tardar 2-5 min
+    res.json({
+      accepted: true,
+      message: `CognitiveLearner iniciado — aprende de todo el historial de ${game_type} ${draw_type} ${resolvedHalf}`,
+      game_type, draw_type, half: resolvedHalf,
+    });
+
+    // Ejecutar en background
+    cognitiveLearner.learnFromHistory(game_type as any, draw_type as any, resolvedHalf)
+      .then(report => {
+        logger.info({
+          draws_learned: report.draws_learned,
+          holdout_hit_rate: report.holdout_hit_rate,
+          optimal_n: report.optimal_n,
+          best_roi: report.best_roi,
+          top_algos: report.top_algos.map(a => `${a.algo}(pps=${a.pps.toFixed(0)})`).join(', '),
+        }, 'CognitiveLearner: completado');
+      })
+      .catch(err => logger.error({ error: String(err) }, 'CognitiveLearner: error en background'));
+  });
+
+  // ─── GET /api/agent/cognitive-learn ─────────────────────────────
+  // Estado del último aprendizaje + pesos cognitivos aprendidos.
+  // ?game_type=pick3&draw_type=evening&half=du
+  router.get('/cognitive-learn', async (req: Request, res: Response) => {
+    const game_type = (req.query['game_type'] as string) ?? 'pick3';
+    const draw_type = (req.query['draw_type'] as string) ?? 'evening';
+    const half      = (req.query['half']      as string) ?? (game_type === 'pick3' ? 'du' : 'ab');
+
+    try {
+      const status = await cognitiveLearner.getStatus(game_type as any, draw_type as any, half as any);
+      res.json({ game_type, draw_type, half, ...status, generated_at: new Date().toISOString() });
+    } catch (err) {
       res.status(500).json({ error: String(err) });
     }
   });

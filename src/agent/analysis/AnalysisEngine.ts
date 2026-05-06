@@ -618,16 +618,35 @@ export class AnalysisEngine {
       }
     } catch { /* adaptive_weights aún no existe — ok */ }
 
-    // ── Peso efectivo MOTOR-Σ: PPS(algo) × base_weight ───────────────────────
-    // PPS normalizado al rango [0.1, 2.0] para que un algo con PPS=100 pese 2×
-    // y uno con PPS=0 pese 0.1× (no cero — siempre mantiene voz mínima).
+    // ── Cargar pesos cognitivos aprendidos (CognitiveLearner) ────────────────
+    // cognitive_algo_weights: pesos optimizados desde TODO el historial.
+    // Tienen prioridad sobre ALGORITHM_WEIGHTS estáticos.
+    let cognitiveWeights: Record<string, number> = {};
+    try {
+      const { rows: cwRows } = await hitdashPool.query<{ algo_name: string; learned_weight: number }>(
+        `SELECT algo_name, learned_weight
+         FROM hitdash.cognitive_algo_weights
+         WHERE game_type = $1 AND draw_type = $2 AND half = $3`,
+        [game_type, draw_type, half]
+      );
+      for (const r of cwRows) cognitiveWeights[r.algo_name] = r.learned_weight;
+      if (Object.keys(cognitiveWeights).length > 0) {
+        logger.info({ algos: Object.keys(cognitiveWeights).length },
+          'AnalysisEngine: pesos cognitivos históricos cargados');
+      }
+    } catch { /* cognitive_algo_weights puede no existir aún — ok */ }
+
+    // ── Peso efectivo MOTOR-Σ + Cognitivo: jerarquía de 3 capas ─────────────
+    // 1. PPS live (aprendizaje desde deployment)
+    // 2. Peso cognitivo histórico (aprendizaje desde TODO el historial)
+    // 3. ALGORITHM_WEIGHTS estático (fallback base)
     const GLOBAL_DEFAULT_N = 15;
     function effectiveWeight(algName: string): number {
-      const baseW     = ALGORITHM_WEIGHTS[algName] ?? 0.5;
+      const baseW     = cognitiveWeights[algName] ?? ALGORITHM_WEIGHTS[algName] ?? 0.5;
       const ppsScore  = ppsMap.get(algName);
 
-      // Si hay PPS: normalizar PPS[0–100] → factor[0.1–2.0]
-      // Formula: factor = 0.1 + (pps / 100) × 1.9
+      // Si hay PPS live: normalizar PPS[0–100] → factor[0.1–2.0]
+      // El PPS live refina sobre el peso cognitivo base
       if (ppsScore !== undefined) {
         const ppsFactor = 0.1 + (ppsScore / 100) * 1.9;
         return baseW * ppsFactor;
