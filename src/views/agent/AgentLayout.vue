@@ -15,23 +15,11 @@
         <RouterLink to="/agent/rendimiento"       class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📊</span> Rendimiento
         </RouterLink>
-        <RouterLink to="/agent/backtest"          class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">🔬</span> Backtest
-        </RouterLink>
         <RouterLink to="/agent/backtest-control"  class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">⚙️</span> BT Control
         </RouterLink>
-        <RouterLink to="/agent/strategies"        class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">🧠</span> Estrategias
-        </RouterLink>
         <RouterLink to="/agent/tracking"          class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📡</span> Cognición
-        </RouterLink>
-        <RouterLink to="/agent/progressive"       class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">▶</span> Play Signal
-        </RouterLink>
-        <RouterLink to="/agent/ballbot-strategies" class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">🧬</span> Estrategias BB
         </RouterLink>
         <RouterLink to="/agent/alerts"            class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>

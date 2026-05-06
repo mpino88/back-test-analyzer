@@ -102,44 +102,55 @@
         </div>
       </section>
 
-      <!-- ── Accuracy histórica (feedback_loop) ──────────────────── -->
+      <!-- ── MOTOR-Σ PPS Ranking ─────────────────────────────────── -->
       <section class="section">
         <div class="section-header">
-          <h2 class="section-title">Accuracy Histórica <span class="badge-algo">Feedback Loop</span></h2>
-          <div class="range-tabs">
-            <button v-for="r in ACC_RANGES" :key="r.value"
-              class="range-tab" :class="{ 'range-tab--active': accRange === r.value }"
-              @click="accRange = r.value">{{ r.label }}</button>
+          <h2 class="section-title">MOTOR-Σ <span class="badge-algo">PPS Ranking</span></h2>
+          <div class="pps-meta" v-if="ppsData">
+            <span class="pps-pill">N={{ ppsData.optimal_n }}</span>
+            <span class="pps-pill" :class="ppsData.is_profitable ? 'pps-pill--green' : 'pps-pill--dim'">
+              ROI {{ ppsData.is_profitable ? '+' : '' }}{{ (ppsData.expected_roi * 100).toFixed(1) }}%
+            </span>
+            <span class="pps-pill pps-pill--dim">{{ ppsData.sample_size }} sorteos</span>
           </div>
         </div>
-        <div v-if="accLoading" class="loading">Cargando accuracy...</div>
-        <template v-else-if="accData">
-          <div class="acc-grid">
-            <div class="stat-card">
-              <div class="stat-card__label">Avg Accuracy</div>
-              <div class="stat-card__value">{{ (accAvg * 100).toFixed(2) }}%</div>
-              <div class="stat-card__sub">vs baseline 10%</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-card__label">Hits Exactos</div>
-              <div class="stat-card__value">{{ accExact }}</div>
-              <div class="stat-card__sub">coincidencias perfectas</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-card__label">Hits Parciales</div>
-              <div class="stat-card__value">{{ accPartial }}</div>
-              <div class="stat-card__sub">≥2 dígitos correctos</div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-card__label">Total evaluados</div>
-              <div class="stat-card__value">{{ accTotal }}</div>
-              <div class="stat-card__sub">cartones en el período</div>
-            </div>
-          </div>
-          <div class="chart-container">
-            <canvas ref="accCanvasRef"></canvas>
-          </div>
-        </template>
+        <div v-if="ppsLoading" class="loading">Cargando ranking PPS...</div>
+        <div v-else-if="ppsData && ppsData.algorithms.length > 0" class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Algoritmo</th>
+                <th>PPS</th>
+                <th>Sorteos</th>
+                <th>Señal</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(algo, i) in ppsData.algorithms" :key="algo.algo_name">
+                <td class="text-muted">{{ i + 1 }}</td>
+                <td class="mono">{{ algo.algo_name }}</td>
+                <td>
+                  <div class="pps-bar-wrap">
+                    <div class="pps-bar"
+                         :style="`width: ${algo.pps}%`"
+                         :class="algo.pps > 60 ? 'pps-bar--strong' : algo.pps < 40 ? 'pps-bar--weak' : ''">
+                    </div>
+                    <span class="pps-val">{{ algo.pps.toFixed(1) }}</span>
+                  </div>
+                </td>
+                <td class="text-muted">{{ algo.sample_count }}</td>
+                <td>
+                  <span class="pps-signal"
+                        :class="algo.pps > 60 ? 'signal--strong' : algo.pps < 40 ? 'signal--weak' : 'signal--neutral'">
+                    {{ algo.pps > 60 ? '↑ FUERTE' : algo.pps < 40 ? '↓ DÉBIL' : '→ NEUTRO' }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-else class="empty">PPS inicializando — aprende sorteo a sorteo (mín. 1 sorteo post-draw)</div>
       </section>
 
       <!-- ── Timeline ─────────────────────────────────────────────── -->
@@ -196,11 +207,8 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue';
-import { Chart, registerables } from 'chart.js';
+import { ref, computed, watch, onMounted } from 'vue';
 import { apiFetch } from '../../utils/apiClient.js';
-
-Chart.register(...registerables);
 
 const gameType = ref('pick3');
 const days     = ref(30);
@@ -259,64 +267,23 @@ const groupedTimeline = computed(() => {
   return [...map.values()];
 });
 
-// ─── Accuracy histórica (feedback_loop) ──────────────────────────
-const ACC_RANGES = [
-  { value: '7d',   label: '7d'  },
-  { value: '30d',  label: '30d' },
-  { value: '90d',  label: '90d' },
-  { value: '365d', label: '1a'  },
-];
-const accRange     = ref('30d');
-const accData      = ref(null);
-const accLoading   = ref(false);
-const accCanvasRef = ref(null);
-let accChart       = null;
+// ─── MOTOR-Σ PPS Ranking ─────────────────────────────────────────
+const ppsData    = ref(null);
+const ppsLoading = ref(false);
 
-const accAvg     = computed(() => accData.value?.data.length
-  ? accData.value.data.reduce((s, r) => s + r.avg_accuracy, 0) / accData.value.data.length : 0);
-const accExact   = computed(() => accData.value?.data.reduce((s, r) => s + r.total_hits_exact,   0) ?? 0);
-const accPartial = computed(() => accData.value?.data.reduce((s, r) => s + r.total_hits_partial, 0) ?? 0);
-const accTotal   = computed(() => accData.value?.data.reduce((s, r) => s + r.total_cartones,     0) ?? 0);
-
-async function fetchAccuracy() {
-  accLoading.value = true;
+async function fetchPPS() {
+  ppsLoading.value = true;
+  const half = gameType.value === 'pick3' ? 'du' : 'ab';
   try {
-    const res = await apiFetch(`/api/agent/accuracy?range=${accRange.value}`);
+    const res = await apiFetch(`/api/agent/pps?game_type=${gameType.value}&draw_type=evening&half=${half}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    accData.value = await res.json();
-  } catch { accData.value = null; }
-  finally { accLoading.value = false; }
+    ppsData.value = await res.json();
+  } catch { ppsData.value = null; }
+  finally { ppsLoading.value = false; }
 }
 
-function renderAccChart() {
-  if (!accCanvasRef.value || !accData.value?.data?.length) return;
-  accChart?.destroy();
-  const labels   = accData.value.data.map(r => r.day);
-  const accuracy = accData.value.data.map(r => +(r.avg_accuracy * 100).toFixed(2));
-  const baseline = Array(labels.length).fill((accData.value.baseline_random ?? 0.1) * 100);
-  accChart = new Chart(accCanvasRef.value, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Avg Accuracy (%)', data: accuracy, borderColor: '#60a5fa', backgroundColor: '#60a5fa22', fill: true, tension: 0.35, pointRadius: 3 },
-        { label: 'Baseline random', data: baseline, borderColor: '#475569', borderDash: [6, 4], pointRadius: 0, fill: false },
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } }, tooltip: { mode: 'index', intersect: false } },
-      scales: {
-        x: { ticks: { color: '#64748b', maxTicksLimit: 12 }, grid: { color: '#1e2d40' } },
-        y: { ticks: { color: '#64748b', callback: v => `${v}%` }, grid: { color: '#1e2d40' }, min: 0 },
-      },
-    },
-  });
-}
-
-watch(accData, async () => { await nextTick(); renderAccChart(); });
-watch(accRange, fetchAccuracy);
-onMounted(fetchAccuracy);
+watch(gameType, fetchPPS);
+onMounted(fetchPPS);
 </script>
 
 <style scoped>
@@ -497,15 +464,31 @@ onMounted(fetchAccuracy);
 .loading { color: #60a5fa; padding: 2rem; text-align: center; }
 .error-msg { color: #ef4444; padding: 1rem; background: #1f1010; border-radius: 8px; }
 
-/* ─── Accuracy section ─────────────────────────────────────────── */
+/* ─── MOTOR-Σ PPS section ──────────────────────────────────────── */
 .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem; }
-.range-tabs { display: flex; gap: 0.35rem; }
-.range-tab { background: #0f1623; border: 1px solid #1e2d40; color: #64748b; padding: 0.3rem 0.75rem; border-radius: 8px; font-size: 0.82rem; cursor: pointer; }
-.range-tab:hover { color: #e2e8f0; }
-.range-tab--active { background: #1d3a5f; border-color: #3b82f6; color: #60a5fa; }
-.acc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
-.chart-container { background: #0f1623; border: 1px solid #1e2d40; border-radius: 12px; padding: 1.25rem; height: 280px; }
-.chart-container canvas { height: 100% !important; }
+.pps-meta { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
+.pps-pill {
+  font-size: 0.72rem; font-weight: 600;
+  background: #1a2535; color: #94a3b8;
+  padding: 0.2rem 0.55rem; border-radius: 999px;
+  border: 1px solid #1e2d40;
+}
+.pps-pill--green { background: #052e16; color: #4ade80; border-color: #166534; }
+.pps-pill--dim   { color: #64748b; }
 
-@media (max-width: 768px) { .acc-grid { grid-template-columns: 1fr 1fr; } }
+.pps-bar-wrap { display: flex; align-items: center; gap: 0.5rem; }
+.pps-bar {
+  height: 6px; border-radius: 3px;
+  background: #3b82f6;
+  min-width: 2px; max-width: 100px;
+  transition: width 0.4s;
+}
+.pps-bar--strong { background: #22c55e; }
+.pps-bar--weak   { background: #ef4444; }
+.pps-val { font-size: 0.78rem; font-family: monospace; color: #94a3b8; white-space: nowrap; }
+
+.pps-signal { font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.45rem; border-radius: 4px; }
+.signal--strong  { background: #052e16; color: #4ade80; }
+.signal--weak    { background: #1f1010; color: #f87171; }
+.signal--neutral { background: #1a2535; color: #94a3b8; }
 </style>
