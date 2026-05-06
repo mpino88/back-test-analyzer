@@ -98,7 +98,9 @@ FROM
     ('pair_return_cycle'),
     ('sum_pattern_filter'),
     ('double_triple'),
-    ('cross_draw')
+    ('cross_draw'),
+    -- Ballbot canonical (v4)
+    ('trend_momentum')
   ) AS algo(name)
   CROSS JOIN (VALUES ('pick3'), ('pick4')) AS g(game_type)
   CROSS JOIN (VALUES ('midday'), ('evening')) AS d(draw_type)

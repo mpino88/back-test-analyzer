@@ -35,6 +35,8 @@ import { PairReturnCycle }       from './algorithms/PairReturnCycle.js';
 import { SumPatternFilter }      from './algorithms/SumPatternFilter.js';
 import { DoubleTripleDetector }  from './algorithms/DoubleTripleDetector.js';
 import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
+// ─── Ballbot canonical strategy (v4) ────────────────────────────────────────
+import { TrendMomentum }         from './algorithms/TrendMomentum.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
 import type {
@@ -85,6 +87,8 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   sum_pattern_filter:  'sum_pattern_filter',
   double_triple:       'double_triple_detector',
   cross_draw:          'cross_draw_correlation',
+  // Ballbot canonical (v4) — fórmula exacta trend_momentum
+  trend_momentum:      'trend_momentum',
 };
 
 // Default top_n si la estrategia aún no tiene historial adaptativo
@@ -111,6 +115,8 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   sum_pattern_filter:      15,
   double_triple_detector:  20,
   cross_draw_correlation:  18,
+  // Ballbot canonical (v4)
+  trend_momentum:          15,
 };
 
 // ─── Cognitive N — auto-determines optimal pair count from precision metrics ──
@@ -203,10 +209,12 @@ export class AnalysisEngine {
   private readonly decade:      DecadeFamily;
   private readonly maxDow:      MaxPerWeekDay;
   // ─── Algoritmos predictivos avanzados (v3) ────────────────────
-  private readonly pairReturn:  PairReturnCycle;
-  private readonly sumPattern:  SumPatternFilter;
-  private readonly dblTriple:   DoubleTripleDetector;
-  private readonly crossDraw:   CrossDrawCorrelation;
+  private readonly pairReturn:   PairReturnCycle;
+  private readonly sumPattern:   SumPatternFilter;
+  private readonly dblTriple:    DoubleTripleDetector;
+  private readonly crossDraw:    CrossDrawCorrelation;
+  // ─── Ballbot canonical (v4) ───────────────────────────────────
+  private readonly trendMomentum: TrendMomentum;
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
   private readonly ppsService:  PPSService;
 
@@ -235,10 +243,11 @@ export class AnalysisEngine {
     this.decade     = new DecadeFamily(agentPool);
     this.maxDow     = new MaxPerWeekDay(agentPool);
     // ─── Algoritmos predictivos avanzados (v3) ───────────────────
-    this.pairReturn = new PairReturnCycle(agentPool);
-    this.sumPattern = new SumPatternFilter(agentPool);
-    this.dblTriple  = new DoubleTripleDetector(agentPool);
-    this.crossDraw  = new CrossDrawCorrelation(agentPool);
+    this.pairReturn    = new PairReturnCycle(agentPool);
+    this.sumPattern    = new SumPatternFilter(agentPool);
+    this.dblTriple     = new DoubleTripleDetector(agentPool);
+    this.crossDraw     = new CrossDrawCorrelation(agentPool);
+    this.trendMomentum = new TrendMomentum(agentPool);
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
     this.ppsService = new PPSService(agentPool);
   }
@@ -541,6 +550,7 @@ export class AnalysisEngine {
            rFreqShort, rHCShort,
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
            rPairReturn, rSumPattern, rDoubleTriple, rCrossDraw,
+           rTrendMomentum,
     ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
@@ -569,6 +579,8 @@ export class AnalysisEngine {
       this.sumPattern.runPairs(game_type, draw_type, half, period),
       this.dblTriple.runPairs(game_type, draw_type, half, period),
       this.crossDraw.runPairs(game_type, draw_type, half, period),
+      // ─── Ballbot canonical (v4) ──────────────────────────────────────────
+      this.trendMomentum.runPairs(game_type, draw_type, half, period),
     ]);
 
     const algorithms_succeeded: string[] = [];
@@ -664,6 +676,8 @@ export class AnalysisEngine {
       ['sum_pattern_filter', effectiveWeight('sum_pattern_filter'), rSumPattern],
       ['double_triple',      effectiveWeight('double_triple'),      rDoubleTriple],
       ['cross_draw',         effectiveWeight('cross_draw'),         rCrossDraw],
+      // ─── Ballbot canonical (v4) — misma fórmula que "Fuerza de Tendencia Pro" ──
+      ['trend_momentum',     effectiveWeight('trend_momentum'),     rTrendMomentum],
     ];
 
     // Accumulate weighted scores per pair "00"-"99"

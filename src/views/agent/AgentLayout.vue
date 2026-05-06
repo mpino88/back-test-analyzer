@@ -15,6 +15,9 @@
         <RouterLink to="/agent/rendimiento"       class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📊</span> Rendimiento
         </RouterLink>
+        <RouterLink to="/agent/momentum"          class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">📈</span> Momentum
+        </RouterLink>
         <RouterLink to="/agent/backtest-control"  class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">⚙️</span> BT Control
         </RouterLink>

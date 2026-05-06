@@ -187,6 +187,8 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   sum_pattern_filter:   0.80,  // filtro por suma de dígitos — eliminador de ruido
   double_triple:        0.65,  // detector de régimen dobles/triples
   cross_draw:           0.70,  // correlación midday↔evening mismo día
+  // ─── Ballbot canonical ──────────────────────────────────────────
+  trend_momentum:       1.05,  // fórmula exacta "Fuerza de Tendencia Pro" — peso elevado por efectividad demostrada
 };
 
 // ─── Score por dígito/posición ───────────────────────────────────

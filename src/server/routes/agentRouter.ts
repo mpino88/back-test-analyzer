@@ -13,6 +13,7 @@ import { AgenticProgressiveEngine } from '../../agent/backtest/AgenticProgressiv
 import { RAGService }         from '../../agent/services/RAGService.js';
 import { LLMRouter }          from '../../agent/services/LLMRouter.js';
 import { PPSService }          from '../../agent/services/PPSService.js';
+import { TrendMomentum }       from '../../agent/analysis/algorithms/TrendMomentum.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -28,6 +29,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const ragService           = new RAGService(agentPool);
   const llmRouter            = new LLMRouter();
   const ppsService           = new PPSService(agentPool);
+  const trendMomentumAlgo    = new TrendMomentum(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -1294,6 +1296,188 @@ ${ragSummary}`;
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'agentic-progressive error');
       res.status(500).json({ error: 'Error calculando condiciones de estrategias' });
+    }
+  });
+
+  // ─── GET /api/agent/trend-momentum ──────────────────────────────
+  // Backtesting completo de TrendMomentum con sliding window.
+  // Devuelve: stats actuales + timeline de hits/misses + optimal top_n.
+  // ?game_type=pick3&draw_type=evening&half=du&top_n=15&eval_last=90
+  router.get('/trend-momentum', async (req: Request, res: Response) => {
+    const game_type = (req.query['game_type'] as string) ?? 'pick3';
+    const draw_type = (req.query['draw_type'] as string) ?? 'evening';
+    const half      = (req.query['half']      as string) ?? (game_type === 'pick3' ? 'du' : 'ab');
+    const top_n     = Math.min(30, Math.max(5, parseInt((req.query['top_n'] as string) ?? '15', 10)));
+    const eval_last = Math.min(180, Math.max(20, parseInt((req.query['eval_last'] as string) ?? '90', 10)));
+
+    const validGames  = ['pick3', 'pick4'];
+    const validDraws  = ['midday', 'evening'];
+    const validHalves = ['du', 'ab', 'cd'];
+
+    if (!validGames.includes(game_type) || !validDraws.includes(draw_type) || !validHalves.includes(half)) {
+      res.status(400).json({ error: 'Parámetros inválidos' });
+      return;
+    }
+
+    try {
+      // ── 1. Stats actuales (momentum de hoy) ─────────────────────
+      const { stats, total_all, total_recent } = await trendMomentumAlgo.computeStats(
+        game_type as any, draw_type as any, half as any
+      );
+
+      const top_candidates = stats
+        .filter(s => s.count_all >= 3 && s.momentum >= 1.0)
+        .sort((a, b) => b.momentum - a.momentum)
+        .slice(0, top_n);
+
+      // ── 2. Sliding window backtest ───────────────────────────────
+      // Para cada sorteo de los últimos eval_last, calcula qué habría
+      // predicho trend_momentum con datos hasta ese punto, y si acertó.
+      const { rows: allDraws } = await agentPool.query<{
+        draw_date: string;
+        p1: number; p2: number; p3: number; p4: number;
+      }>(
+        `SELECT draw_date::text, p1, p2, p3, p4
+         FROM hitdash.ingested_results
+         WHERE game_type = $1 AND draw_type = $2
+         ORDER BY draw_date DESC
+         LIMIT $3`,
+        [game_type, draw_type, eval_last + 30]  // +30 para tener ventana de entrenamiento
+      );
+
+      if (allDraws.length < 35) {
+        res.json({
+          game_type, draw_type, half, top_n,
+          total_draws: total_all, recent_window: total_recent,
+          top_candidates,
+          backtest: { insufficient_data: true, sample_size: allDraws.length },
+          generated_at: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Función para extraer el par ganador según half
+      const extractPair = (row: { p1: number; p2: number; p3: number; p4: number }): string => {
+        if (half === 'ab') return `${row.p1}${row.p2}`;
+        if (half === 'cd') return `${row.p3}${row.p4}`;
+        return `${row.p2}${row.p3}`;
+      };
+
+      const timeline: Array<{
+        draw_date: string;
+        winning_pair: string;
+        predicted_top: string[];
+        hit: boolean;
+        rank: number | null;
+        momentum_of_winner: number;
+      }> = [];
+
+      const evalDraws = allDraws.slice(0, eval_last);   // sorteos a evaluar
+      const TRAIN_MIN = 30;
+
+      for (let i = 0; i < evalDraws.length; i++) {
+        const evalDraw = evalDraws[i]!;
+        const winPair  = extractPair(evalDraw);
+
+        // Datos de entrenamiento = todos los sorteos DESPUÉS de este (más antiguos)
+        const trainDraws = allDraws.slice(i + 1);
+        if (trainDraws.length < TRAIN_MIN) continue;
+
+        // Calcular momentum con datos de entrenamiento
+        const recentTrain = trainDraws.slice(0, 30);
+        const totalAll    = trainDraws.length;
+        const totalRecent = recentTrain.length;
+
+        const countAll:    Record<string, number> = {};
+        const countRecent: Record<string, number> = {};
+
+        for (const row of trainDraws) {
+          const p = extractPair(row);
+          countAll[p] = (countAll[p] ?? 0) + 1;
+        }
+        for (const row of recentTrain) {
+          const p = extractPair(row);
+          countRecent[p] = (countRecent[p] ?? 0) + 1;
+        }
+
+        // Construir ranking de momentum
+        const momentumRanking: Array<{ pair: string; momentum: number }> = [];
+        for (let x = 0; x <= 9; x++) {
+          for (let y = 0; y <= 9; y++) {
+            const p  = `${x}${y}`;
+            const ca = countAll[p]    ?? 0;
+            const cr = countRecent[p] ?? 0;
+            const fa = totalAll    > 0 ? ca / totalAll    : 0;
+            const fr = totalRecent > 0 ? cr / totalRecent : 0;
+            let   m  = fa > 0 ? fr / fa : (cr > 0 ? 10 : 0);
+            if (ca < 3 || m < 1.0) m = 0;
+            momentumRanking.push({ pair: p, momentum: m });
+          }
+        }
+
+        momentumRanking.sort((a, b) => b.momentum - a.momentum);
+        const predicted = momentumRanking.filter(r => r.momentum > 0).slice(0, top_n).map(r => r.pair);
+        const rank      = predicted.indexOf(winPair);
+        const hit       = rank >= 0;
+        const momOfWinner = momentumRanking.find(r => r.pair === winPair)?.momentum ?? 0;
+
+        timeline.push({
+          draw_date:          evalDraw.draw_date,
+          winning_pair:       winPair,
+          predicted_top:      predicted.slice(0, 5),
+          hit,
+          rank:               hit ? rank + 1 : null,
+          momentum_of_winner: +momOfWinner.toFixed(3),
+        });
+      }
+
+      // ── 3. Calcular métricas de backtesting ─────────────────────
+      const hits          = timeline.filter(t => t.hit).length;
+      const total         = timeline.length;
+      const hit_rate      = total > 0 ? hits / total : 0;
+      const random_base   = top_n / 100;
+      const vs_azar       = hit_rate - random_base;
+      const ranks         = timeline.filter(t => t.rank !== null).map(t => t.rank!);
+      const avg_rank      = ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : null;
+
+      // Optimal N scan: qué N minimiza candidatos mientras mantiene hit_rate razonable
+      const n_scan: Array<{ n: number; hit_rate: number; roi: number }> = [];
+      for (let n = 5; n <= 30; n++) {
+        const h = timeline.filter(t => {
+          const predicted = t.predicted_top.slice(0, n);
+          return predicted.includes(t.winning_pair) || (t.rank !== null && t.rank <= n);
+        }).length;
+        const hr  = total > 0 ? h / total : 0;
+        const roi = hr * 50 / n - 1;  // Florida payout $50 por $1
+        n_scan.push({ n, hit_rate: +hr.toFixed(4), roi: +roi.toFixed(4) });
+      }
+      const profitable_n = n_scan.find(s => s.roi >= 0.01);
+
+      res.json({
+        game_type, draw_type, half, top_n,
+        generated_at: new Date().toISOString(),
+        // Estado actual
+        total_draws:    total_all,
+        recent_window:  total_recent,
+        top_candidates,
+        // Backtesting
+        backtest: {
+          sample_size:  total,
+          hits,
+          hit_rate:     +hit_rate.toFixed(4),
+          random_base:  +random_base.toFixed(4),
+          vs_azar:      +vs_azar.toFixed(4),
+          avg_rank,
+          optimal_n:    profitable_n?.n ?? top_n,
+          is_profitable: (profitable_n?.roi ?? -1) >= 0.01,
+          n_scan,
+          timeline: timeline.slice(0, 60),  // últimos 60 para la gráfica
+        },
+      });
+
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'trend-momentum endpoint error');
+      res.status(500).json({ error: String(err) });
     }
   });
 

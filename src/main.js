@@ -20,6 +20,7 @@ const router = createRouter({
         { path: 'rendimiento',     component: () => import('./views/agent/RendimientoView.vue') },
         { path: 'backtest',        component: () => import('./views/agent/BacktestView.vue') },
         { path: 'backtest-control',component: () => import('./views/agent/BacktestControlView.vue') },
+        { path: 'momentum',        component: () => import('./views/agent/MomentumView.vue') },
         { path: 'tracking',        component: () => import('./views/agent/StrategyTrackingView.vue') },
         { path: 'ballbot-strategies', component: () => import('./views/agent/BallbotStrategiesView.vue') },
         { path: 'alerts',          component: () => import('./views/agent/AlertsView.vue') },
