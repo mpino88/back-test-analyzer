@@ -12,6 +12,7 @@ import { HitdashAgent } from './HitdashAgent.js';
 import { RAGService } from '../services/RAGService.js';
 import type { TelegramNotifier } from '../services/TelegramNotifier.js';
 import type { GameType, DrawType } from '../types/agent.types.js';
+import { CognitiveLearner } from '../learning/CognitiveLearner.js';
 
 const logger = pino({ name: 'AgentScheduler' });
 
@@ -114,6 +115,24 @@ export class AgentScheduler {
       { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '35 23 * * *' },
     ];
 
+    // ── Re-aprendizaje cognitivo semanal (domingo 03:00 UTC) ─────────
+    // Cada semana hay ~14 sorteos nuevos por combinación.
+    // Re-ejecutar el CognitiveLearner incorpora esos sorteos al historial
+    // y refina los pesos óptimos con datos frescos.
+    await this.queue.upsertJobScheduler(
+      'scheduler-cognitive-relearn',
+      { pattern: '0 3 * * 0' }, // domingo 03:00 UTC
+      {
+        name: 'cognitive-relearn',
+        data: { trigger: 'weekly_relearn' } as any,
+        opts: {
+          removeOnComplete: { count: 4 },
+          removeOnFail: { count: 2 },
+        },
+      }
+    );
+    logger.info({ cron: '0 3 * * 0' }, 'CognitiveLearner: re-aprendizaje semanal registrado');
+
     for (const job of jobs) {
       await this.queue.upsertJobScheduler(
         `scheduler-${job.name}`,
@@ -145,11 +164,47 @@ export class AgentScheduler {
 
   // ─── Iniciar el worker que procesa los jobs ───────────────────
   start(): void {
-    const agent = new HitdashAgent(this.ballbotPool, this.agentPool, this.ragService, this.notifier ?? undefined);
+    const agent           = new HitdashAgent(this.ballbotPool, this.agentPool, this.ragService, this.notifier ?? undefined);
+    const cognitiveLearner = new CognitiveLearner(this.agentPool);
+
+    const RELEARN_COMBOS: Array<{ game_type: 'pick3'|'pick4'; draw_type: 'midday'|'evening'; half: 'du'|'ab'|'cd' }> = [
+      { game_type: 'pick3', draw_type: 'midday',  half: 'du' },
+      { game_type: 'pick3', draw_type: 'evening', half: 'du' },
+      { game_type: 'pick4', draw_type: 'midday',  half: 'ab' },
+      { game_type: 'pick4', draw_type: 'midday',  half: 'cd' },
+      { game_type: 'pick4', draw_type: 'evening', half: 'ab' },
+      { game_type: 'pick4', draw_type: 'evening', half: 'cd' },
+    ];
 
     this.worker = new Worker<AgentJobData>(
       QUEUE_NAME,
       async (job: Job<AgentJobData>) => {
+        // ── Re-aprendizaje cognitivo semanal ──────────────────────────
+        if ((job.data as any).trigger === 'weekly_relearn') {
+          logger.info('AgentScheduler: re-aprendizaje cognitivo semanal iniciado');
+          for (const combo of RELEARN_COMBOS) {
+            try {
+              const report = await cognitiveLearner.learnFromHistory(
+                combo.game_type, combo.draw_type, combo.half
+              );
+              logger.info(
+                { ...combo, draws: report.draws_learned, hit_rate: report.holdout_hit_rate },
+                'CognitiveLearner semanal: combo completado'
+              );
+            } catch (err) {
+              logger.warn({ ...combo, error: String(err) }, 'CognitiveLearner semanal: error — continuando');
+            }
+            await new Promise(r => setTimeout(r, 5_000));
+          }
+          if (this.notifier) {
+            await this.notifier.sendAdminLog(
+              '🔄 *Re-aprendizaje cognitivo semanal completado*\n' +
+              '6 combinaciones procesadas — pesos actualizados con historial completo.'
+            ).catch(() => {});
+          }
+          return 'relearn-done';
+        }
+
         const { game_type, draw_type, trigger } = job.data;
         // ═══ ANO-06 FIX: Calcular draw_date en tiempo de ejecución, NO en boot.
         // Garantiza que los cartones generados siempre tengan la fecha real de HOY.

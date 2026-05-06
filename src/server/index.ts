@@ -23,6 +23,7 @@ import { PostDrawProcessor } from '../agent/feedback/PostDrawProcessor.js';
 import helmet from 'helmet';
 import { createGlobalLimiter } from './middlewares/rateLimitMiddleware.js';
 import { TelegramNotifier } from '../agent/services/TelegramNotifier.js';
+import { CognitiveLearner } from '../agent/learning/CognitiveLearner.js';
 
 const logger = pino({
   name: 'HitdashServer',
@@ -248,6 +249,68 @@ async function start(): Promise<void> {
       ballbotDb: true,            // idem
       redis: true,
     }).catch(() => {});           // fire-and-forget — nunca bloquea el boot
+
+    // ─── CognitiveLearner — auto-aprendizaje histórico al boot ───────
+    // Se dispara en background inmediatamente después del boot.
+    // Para cada combinación (game×draw×half) que no tenga aprendizaje previo
+    // completado, corre el walk-forward retrospectivo completo.
+    // Esto garantiza que el motor arranca con PPS histórico real, no PPS=50.
+    setImmediate(() => {
+      const cognitiveLearner = new CognitiveLearner(agentPool);
+      const COMBOS: Array<{ game_type: 'pick3'|'pick4'; draw_type: 'midday'|'evening'; half: 'du'|'ab'|'cd' }> = [
+        { game_type: 'pick3', draw_type: 'midday',  half: 'du' },
+        { game_type: 'pick3', draw_type: 'evening', half: 'du' },
+        { game_type: 'pick4', draw_type: 'midday',  half: 'ab' },
+        { game_type: 'pick4', draw_type: 'midday',  half: 'cd' },
+        { game_type: 'pick4', draw_type: 'evening', half: 'ab' },
+        { game_type: 'pick4', draw_type: 'evening', half: 'cd' },
+      ];
+
+      (async () => {
+        for (const combo of COMBOS) {
+          try {
+            // Verificar si ya existe un run completado reciente (últimos 7 días)
+            const { rows } = await agentPool.query(
+              `SELECT id FROM hitdash.cognitive_learning_runs
+               WHERE game_type=$1 AND draw_type=$2 AND half=$3
+                 AND status='completed'
+                 AND started_at >= now() - interval '7 days'
+               LIMIT 1`,
+              [combo.game_type, combo.draw_type, combo.half]
+            ).catch(() => ({ rows: [] }));
+
+            if (rows.length > 0) {
+              logger.info(combo, 'CognitiveLearner: aprendizaje reciente encontrado — skip');
+              continue;
+            }
+
+            logger.info(combo, 'CognitiveLearner: iniciando aprendizaje histórico en background');
+            const report = await cognitiveLearner.learnFromHistory(
+              combo.game_type, combo.draw_type, combo.half
+            );
+            logger.info(
+              { ...combo, draws: report.draws_learned, hit_rate: report.holdout_hit_rate,
+                optimal_n: report.optimal_n, top: report.top_algos[0]?.algo },
+              `CognitiveLearner: ✅ ${combo.game_type} ${combo.draw_type} ${combo.half} completado`
+            );
+            telegramNotifier.sendAdminLog(
+              `🧠 *CognitiveLearner completado*\n` +
+              `${combo.game_type.toUpperCase()} ${combo.draw_type} · ${combo.half}\n` +
+              `📊 Sorteos aprendidos: *${report.draws_learned}*\n` +
+              `🎯 Hit rate holdout: *${(report.holdout_hit_rate * 100).toFixed(1)}%*\n` +
+              `📐 N óptimo: *${report.optimal_n}*\n` +
+              `🏆 Top algo: *${report.top_algos[0]?.algo}* (PPS ${report.top_algos[0]?.pps.toFixed(0)})`
+            ).catch(() => {});
+          } catch (err) {
+            logger.warn({ ...combo, error: String(err) },
+              'CognitiveLearner: error en combo — continuando con siguiente');
+          }
+          // Pausa entre combos para no saturar la DB
+          await new Promise(r => setTimeout(r, 5_000));
+        }
+        logger.info('CognitiveLearner: ciclo de boot completado para todas las combinaciones');
+      })().catch(err => logger.error({ error: String(err) }, 'CognitiveLearner boot error'));
+    });
 
     // ─── Proactive Cache Warm-up ───────────────────────────────────
     try {
