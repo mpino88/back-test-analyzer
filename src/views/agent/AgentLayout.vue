@@ -48,18 +48,36 @@
 
     <!-- Main content -->
     <main class="agent-main">
-      <RouterView />
+      <!-- ── Error boundary: captura crashes silenciosos de vistas hijas ── -->
+      <div v-if="routeError" class="route-error">
+        <div class="re-icon">⚠️</div>
+        <div class="re-title">Error al renderizar la vista</div>
+        <div class="re-msg">{{ routeError.message }}</div>
+        <div class="re-info">{{ routeError.info }}</div>
+        <button class="re-btn" @click="routeError = null">↻ Reintentar</button>
+      </div>
+      <RouterView v-else />
     </main>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref, onErrorCaptured } from 'vue';
 import { RouterLink, RouterView } from 'vue-router';
 import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
 
 const { status, connected } = useAgentStatus();
 const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
+
+// ─── Error boundary — captura cualquier crash silencioso en vistas hijas ───
+// Sin esto, Vue desmonta el componente que falla y queda negro sin explicación.
+const routeError = ref(null);
+onErrorCaptured((err, _instance, info) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  routeError.value = { message: msg, info };
+  console.error('[HELIX] Vista crash capturado —', info, err);
+  return false; // Detiene propagación — AgentLayout sigue renderizando
+});
 </script>
 
 <style scoped>
@@ -157,6 +175,25 @@ const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
   padding: 2rem;
   min-width: 0;
 }
+
+/* ─── Route error boundary ──────────────────────────────────────── */
+.route-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  gap: 0.75rem;
+  color: #f87171;
+  text-align: center;
+  padding: 2rem;
+}
+.re-icon  { font-size: 2.5rem; }
+.re-title { font-size: 1.1rem; font-weight: 700; color: #fca5a5; }
+.re-msg   { font-size: 0.85rem; color: #f87171; font-family: monospace; background: #1f1010; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid #7f1d1d; max-width: 600px; word-break: break-word; }
+.re-info  { font-size: 0.7rem; color: #64748b; }
+.re-btn   { margin-top: 0.5rem; background: #450a0a; border: 1px solid #f8717144; color: #f87171; padding: 0.5rem 1.25rem; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+.re-btn:hover { background: #7f1d1d; }
 
 @media (max-width: 768px) {
   .agent-layout { flex-direction: column; }
