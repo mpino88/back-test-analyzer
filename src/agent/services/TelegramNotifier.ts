@@ -74,7 +74,7 @@ export class TelegramNotifier {
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
     const header = [
-      `💎 *HITDASH APEX — ${gameLabel} ${drawLabel}*`,
+      `🧬 *HELIX — ${gameLabel} ${drawLabel}*`,
       `📅 Target: ${draw_date}`,
       `🤖 Análisis Confidencial: ${cartones.length} matrices de impacto generadas`,
       '─────────────────────────',
@@ -98,7 +98,7 @@ export class TelegramNotifier {
   async notifyAlert(alert: AgentAlert): Promise<void> {
     const emoji = PRIORITY_EMOJI[alert.severity] ?? '⚪';
     const message = [
-      `${emoji} *HITDASH Alert — ${alert.type.toUpperCase()}*`,
+      `${emoji} *HELIX · Alerta — ${alert.type.toUpperCase()}*`,
       `Severidad: ${alert.severity}`,
       alert.game_type ? `Juego: ${alert.game_type}` : '',
       `\n${alert.message}`,
@@ -124,7 +124,7 @@ export class TelegramNotifier {
     const { game_type, draw_type, algorithms_ok, algorithms_fail, duration_ms, cost_usd, model_used } = params;
 
     const message = [
-      `✅ *HITDASH — Ciclo completado*`,
+      `✅ *HELIX — Ciclo completado*`,
       `🎮 ${game_type} ${draw_type}`,
       `⚙️  Algoritmos: ${algorithms_ok} OK / ${algorithms_fail} fallidos`,
       `🤖 Modelo: \`${model_used}\``,
@@ -147,7 +147,7 @@ export class TelegramNotifier {
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
     const header = [
-      `💎 *HITDASH — Decisión Magistral*`,
+      `🧬 *HELIX — Decisión Magistral*`,
       `📅 ${draw_date} | ${gameLabel} ${drawLabel}`,
       '────────────────────────',
     ].join('\n');
@@ -189,7 +189,7 @@ export class TelegramNotifier {
       block.push(
         rec.predicted_effectiveness > 0
           ? `📊 N=${rec.optimal_n} · ${(rec.predicted_effectiveness * 100).toFixed(1)}% efectividad · *${vsAzarStr}* vs azar`
-          : `📊 N=${rec.optimal_n} · MOTOR-Σ acumulando historial`
+          : `📊 N=${rec.optimal_n} · HELIX calibrando — KRONOS en aprendizaje`
       );
 
       blocks.push(block.join('\n'));
@@ -198,7 +198,7 @@ export class TelegramNotifier {
     const message = [
       header,
       blocks.join('\n\n'),
-      '\n💡 _MOTOR-Σ consensus estadístico (pesos PPS adaptativos)._',
+      '\n💡 _HELIX · 20 algoritmos · KRONOS cognitivo · consenso adaptativo._',
       '⚠️ _Solo análisis estadístico. Sin garantía de resultados._',
     ].join('\n');
 
@@ -221,7 +221,7 @@ export class TelegramNotifier {
     const { port, redis, agentDb, ballbotDb } = params;
     const mem = process.memoryUsage();
     await this.send([
-      `🚀 *HITDASH — Servidor arrancado*`,
+      `🚀 *HELIX — Sistema arrancado*`,
       `📍 Puerto: ${port}`,
       `${agentDb ? '✅' : '❌'} Agent DB`,
       `${ballbotDb ? '✅' : '⚠️'} Ballbot DB (READ-ONLY)`,
@@ -235,7 +235,7 @@ export class TelegramNotifier {
   // 2. SHUTDOWN
   async notifyShutdown(signal: string): Promise<void> {
     await this.send([
-      `🛑 *HITDASH — Servidor detenido*`,
+      `🛑 *HELIX — Sistema detenido*`,
       `📡 Señal: \`${signal}\``,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].join('\n'));
@@ -246,7 +246,7 @@ export class TelegramNotifier {
     const emoji = event === 'lost' ? '🔴' : '🟢';
     const label = db === 'agent' ? 'Agent DB' : 'Ballbot DB (Render)';
     await this.send([
-      `${emoji} *HITDASH — ${label} ${event === 'lost' ? 'CAÍDA' : 'RECUPERADA'}*`,
+      `${emoji} *HELIX · ${label} ${event === 'lost' ? 'CAÍDA' : 'RECUPERADA'}*`,
       error ? `❌ ${String(error).slice(0, 200)}` : '',
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].filter(Boolean).join('\n'));
@@ -256,7 +256,7 @@ export class TelegramNotifier {
   async notifyRedisEvent(event: 'lost' | 'recovered', error?: string): Promise<void> {
     const emoji = event === 'lost' ? '🔴' : '🟢';
     await this.send([
-      `${emoji} *HITDASH — Redis / BullMQ ${event === 'lost' ? 'CAÍDO' : 'RECUPERADO'}*`,
+      `${emoji} *HELIX · Redis / BullMQ ${event === 'lost' ? 'CAÍDO' : 'RECUPERADO'}*`,
       `⚠️ BullMQ jobs + Rate Limiting afectados`,
       error ? `❌ ${String(error).slice(0, 200)}` : '',
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
@@ -266,7 +266,7 @@ export class TelegramNotifier {
   // 5. Express 500
   async notifyExpressError(method: string, path: string, error: string): Promise<void> {
     await this.send([
-      `🔴 *HITDASH — Error 500*`,
+      `🔴 *HELIX · Error 500*`,
       `📡 \`${method} ${path}\``,
       `❌ ${String(error).slice(0, 300)}`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
@@ -276,7 +276,7 @@ export class TelegramNotifier {
   // 6. Rate limit breach
   async notifyRateLimitBreach(ip: string, path: string): Promise<void> {
     await this.send([
-      `🟠 *HITDASH — Rate Limit alcanzado*`,
+      `🟠 *HELIX · Rate Limit alcanzado*`,
       `🌐 IP: \`${ip}\`  |  Ruta: \`${path}\``,
       `⚠️ Posible ataque o abuso de API`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
@@ -289,7 +289,7 @@ export class TelegramNotifier {
   }): Promise<void> {
     const { queue, jobId, game_type, draw_type, error } = params;
     await this.send([
-      `🔴 *HITDASH — Job fallido*`,
+      `🔴 *HELIX · Job fallido*`,
       `⚙️ Cola: \`${queue}\`${jobId ? `  |  ID: \`${jobId}\`` : ''}`,
       game_type ? `🎮 ${game_type} ${draw_type ?? ''}` : '',
       `❌ ${String(error).slice(0, 250)}`,
@@ -300,7 +300,7 @@ export class TelegramNotifier {
   // 8. Job estancado
   async notifyJobStalled(queue: string, jobId: string): Promise<void> {
     await this.send([
-      `🟠 *HITDASH — Job estancado (stalled)*`,
+      `🟠 *HELIX · Job estancado — reintentando*`,
       `⚙️ Cola: \`${queue}\`  |  ID: \`${jobId}\``,
       `♻️ Será reintentado automáticamente`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
@@ -310,7 +310,7 @@ export class TelegramNotifier {
   // 9. RAG fallback a pseudo-embedding
   async notifyEmbeddingFallback(reason: string): Promise<void> {
     await this.send([
-      `🟡 *HITDASH — RAG en modo fallback*`,
+      `🟡 *HELIX · RAG en modo fallback*`,
       `🧠 Gemini Embedding no disponible`,
       `⚠️ ${String(reason).slice(0, 200)}`,
       `ℹ️ El agente sigue operativo con precisión reducida`,
@@ -322,7 +322,7 @@ export class TelegramNotifier {
   // 10. Memoria alta
   async notifyHighMemory(heapMb: number, thresholdMb: number): Promise<void> {
     await this.send([
-      `🟠 *HITDASH — Presión de memoria*`,
+      `🟠 *HELIX · Presión de memoria*`,
       `💾 Heap: ${heapMb.toFixed(1)} MB  (umbral: ${thresholdMb} MB)`,
       `⚠️ Considerar reinicio si sigue escalando`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
@@ -332,7 +332,7 @@ export class TelegramNotifier {
   // 11. Endpoint lento
   async notifySlowEndpoint(method: string, path: string, durationMs: number): Promise<void> {
     await this.send([
-      `🟡 *HITDASH — Endpoint lento*`,
+      `🟡 *HELIX · Endpoint lento*`,
       `📡 \`${method} ${path}\`  —  ${durationMs}ms`,
       `🕐 ${new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' })}`,
     ].join('\n'));
@@ -341,7 +341,7 @@ export class TelegramNotifier {
   // 12. Unhandled rejection / uncaught exception
   async notifyUnhandledError(type: 'unhandledRejection' | 'uncaughtException', error: string): Promise<void> {
     await this.send([
-      `🔴 *HITDASH — Error crítico no capturado*`,
+      `🔴 *HELIX · Error crítico no capturado*`,
       `⚡ \`${type}\``,
       `❌ ${String(error).slice(0, 300)}`,
       `🚨 El proceso puede haberse reiniciado`,

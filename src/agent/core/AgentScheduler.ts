@@ -198,8 +198,8 @@ export class AgentScheduler {
           }
           if (this.notifier) {
             await this.notifier.sendAdminLog(
-              '🔄 *Re-aprendizaje cognitivo semanal completado*\n' +
-              '6 combinaciones procesadas — pesos actualizados con historial completo.'
+              '🧬 *HELIX · KRONOS — Ciclo semanal completado*\n' +
+              '6 combinaciones procesadas · pesos cognitivos actualizados · motor recalibrado.'
             ).catch(() => {});
           }
           return 'relearn-done';

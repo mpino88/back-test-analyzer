@@ -306,7 +306,7 @@ export class PostDrawProcessor {
           const hasHit = sorted[0] && sorted[0].rank_of_winner <= 15;
           if (hasHit) {
             await this.notifier.sendAdminLog(
-              `🎯 *MOTOR-Σ* ${game_type.toUpperCase()} ${draw_type} ${draw_date}\n` +
+              `🧬 *HELIX · KRONOS* ${game_type.toUpperCase()} ${draw_type} ${draw_date}\n` +
               `Par ganador: \`${winning_pair}\` | Half: ${half}\n` +
               `📊 Mejores algos: ${top3}`
             ).catch(() => undefined);
@@ -619,7 +619,7 @@ export class PostDrawProcessor {
       // Notificar acción tomada si hay notifier
       if (this.notifier) {
         await this.notifier.sendAdminLog(
-          `⚡ *DRIFT ACTION* ${game_type.toUpperCase()} ${draw_type}\n` +
+          `⚡ *HELIX · DRIFT RESET* ${game_type.toUpperCase()} ${draw_type}\n` +
           `Pesos adaptativos recentrados → neutro 1.0 (${wRows ?? 0} estrategias)\n` +
           `PPS algoritmos nudge → neutro 50 (${pRows ?? 0} estados)\n` +
           `El motor reaprende desde datos frescos los próximos sorteos.`

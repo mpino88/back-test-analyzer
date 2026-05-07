@@ -4,8 +4,9 @@
     <!-- Sidebar nav -->
     <aside class="agent-nav">
       <div class="agent-nav__brand">
-        <span class="agent-nav__logo">⚡</span>
-        <span class="agent-nav__title">Hitdash</span>
+        <span class="agent-nav__logo">🧬</span>
+        <span class="agent-nav__title">HELIX</span>
+        <span class="agent-nav__sub">by Hitdash</span>
       </div>
 
       <nav class="agent-nav__links">
@@ -93,8 +94,9 @@ const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
   margin-bottom: 1rem;
 }
 
-.agent-nav__logo { font-size: 1.4rem; }
-.agent-nav__title { font-size: 1.1rem; font-weight: 700; color: #60a5fa; letter-spacing: 0.03em; }
+.agent-nav__logo  { font-size: 1.4rem; }
+.agent-nav__title { font-size: 1.1rem; font-weight: 700; color: #60a5fa; letter-spacing: 0.05em; }
+.agent-nav__sub   { font-size: 0.65rem; color: #334155; letter-spacing: 0.08em; text-transform: uppercase; margin-top: -2px; }
 
 .agent-nav__links { flex: 1; display: flex; flex-direction: column; gap: 0.25rem; padding: 0 0.75rem; }
 

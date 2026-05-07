@@ -370,7 +370,7 @@ export class HitdashAgent {
       // ═══ MOTOR-Σ: LLM validation desactivada (USE_LLM_VALIDATION=false) ═══
       // Los pesos PPS ya aprenden qué algoritmo predice mejor — no se necesita
       // un LLM que reordene la lista con sesgo narrativo.
-      let llmReasoning = 'MOTOR-Σ consensus estadístico (pesos PPS adaptativos).';
+      let llmReasoning = 'HELIX · 20 algoritmos · KRONOS cognitivo · consenso adaptativo.';
       let validatedPairs: string[] = [];
 
       if (USE_LLM_VALIDATION) {
@@ -405,7 +405,7 @@ export class HitdashAgent {
       ]);
 
       // ═══ MOTOR-Σ: LLM desactivado para Pick 4 también ═══
-      let llmReasoningP4 = 'MOTOR-Σ consensus estadístico Pick 4 (pesos PPS adaptativos).';
+      let llmReasoningP4 = 'HELIX · 20 algoritmos · KRONOS cognitivo · consenso adaptativo Pick 4.';
       let validatedPairsAB: string[] = [];
       let validatedPairsCD: string[] = [];
 
@@ -452,7 +452,7 @@ export class HitdashAgent {
         optimal_n: allRecs[0]?.optimal_n ?? null,
       },
       duration_ms,
-      model_used: 'apex_consensus_v2',
+      model_used: 'helix_v1',
     });
 
     logger.info({ session_id: sessionId, duration_ms, mode: 'pair_v2' }, 'HitdashAgent: ciclo pair-mode completado');
@@ -554,9 +554,9 @@ export class HitdashAgent {
       const gameLabel   = game_type === 'pick3' ? 'Pick 3' : 'Pick 4';
 
       const message = [
-        `🚀 *HITDASH — Oportunidad Estratégica Detectada*`,
+        `🧬 *HELIX — Señal Estratégica Detectada*`,
         `🎮 ${gameLabel} ${drawLabel}`,
-        `🧠 El agente recomienda mantener *apex_consensus_v2* los próximos *${forwardDraws} sorteos*`,
+        `🧠 HELIX recomienda mantener *consenso cognitivo* los próximos *${forwardDraws} sorteos*`,
         `📊 N óptimo actual: *${optimal_n} pares* | Efectividad estimada: *${(effectiveness * 100).toFixed(1)}%*`,
         `💡 Pares top: \`${primaryRec.pairs.slice(0, 5).join('  ')}\`${primaryRec.pairs.length > 5 ? ` +${primaryRec.pairs.length - 5} más` : ''}`,
         `⚠️ _Solo estadística. Sin garantía de resultados._`,
@@ -578,9 +578,9 @@ export class HitdashAgent {
          ) RETURNING id`,
         [
           game_type,
-          `Mantener apex_consensus_v2 los próximos ${forwardDraws} sorteos ${drawLabel} (N=${optimal_n}, efect.=${(effectiveness * 100).toFixed(1)}%)`,
+          `HELIX · consenso cognitivo próximos ${forwardDraws} sorteos ${drawLabel} (N=${optimal_n}, efect.=${(effectiveness * 100).toFixed(1)}%)`,
           JSON.stringify({
-            strategy: 'apex_consensus_v2',
+            strategy: 'helix_v1',
             forward_draws: forwardDraws,
             optimal_n,
             predicted_effectiveness: effectiveness,

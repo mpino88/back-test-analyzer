@@ -294,7 +294,7 @@ async function start(): Promise<void> {
               `CognitiveLearner: ✅ ${combo.game_type} ${combo.draw_type} ${combo.half} completado`
             );
             telegramNotifier.sendAdminLog(
-              `🧠 *CognitiveLearner completado*\n` +
+              `🧬 *HELIX · KRONOS completado*\n` +
               `${combo.game_type.toUpperCase()} ${combo.draw_type} · ${combo.half}\n` +
               `📊 Sorteos aprendidos: *${report.draws_learned}*\n` +
               `🎯 Hit rate holdout: *${(report.holdout_hit_rate * 100).toFixed(1)}%*\n` +
