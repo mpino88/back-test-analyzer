@@ -117,6 +117,9 @@ async function loadHistory() {
 }
 
 // ─── Cargar adaptive weights ──────────────────────────────────
+// FIX: pg driver devuelve columnas NUMERIC como strings en JS.
+// Si no normalizamos, aw.weight?.toFixed(3) explota con
+// "c.toFixed is not a function" y Vue desmonta la vista en silencio.
 async function loadAdaptiveState() {
   try {
     const res = await apiFetch(
@@ -124,7 +127,14 @@ async function loadAdaptiveState() {
     );
     if (res.ok) {
       const data = await res.json();
-      adaptiveState.value = Array.isArray(data) ? data : [];
+      adaptiveState.value = (Array.isArray(data) ? data : []).map(row => ({
+        ...row,
+        weight:            Number(row.weight   ?? 1),
+        top_n:             Number(row.top_n    ?? 15),
+        hit_rate_history:  Array.isArray(row.hit_rate_history)
+                             ? row.hit_rate_history.map(Number)
+                             : [],
+      }));
     }
   } catch (err) {
     console.error('[BT-Control] loadAdaptiveState error:', err);
@@ -205,13 +215,19 @@ function startPolling(jobId) {
 }
 
 // ─── Resultados ───────────────────────────────────────────────
+// FIX: pg devuelve NUMERIC como string. Normalizar TODOS los campos
+// numéricos para evitar "x.toFixed is not a function" en el template.
 function normalizeResults(raw) {
   return (raw ?? []).map(r => ({
     ...r,
-    hit_rate: Number(r.hit_rate ?? 0),
-    win_rate: Number(r.win_rate ?? 0),
-    weight:   Number(r.weight   ?? 1),
-    top_n:    Number(r.top_n    ?? 15),
+    hit_rate:    Number(r.hit_rate    ?? 0),
+    win_rate:    Number(r.win_rate    ?? 0),
+    weight:      Number(r.weight      ?? 1),
+    top_n:       Number(r.top_n       ?? 15),
+    final_top_n: r.final_top_n != null ? Number(r.final_top_n) : null,
+    mrr:         r.mrr    != null ? Number(r.mrr)    : null,
+    sharpe:      r.sharpe != null ? Number(r.sharpe) : null,
+    total_eval_pts: r.total_eval_pts != null ? Number(r.total_eval_pts) : null,
   }));
 }
 
