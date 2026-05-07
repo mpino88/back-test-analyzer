@@ -113,22 +113,55 @@
         </div>
       </section>
 
-      <!-- ── Timeline de hits/misses ────────────────────────────────── -->
+      <!-- ── Timeline recorrido histórico ──────────────────────────── -->
       <section class="section">
-        <h2 class="section-title">Timeline backtest <span class="badge">últimos {{ data.backtest.timeline.length }} sorteos</span></h2>
-        <div class="timeline-strip">
-          <div v-for="t in data.backtest.timeline" :key="t.draw_date"
-               class="strip-cell"
-               :class="t.hit ? 'strip-cell--hit' : 'strip-cell--miss'"
-               :title="`${t.draw_date} · ganador: ${t.winning_pair} · ${t.hit ? 'HIT rank #' + t.rank : 'MISS'} · momentum=${t.momentum_of_winner}x`">
-            <span class="strip-pair">{{ t.winning_pair }}</span>
-            <span class="strip-rank" v-if="t.hit">#{{ t.rank }}</span>
+        <h2 class="section-title">
+          Recorrido histórico
+          <span class="badge">{{ data.backtest.timeline.length }} sorteos evaluados</span>
+          <span class="badge" style="background:#14532d;color:#4ade80" v-if="data.backtest.hit_rate > 0">
+            {{ data.backtest.hits }} HITS
+          </span>
+        </h2>
+
+        <!-- Gráfica de rank del ganador por sorteo -->
+        <div class="rank-chart">
+          <div class="rank-chart__labels">
+            <span>#1</span><span>#15</span><span>#30</span><span>#50</span>
+          </div>
+          <div class="rank-chart__bars">
+            <div v-for="t in data.backtest.timeline" :key="t.draw_date"
+                 class="rank-bar-wrap"
+                 :title="`${t.draw_date} · par ${t.winning_pair} · ${t.hit ? 'HIT rank #'+t.rank : 'rank '+t.rank_in_100+'/100'} · momentum=${t.momentum_of_winner}x`">
+              <div class="rank-bar"
+                   :style="`height: ${Math.max(2, (1 - (t.rank_in_100-1)/99)*100)}%`"
+                   :class="t.rank && t.rank <= 5 ? 'bar--top5' : t.rank && t.rank <= 15 ? 'bar--top15' : t.hit ? 'bar--hit' : 'bar--miss'">
+              </div>
+            </div>
+          </div>
+          <div class="rank-chart__legend">
+            <span class="bar-leg bar-leg--top5">■ Top 5</span>
+            <span class="bar-leg bar-leg--top15">■ Top 15</span>
+            <span class="bar-leg bar-leg--miss">■ Fuera</span>
+            <span class="text-muted">Barras más altas = ganador mejor posicionado</span>
           </div>
         </div>
+
+        <!-- Strip detallado -->
+        <div class="timeline-strip" style="margin-top:0.75rem">
+          <div v-for="t in data.backtest.timeline" :key="'s'+t.draw_date"
+               class="strip-cell"
+               :style="`background:${rankColor(t)}`"
+               :title="`${t.draw_date} · ${t.winning_pair} · ${t.hit ? 'HIT #'+t.rank : 'rank '+t.rank_in_100} · mom=${t.momentum_of_winner}x`">
+            <span class="strip-pair">{{ t.winning_pair }}</span>
+            <span class="strip-rank">{{ t.hit ? '#'+t.rank : t.rank_in_100 }}</span>
+          </div>
+        </div>
+
         <div class="timeline-legend">
-          <span class="legend-hit">■ HIT</span>
-          <span class="legend-miss">■ MISS</span>
-          <span class="text-muted">Hover para ver detalles</span>
+          <span style="color:#22c55e">■ Top 5 (Certeza)</span>
+          <span style="color:#f59e0b">■ Top 15 (Cobertura)</span>
+          <span style="color:#475569">■ Fuera del rango</span>
+          <span class="text-muted">· El número = posición del ganador en ranking</span>
         </div>
       </section>
 
@@ -158,7 +191,7 @@ async function fetch() {
   error.value   = '';
   try {
     const res = await apiFetch(
-      `/api/agent/trend-momentum?game_type=${gameType.value}&draw_type=${drawType.value}&half=${half.value}&top_n=${topN.value}&eval_last=90`
+      `/api/agent/trend-momentum?game_type=${gameType.value}&draw_type=${drawType.value}&half=${half.value}&top_n=${topN.value}&eval_last=120`
     );
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     data.value = await res.json();
@@ -167,6 +200,20 @@ async function fetch() {
   } finally {
     loading.value = false;
   }
+}
+
+// Colores del timeline según rank
+function rankColor(t) {
+  if (!t.rank) return '#1f1010';
+  if (t.rank <= 5)  return '#052e16';
+  if (t.rank <= 15) return '#1a2010';
+  return '#1a1010';
+}
+function rankLabel(t) {
+  if (!t.rank) return `MISS (rank ${t.rank_in_100}/100)`;
+  if (t.rank <= 5)  return `🔴 #${t.rank}`;
+  if (t.rank <= 15) return `🟡 #${t.rank}`;
+  return `⚪ #${t.rank}`;
 }
 
 onMounted(fetch);
@@ -281,6 +328,24 @@ function momentumClass(m) {
 .timeline-legend { display: flex; gap: 1rem; margin-top: 0.5rem; font-size: 0.75rem; }
 .legend-hit  { color: #4ade80; }
 .legend-miss { color: #7f1d1d; }
+
+/* ── Rank chart ──────────────────────────────────────────────── */
+.rank-chart { background: #0f1623; border: 1px solid #1e2d40; border-radius: 10px; padding: 0.75rem; margin-bottom: 0.5rem; }
+.rank-chart__labels { display: flex; justify-content: space-between; font-size: 0.65rem; color: #334155; margin-bottom: 0.25rem; }
+.rank-chart__bars {
+  display: flex; align-items: flex-end; gap: 2px; height: 80px; overflow-x: auto;
+}
+.rank-bar-wrap { display: flex; align-items: flex-end; min-width: 6px; height: 100%; }
+.rank-bar { width: 6px; border-radius: 2px 2px 0 0; min-height: 2px; }
+.bar--top5   { background: #22c55e; }
+.bar--top15  { background: #f59e0b; }
+.bar--hit    { background: #60a5fa; }
+.bar--miss   { background: #1e2d40; }
+.rank-chart__legend { display: flex; gap: 0.75rem; margin-top: 0.4rem; font-size: 0.7rem; flex-wrap: wrap; }
+.bar-leg { font-weight: 600; }
+.bar-leg--top5  { color: #22c55e; }
+.bar-leg--top15 { color: #f59e0b; }
+.bar-leg--miss  { color: #475569; }
 
 /* ── Colors ──────────────────────────────────────────────────── */
 .text-green  { color: #22c55e; }

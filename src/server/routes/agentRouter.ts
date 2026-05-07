@@ -1332,9 +1332,10 @@ ${ragSummary}`;
         .sort((a, b) => b.momentum - a.momentum)
         .slice(0, top_n);
 
-      // ── 2. Sliding window backtest ───────────────────────────────
-      // Para cada sorteo de los últimos eval_last, calcula qué habría
-      // predicho trend_momentum con datos hasta ese punto, y si acertó.
+      // ── 2. Cargar TODO el historial — crítico para entrenamiento real ──
+      // FIX: antes cargaba solo eval_last+30 rows → entrenamiento con 30 draws
+      // → casi ningún par calificaba (countAll < 3) → 0% siempre.
+      // Ahora: TODO el historial como base, evaluar los últimos eval_last draws.
       const { rows: allDraws } = await agentPool.query<{
         draw_date: string;
         p1: number; p2: number; p3: number; p4: number;
@@ -1342,12 +1343,11 @@ ${ragSummary}`;
         `SELECT draw_date::text, p1, p2, p3, p4
          FROM hitdash.ingested_results
          WHERE game_type = $1 AND draw_type = $2
-         ORDER BY draw_date DESC
-         LIMIT $3`,
-        [game_type, draw_type, eval_last + 30]  // +30 para tener ventana de entrenamiento
+         ORDER BY draw_date DESC`,
+        [game_type, draw_type]
       );
 
-      if (allDraws.length < 35) {
+      if (allDraws.length < 60) {
         res.json({
           game_type, draw_type, half, top_n,
           total_draws: total_all, recent_window: total_recent,
@@ -1368,24 +1368,25 @@ ${ragSummary}`;
       const timeline: Array<{
         draw_date: string;
         winning_pair: string;
-        predicted_top: string[];
+        predicted_top: string[];   // top-5 para display
         hit: boolean;
-        rank: number | null;
+        rank: number | null;       // rank real en todos los candidatos (para n_scan)
+        rank_in_100: number;       // posición en ranking completo 1-100
         momentum_of_winner: number;
       }> = [];
 
-      const evalDraws = allDraws.slice(0, eval_last);   // sorteos a evaluar
-      const TRAIN_MIN = 30;
+      // Walk-forward: evaluar los últimos eval_last sorteos
+      // Training = todos los sorteos ANTERIORES a cada punto de evaluación
+      const evalDraws = allDraws.slice(0, eval_last);
+      const TRAIN_MIN = 60;  // mínimo para que countAll >= 3 sea significativo
 
       for (let i = 0; i < evalDraws.length; i++) {
-        const evalDraw = evalDraws[i]!;
-        const winPair  = extractPair(evalDraw);
-
-        // Datos de entrenamiento = todos los sorteos DESPUÉS de este (más antiguos)
+        const evalDraw  = evalDraws[i]!;
+        const winPair   = extractPair(evalDraw);
+        // allDraws[i+1...] = sorteos ANTERIORES a evalDraw (más antiguos)
         const trainDraws = allDraws.slice(i + 1);
         if (trainDraws.length < TRAIN_MIN) continue;
 
-        // Calcular momentum con datos de entrenamiento
         const recentTrain = trainDraws.slice(0, 30);
         const totalAll    = trainDraws.length;
         const totalRecent = recentTrain.length;
@@ -1393,16 +1394,10 @@ ${ragSummary}`;
         const countAll:    Record<string, number> = {};
         const countRecent: Record<string, number> = {};
 
-        for (const row of trainDraws) {
-          const p = extractPair(row);
-          countAll[p] = (countAll[p] ?? 0) + 1;
-        }
-        for (const row of recentTrain) {
-          const p = extractPair(row);
-          countRecent[p] = (countRecent[p] ?? 0) + 1;
-        }
+        for (const row of trainDraws)  { const p = extractPair(row); countAll[p]    = (countAll[p]    ?? 0) + 1; }
+        for (const row of recentTrain) { const p = extractPair(row); countRecent[p] = (countRecent[p] ?? 0) + 1; }
 
-        // Construir ranking de momentum
+        // Ranking momentum completo (todos los 100 pares)
         const momentumRanking: Array<{ pair: string; momentum: number }> = [];
         for (let x = 0; x <= 9; x++) {
           for (let y = 0; y <= 9; y++) {
@@ -1418,22 +1413,26 @@ ${ragSummary}`;
         }
 
         momentumRanking.sort((a, b) => b.momentum - a.momentum);
-        const predicted = momentumRanking.filter(r => r.momentum > 0).slice(0, top_n).map(r => r.pair);
-        const rank      = predicted.indexOf(winPair);
-        const hit       = rank >= 0;
-        const momOfWinner = momentumRanking.find(r => r.pair === winPair)?.momentum ?? 0;
+
+        // Candidatos filtrados (momentum > 0) y rank real del ganador
+        const candidates = momentumRanking.filter(r => r.momentum > 0);
+        const rankInCandidates = candidates.findIndex(r => r.pair === winPair);
+        const rankIn100        = momentumRanking.findIndex(r => r.pair === winPair) + 1;
+        const hit              = rankInCandidates >= 0 && rankInCandidates < top_n;
+        const momOfWinner      = momentumRanking[rankIn100 - 1]?.momentum ?? 0;
 
         timeline.push({
           draw_date:          evalDraw.draw_date,
           winning_pair:       winPair,
-          predicted_top:      predicted.slice(0, 5),
+          predicted_top:      candidates.slice(0, 5).map(r => r.pair),
           hit,
-          rank:               hit ? rank + 1 : null,
+          rank:               rankInCandidates >= 0 ? rankInCandidates + 1 : null,
+          rank_in_100:        rankIn100,
           momentum_of_winner: +momOfWinner.toFixed(3),
         });
       }
 
-      // ── 3. Calcular métricas de backtesting ─────────────────────
+      // ── 3. Métricas de backtesting con n_scan correcto ──────────
       const hits          = timeline.filter(t => t.hit).length;
       const total         = timeline.length;
       const hit_rate      = total > 0 ? hits / total : 0;
@@ -1442,15 +1441,12 @@ ${ragSummary}`;
       const ranks         = timeline.filter(t => t.rank !== null).map(t => t.rank!);
       const avg_rank      = ranks.length > 0 ? ranks.reduce((a, b) => a + b, 0) / ranks.length : null;
 
-      // Optimal N scan: qué N minimiza candidatos mientras mantiene hit_rate razonable
+      // n_scan usa rank real — no solo top-5 — para evaluación correcta de cada N
       const n_scan: Array<{ n: number; hit_rate: number; roi: number }> = [];
       for (let n = 5; n <= 30; n++) {
-        const h = timeline.filter(t => {
-          const predicted = t.predicted_top.slice(0, n);
-          return predicted.includes(t.winning_pair) || (t.rank !== null && t.rank <= n);
-        }).length;
-        const hr  = total > 0 ? h / total : 0;
-        const roi = hr * 50 / n - 1;  // Florida payout $50 por $1
+        const h  = timeline.filter(t => t.rank !== null && t.rank <= n).length;
+        const hr = total > 0 ? h / total : 0;
+        const roi = hr * 50 / n - 1;
         n_scan.push({ n, hit_rate: +hr.toFixed(4), roi: +roi.toFixed(4) });
       }
       const profitable_n = n_scan.find(s => s.roi >= 0.01);
