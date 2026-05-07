@@ -24,6 +24,8 @@ import helmet from 'helmet';
 import { createGlobalLimiter } from './middlewares/rateLimitMiddleware.js';
 import { TelegramNotifier } from '../agent/services/TelegramNotifier.js';
 import { CognitiveLearner } from '../agent/learning/CognitiveLearner.js';
+import { PairBacktestEngine } from '../agent/backtest/PairBacktestEngine.js';
+import { STRATEGY_CATALOG } from '../agent/backtest/backtestJobRunner.js';
 
 const logger = pino({
   name: 'HitdashServer',
@@ -309,6 +311,67 @@ async function start(): Promise<void> {
           await new Promise(r => setTimeout(r, 5_000));
         }
         logger.info('CognitiveLearner: ciclo de boot completado para todas las combinaciones');
+
+        // ── HELIX AUTO-BACKTEST: alimentar backtest_results_v2 desde historia ──
+        // Corre DESPUÉS del CognitiveLearner para que los pesos cognitivos
+        // ya estén disponibles cuando el backtest actualice expected_rank y kelly.
+        // Verifica si el backtest está fresco (últimos 7 días) por combinación.
+        const backtestEngine = new PairBacktestEngine(agentPool);
+        const defaultStrategies = STRATEGY_CATALOG
+          .filter(s => s.default_selected)
+          .map(s => s.id);
+
+        const BT_COMBOS: Array<{ game_type: 'pick3'|'pick4'; mode: 'midday'|'evening' }> = [
+          { game_type: 'pick3', mode: 'midday'  },
+          { game_type: 'pick3', mode: 'evening' },
+          { game_type: 'pick4', mode: 'midday'  },
+          { game_type: 'pick4', mode: 'evening' },
+        ];
+
+        for (const combo of BT_COMBOS) {
+          try {
+            const { rows: btRows } = await agentPool.query(
+              `SELECT id FROM hitdash.backtest_results_v2
+               WHERE game_type = $1 AND mode = $2
+                 AND created_at >= now() - interval '7 days'
+               LIMIT 1`,
+              [combo.game_type, combo.mode]
+            ).catch(() => ({ rows: [] }));
+
+            if (btRows.length > 0) {
+              logger.info(combo, 'HELIX Auto-Backtest: datos frescos encontrados — skip');
+              continue;
+            }
+
+            logger.info(combo, 'HELIX Auto-Backtest: ejecutando desde historial completo');
+            const summaries = await backtestEngine.runAll(combo.mode, combo.game_type);
+
+            logger.info(
+              { ...combo, strategies: summaries.length,
+                best: summaries.sort((a, b) => b.hit_rate - a.hit_rate)[0]?.strategy_name },
+              'HELIX Auto-Backtest: completado'
+            );
+
+            if (summaries.length > 0) {
+              const best = summaries[0]!;
+              telegramNotifier.sendAdminLog(
+                `📊 *HELIX · Auto-Backtest completado*\n` +
+                `${combo.game_type.toUpperCase()} ${combo.mode}\n` +
+                `🏆 Mejor estrategia: *${best.strategy_name}*\n` +
+                `🎯 Hit rate: *${(best.hit_rate * 100).toFixed(1)}%* · ` +
+                `Kelly: *${best.precision?.kelly_fraction?.toFixed(3) ?? '—'}* · ` +
+                `MRR: *${best.precision?.mrr?.toFixed(3) ?? '—'}*\n` +
+                `📐 N óptimo: *${best.final_top_n}* · Sorteos: *${best.total_eval_pts}*`
+              ).catch(() => {});
+            }
+          } catch (err) {
+            logger.warn({ ...combo, error: String(err) },
+              'HELIX Auto-Backtest: error en combo — continuando');
+          }
+          await new Promise(r => setTimeout(r, 10_000));
+        }
+
+        logger.info('HELIX Auto-Backtest: ciclo de boot completado para todas las combinaciones');
       })().catch(err => logger.error({ error: String(err) }, 'CognitiveLearner boot error'));
     });
 

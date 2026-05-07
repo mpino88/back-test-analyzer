@@ -13,6 +13,7 @@ import { RAGService } from '../services/RAGService.js';
 import type { TelegramNotifier } from '../services/TelegramNotifier.js';
 import type { GameType, DrawType } from '../types/agent.types.js';
 import { CognitiveLearner } from '../learning/CognitiveLearner.js';
+import { PairBacktestEngine } from '../backtest/PairBacktestEngine.js';
 
 const logger = pino({ name: 'AgentScheduler' });
 
@@ -164,8 +165,9 @@ export class AgentScheduler {
 
   // ─── Iniciar el worker que procesa los jobs ───────────────────
   start(): void {
-    const agent           = new HitdashAgent(this.ballbotPool, this.agentPool, this.ragService, this.notifier ?? undefined);
-    const cognitiveLearner = new CognitiveLearner(this.agentPool);
+    const agent             = new HitdashAgent(this.ballbotPool, this.agentPool, this.ragService, this.notifier ?? undefined);
+    const cognitiveLearner  = new CognitiveLearner(this.agentPool);
+    const backtestEngine    = new PairBacktestEngine(this.agentPool);
 
     const RELEARN_COMBOS: Array<{ game_type: 'pick3'|'pick4'; draw_type: 'midday'|'evening'; half: 'du'|'ab'|'cd' }> = [
       { game_type: 'pick3', draw_type: 'midday',  half: 'du' },
@@ -196,10 +198,28 @@ export class AgentScheduler {
             }
             await new Promise(r => setTimeout(r, 5_000));
           }
+          // ── Auto-backtest semanal — actualizar backtest_results_v2 ──
+          // Corre DESPUÉS del KRONOS: pesos cognitivos ya listos.
+          for (const btCombo of [
+            { game_type: 'pick3' as const, mode: 'midday'  as const },
+            { game_type: 'pick3' as const, mode: 'evening' as const },
+            { game_type: 'pick4' as const, mode: 'midday'  as const },
+            { game_type: 'pick4' as const, mode: 'evening' as const },
+          ]) {
+            try {
+              await backtestEngine.runAll(btCombo.mode, btCombo.game_type);
+              logger.info(btCombo, 'HELIX Auto-Backtest semanal: completado');
+            } catch (err) {
+              logger.warn({ ...btCombo, error: String(err) }, 'HELIX Auto-Backtest semanal: error — continuando');
+            }
+            await new Promise(r => setTimeout(r, 10_000));
+          }
+
           if (this.notifier) {
             await this.notifier.sendAdminLog(
-              '🧬 *HELIX · KRONOS — Ciclo semanal completado*\n' +
-              '6 combinaciones procesadas · pesos cognitivos actualizados · motor recalibrado.'
+              '🧬 *HELIX · Ciclo semanal completado*\n' +
+              'KRONOS: 6 combos recalibrados · Auto-Backtest: 4 combos actualizados\n' +
+              'Motor HELIX completamente sincronizado con historial.'
             ).catch(() => {});
           }
           return 'relearn-done';
