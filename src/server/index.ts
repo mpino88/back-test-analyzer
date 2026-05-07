@@ -170,10 +170,23 @@ app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotP
 app.use(createSSERouter(agentPool, redis));
 
 // Servir assets del frontend (JS/CSS/img) con caché agresiva
+// EXCEPCIÓN: index.html NO se cachea para que nuevos deploys lleguen inmediatamente.
+// Sin esto, el browser usa index.html viejo → referencia chunks con hash antiguo →
+// 404 en el import dinámico → RouterView renderiza nada (página negra).
+app.get(['/index.html', '/'], (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next(); // Deja que express.static sirva el archivo
+});
 app.use(express.static(DIST_PATH, { maxAge: '1d', etag: true }));
 
 // SPA fallback: cualquier ruta no-API → index.html (Vue Router)
+// index.html se sirve siempre sin caché para que los deploys sean efectivos al instante
 app.get('*', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   res.sendFile(join(DIST_PATH, 'index.html'));
 });
 

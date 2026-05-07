@@ -35,4 +35,36 @@ const router = createRouter({
   ],
 });
 
-createApp(App).use(router).mount('#app');
+const app = createApp(App);
+
+// ─── Router error handler ────────────────────────────────────────
+// Si un chunk de un componente falla al cargar (404 por deploy nuevo →
+// hash de archivo cambió → browser cachó el index.html viejo), recarga
+// la página UNA vez para forzar index.html fresco.
+router.onError((err, to) => {
+  const isChunkLoadError =
+    err instanceof Error &&
+    (err.message.includes('Failed to fetch dynamically imported module') ||
+     err.message.includes('Importing a module script failed') ||
+     err.message.includes('Unable to preload CSS for') ||
+     err.name === 'ChunkLoadError');
+
+  if (isChunkLoadError) {
+    // Marcar que ya intentamos recargar para evitar loop infinito
+    const reloaded = sessionStorage.getItem('chunk_reload');
+    if (!reloaded) {
+      sessionStorage.setItem('chunk_reload', '1');
+      window.location.assign(to.fullPath);
+    } else {
+      sessionStorage.removeItem('chunk_reload');
+      console.error('[HELIX] Chunk load error tras recarga — ruta destino:', to.fullPath, err);
+    }
+  }
+});
+
+// ─── Vue global error handler ───────────────────────────────────
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[HELIX] Vue error en componente:', info, err, instance);
+};
+
+app.use(router).mount('#app');

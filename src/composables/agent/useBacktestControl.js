@@ -83,11 +83,21 @@ async function loadCatalog() {
       apiFetch(`${BASE}/strategies`),
       apiFetch(`${BASE}/draws/meta`),
     ]);
-    if (catRes.ok)  catalog.value   = await catRes.json();
-    if (metaRes.ok) drawsMeta.value = await metaRes.json();
+    if (catRes.ok) {
+      const data = await catRes.json();
+      catalog.value = Array.isArray(data) ? data : [];
+    }
+    if (metaRes.ok) {
+      const data = await metaRes.json();
+      drawsMeta.value = Array.isArray(data) ? data : [];
+    }
     selectedStrats.value = new Set(
       catalog.value.filter(s => s.default_selected).map(s => s.id)
     );
+  } catch (err) {
+    console.error('[BT-Control] loadCatalog error:', err);
+    catalog.value   = [];
+    drawsMeta.value = [];
   } finally {
     catalogLoading.value = false;
   }
@@ -95,16 +105,30 @@ async function loadCatalog() {
 
 // ─── Cargar historial ─────────────────────────────────────────
 async function loadHistory() {
-  const res = await apiFetch(`${BASE}/history`);
-  if (res.ok) history.value = await res.json();
+  try {
+    const res = await apiFetch(`${BASE}/history`);
+    if (res.ok) {
+      const data = await res.json();
+      history.value = Array.isArray(data) ? data : [];
+    }
+  } catch (err) {
+    console.error('[BT-Control] loadHistory error:', err);
+  }
 }
 
 // ─── Cargar adaptive weights ──────────────────────────────────
 async function loadAdaptiveState() {
-  const res = await apiFetch(
-    `${BASE}/adaptive-state?game_type=${gameType.value}&mode=${mode.value}`
-  );
-  if (res.ok) adaptiveState.value = await res.json();
+  try {
+    const res = await apiFetch(
+      `${BASE}/adaptive-state?game_type=${gameType.value}&mode=${mode.value}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      adaptiveState.value = Array.isArray(data) ? data : [];
+    }
+  } catch (err) {
+    console.error('[BT-Control] loadAdaptiveState error:', err);
+  }
 }
 
 // ─── Estrategias selection ────────────────────────────────────
