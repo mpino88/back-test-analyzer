@@ -296,21 +296,24 @@ export class PostDrawProcessor {
         );
 
         if (records.length > 0 && this.notifier) {
-          // Notificar top-3 ganadores y el peor — útil para el dashboard de Bliss
-          const sorted = [...records].sort((a, b) => a.rank_of_winner - b.rank_of_winner);
-          const top3   = sorted.slice(0, 3).map(r =>
+          const sorted  = [...records].sort((a, b) => a.rank_of_winner - b.rank_of_winner);
+          const best    = sorted[0]!;
+          const top3    = sorted.slice(0, 3).map(r =>
             `${r.algo_name}: rank ${r.rank_of_winner} (PPS ${r.pps_before.toFixed(0)}→${r.pps_after.toFixed(0)})`
           ).join(', ');
 
-          // Solo notificar si hay algún algoritmo que acertó en top-15
-          const hasHit = sorted[0] && sorted[0].rank_of_winner <= 15;
-          if (hasHit) {
-            await this.notifier.sendAdminLog(
-              `🧬 *HELIX · KRONOS* ${game_type.toUpperCase()} ${draw_type} ${draw_date}\n` +
-              `Par ganador: \`${winning_pair}\` | Half: ${half}\n` +
-              `📊 Mejores algos: ${top3}`
-            ).catch(() => undefined);
-          }
+          // Clasificar rendimiento del mejor algoritmo
+          const hitLevel =
+            best.rank_of_winner <= 5  ? '🔴 CERTEZA'  :
+            best.rank_of_winner <= 15 ? '🟡 COBERTURA' :
+            best.rank_of_winner <= 30 ? '⚪ VIGILANCIA' : '❌ MISS';
+
+          // Siempre notificar — pick3 y pick4 — para visibilidad completa del aprendizaje
+          await this.notifier.sendAdminLog(
+            `🧬 *HELIX · KRONOS* ${game_type.toUpperCase()} ${draw_type} ${draw_date}\n` +
+            `Par ganador: \`${winning_pair}\` | Half: ${half} | ${hitLevel}\n` +
+            `📊 Top algos: ${top3}`
+          ).catch(() => undefined);
         }
       }
     } catch (err) {
