@@ -518,6 +518,161 @@
         </div>
       </div>
 
+      <!-- ══════════════════════════════════════════════════════════
+           🧬 KRONOS — Panel de Aprendizaje Cognitivo
+           Muestra los runs del CognitiveLearner por combinación:
+           estado, sorteos aprendidos, hit rate holdout, N óptimo,
+           y pesos aprendidos por algoritmo con PPS histórico.
+           ══════════════════════════════════════════════════════════ -->
+      <div class="section kronos-section">
+        <div class="section-title-row">
+          <span class="section-title">🧬 KRONOS — Aprendizaje Cognitivo</span>
+          <div class="kronos-controls">
+            <button
+              class="btn-kronos-refresh"
+              :disabled="kronosLoading"
+              @click="fetchKronos"
+            >
+              <span :class="{ spin: kronosLoading }">↻</span>
+              {{ kronosLoading ? 'Cargando…' : 'Actualizar' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-if="kronosLoading && !kronosData.length" class="state-msg">
+          <div class="spinner"></div> Cargando datos KRONOS…
+        </div>
+        <div v-else-if="kronosError" class="state-msg state-msg--error">⚠ {{ kronosError }}</div>
+
+        <template v-else>
+          <!-- Tabs de combinación -->
+          <div class="kronos-tabs">
+            <button
+              v-for="tab in kronosTabs"
+              :key="tab.key"
+              class="ktab"
+              :class="{ 'ktab--active': kronosActiveTab === tab.key }"
+              @click="kronosActiveTab = tab.key"
+            >
+              {{ tab.label }}
+              <span
+                class="ktab-dot"
+                :class="kronosStatusClass(kronosByKey[tab.key]?.last_run?.status)"
+              ></span>
+            </button>
+          </div>
+
+          <!-- Panel del tab activo -->
+          <div v-if="activeKronos" class="kronos-panel">
+
+            <!-- Run summary -->
+            <div class="kronos-run-summary">
+              <div class="krs-block">
+                <div class="krs-label">Último run</div>
+                <div class="krs-val krs-status" :class="kronosStatusClass(activeKronos.last_run?.status)">
+                  {{ kronosStatusLabel(activeKronos.last_run?.status) }}
+                </div>
+                <div class="krs-sub">{{ kronosFmtDate(activeKronos.last_run?.completed_at) }}</div>
+              </div>
+              <div class="krs-block">
+                <div class="krs-label">Sorteos aprendidos</div>
+                <div class="krs-val">{{ activeKronos.last_run?.draws_learned ?? '—' }}</div>
+                <div class="krs-sub">walk-forward histórico</div>
+              </div>
+              <div class="krs-block">
+                <div class="krs-label">Hit rate holdout</div>
+                <div class="krs-val" :style="{ color: kronosRateColor(+(activeKronos.last_run?.best_hit_rate ?? 0)) }">
+                  {{ activeKronos.last_run?.best_hit_rate != null
+                      ? (Number(activeKronos.last_run.best_hit_rate) * 100).toFixed(1) + '%'
+                      : '—' }}
+                </div>
+                <div class="krs-sub">20% holdout sin data leakage</div>
+              </div>
+              <div class="krs-block">
+                <div class="krs-label">N óptimo (ROI≥1%)</div>
+                <div class="krs-val">{{ activeKronos.last_run?.best_top_n ?? '—' }}</div>
+                <div class="krs-sub">candidatos recomendados</div>
+              </div>
+              <div class="krs-block">
+                <div class="krs-label">ROI estimado</div>
+                <div
+                  class="krs-val"
+                  :style="{ color: (activeKronos.last_run?.best_roi ?? 0) >= 0 ? '#22c55e' : '#f87171' }"
+                >
+                  {{ activeKronos.last_run?.best_roi != null
+                      ? (Number(activeKronos.last_run.best_roi) >= 0 ? '+' : '')
+                        + (Number(activeKronos.last_run.best_roi) * 100).toFixed(1) + '%'
+                      : '—' }}
+                </div>
+                <div class="krs-sub">Florida $50 payout</div>
+              </div>
+              <div class="krs-block">
+                <div class="krs-label">Algos calibrados</div>
+                <div class="krs-val">{{ activeKronos.last_run?.algos_updated ?? '—' }}</div>
+                <div class="krs-sub">pesos actualizados en DB</div>
+              </div>
+            </div>
+
+            <!-- Pesos por algoritmo -->
+            <div v-if="activeKronos.weights?.length" class="kronos-weights">
+              <div class="kw-header">
+                <span>Algoritmo</span>
+                <span>Peso KRONOS</span>
+                <span>PPS histórico</span>
+                <span>Hit rate holdout</span>
+                <span>Señal</span>
+              </div>
+              <div
+                v-for="w in activeKronos.weights"
+                :key="w.algo_name"
+                class="kw-row"
+              >
+                <span class="kw-name">{{ algoLabel(w.algo_name) }}</span>
+                <span class="kw-weight" :class="weightKronosClass(Number(w.learned_weight))">
+                  {{ Number(w.learned_weight).toFixed(3) }}×
+                  <div class="kw-bar-bg">
+                    <div
+                      class="kw-bar"
+                      :style="{
+                        width: Math.min(100, Number(w.learned_weight) / 2 * 100) + '%',
+                        background: Number(w.learned_weight) >= 1.3 ? '#22c55e'
+                                  : Number(w.learned_weight) >= 0.9 ? '#3b82f6' : '#f87171',
+                      }"
+                    ></div>
+                  </div>
+                </span>
+                <span class="kw-pps">
+                  <div class="pps-mini-bar-bg">
+                    <div
+                      class="pps-mini-bar"
+                      :style="{
+                        width: Number(w.historical_pps) + '%',
+                        background: Number(w.historical_pps) > 60 ? '#22c55e'
+                                  : Number(w.historical_pps) < 40 ? '#f87171' : '#f59e0b',
+                      }"
+                    ></div>
+                  </div>
+                  <span class="pps-num">{{ Number(w.historical_pps).toFixed(0) }}</span>
+                </span>
+                <span class="kw-hit" :style="{ color: kronosRateColor(Number(w.holdout_hit_rate)) }">
+                  {{ (Number(w.holdout_hit_rate) * 100).toFixed(1) }}%
+                </span>
+                <span class="kw-signal">
+                  <span v-if="Number(w.historical_pps) > 60" class="sig sig--strong">↑ FUERTE</span>
+                  <span v-else-if="Number(w.historical_pps) < 40" class="sig sig--weak">↓ DÉBIL</span>
+                  <span v-else class="sig sig--neutral">→ NEUTRO</span>
+                </span>
+              </div>
+            </div>
+            <div v-else class="empty-weights">
+              Sin pesos KRONOS aún — espera el primer ciclo de aprendizaje (boot o cron dominical)
+            </div>
+
+          </div>
+          <div v-else class="state-msg">Sin datos para esta combinación</div>
+        </template>
+      </div>
+
     </template>
   </div>
 </template>
@@ -526,6 +681,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { Chart, registerables } from 'chart.js';
 import { useStrategyTracking, STRATEGY_META } from '../../composables/agent/useStrategyTracking.js';
+import { apiFetch } from '../../utils/apiClient.js';
 
 Chart.register(...registerables);
 
@@ -755,9 +911,8 @@ function updateMainChart() {
 
 onMounted(async () => {
   await fetch();
-  nextTick(() => {
-    buildMainChart();
-  });
+  nextTick(() => { buildMainChart(); });
+  fetchKronos();
 });
 
 watch(strategies, () => {
@@ -766,6 +921,86 @@ watch(strategies, () => {
 });
 
 onUnmounted(() => chartInstance?.destroy());
+
+// ══════════════════════════════════════════════════════════════
+// 🧬 KRONOS — Lógica del panel de aprendizaje cognitivo
+// ══════════════════════════════════════════════════════════════
+const KRONOS_COMBOS = [
+  { key: 'p3-mid-du',  game_type: 'pick3', draw_type: 'midday',  half: 'du', label: 'P3 Mid' },
+  { key: 'p3-eve-du',  game_type: 'pick3', draw_type: 'evening', half: 'du', label: 'P3 Eve' },
+  { key: 'p4-mid-ab',  game_type: 'pick4', draw_type: 'midday',  half: 'ab', label: 'P4 Mid AB' },
+  { key: 'p4-mid-cd',  game_type: 'pick4', draw_type: 'midday',  half: 'cd', label: 'P4 Mid CD' },
+  { key: 'p4-eve-ab',  game_type: 'pick4', draw_type: 'evening', half: 'ab', label: 'P4 Eve AB' },
+  { key: 'p4-eve-cd',  game_type: 'pick4', draw_type: 'evening', half: 'cd', label: 'P4 Eve CD' },
+];
+
+const kronosTabs     = KRONOS_COMBOS;
+const kronosData     = ref([]);
+const kronosByKey    = ref({});
+const kronosLoading  = ref(false);
+const kronosError    = ref('');
+const kronosActiveTab = ref('p3-mid-du');
+
+const activeKronos = computed(() => kronosByKey.value[kronosActiveTab.value] ?? null);
+
+async function fetchKronos() {
+  kronosLoading.value = true;
+  kronosError.value   = '';
+  try {
+    const results = await Promise.all(
+      KRONOS_COMBOS.map(async c => {
+        const res = await apiFetch(
+          `/api/agent/cognitive-learn?game_type=${c.game_type}&draw_type=${c.draw_type}&half=${c.half}`
+        );
+        if (!res.ok) return { key: c.key, last_run: null, weights: [] };
+        const data = await res.json();
+        return { key: c.key, ...data };
+      })
+    );
+    kronosByKey.value = Object.fromEntries(results.map(r => [r.key, r]));
+    kronosData.value  = results;
+  } catch (e) {
+    kronosError.value = e?.message ?? 'Error cargando KRONOS';
+  } finally {
+    kronosLoading.value = false;
+  }
+}
+
+function kronosStatusLabel(status) {
+  return { completed: '✅ Completado', running: '⚡ Corriendo', failed: '❌ Error', null: '⏳ Pendiente' }[status] ?? (status ?? '⏳ Pendiente');
+}
+function kronosStatusClass(status) {
+  return { completed: 'dot--completed', running: 'dot--running', failed: 'dot--error' }[status] ?? 'dot--pending';
+}
+function algoLabel(name) {
+  const MAP = {
+    frequency_rank: '📊 Frecuencia', momentum_ema: '⚡ Momentum EMA',
+    gap_overdue_focus: '⏰ Gap Sobredebido', hot_cold_weighted: '🌡 Hot/Cold',
+    streak_reversal: '🔄 Reversión Racha', bayesian_score: '🔬 Bayesiano',
+    markov_order2: '🔀 Markov O2', transition_follow: '➡️ Transición Markov',
+    calendar_pattern: '📅 Patrón Calendario', trend_momentum: '📈 Tend. Momentum',
+    pair_return_cycle: '🔁 Ciclo Retorno', sum_pattern_filter: '➕ Suma Patrón',
+    double_triple: '🎲 Doble/Triple', cross_draw: '✕ Cross-Draw',
+    moving_avg_signal: '📈 Moving Avg', position_bias: '🎯 Sesgo Posicional',
+    pair_correlation: '🔗 Correlación', fibonacci_pisano: '🌀 Fibonacci',
+    decade_family: '🏘 Familias Décadas', max_per_weekday: '📆 Máx. Día',
+  };
+  return MAP[name] ?? name;
+}
+function weightKronosClass(w) {
+  if (w >= 1.3) return 'kw--high';
+  if (w >= 0.9) return 'kw--mid';
+  return 'kw--low';
+}
+function kronosRateColor(r) {
+  if (r >= 0.20) return '#22c55e';
+  if (r >= 0.14) return '#f59e0b';
+  return '#f87171';
+}
+function kronosFmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-PR', { dateStyle: 'short', timeStyle: 'short' });
+}
 </script>
 
 <style scoped>
@@ -1125,5 +1360,95 @@ onUnmounted(() => chartInstance?.destroy());
   .learning-loop { flex-direction: column; }
   .ll-step { max-width: 100%; }
   .ll-arrow { transform: rotate(90deg); }
+  .kronos-run-summary { grid-template-columns: 1fr 1fr 1fr; }
+  .kw-row { grid-template-columns: 1.2fr 1fr 80px 70px; }
+  .kw-row > :nth-child(n+5) { display: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   🧬 KRONOS — Estilos del panel de aprendizaje cognitivo
+   ══════════════════════════════════════════════════════════════ */
+.kronos-section { margin-bottom: 2rem; }
+
+.section-title-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.kronos-controls { display: flex; gap: 0.5rem; align-items: center; }
+
+.btn-kronos-refresh {
+  background: #1e2d40; border: 1px solid #334155; color: #94a3b8;
+  padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.78rem;
+  cursor: pointer; display: flex; align-items: center; gap: 0.35rem;
+  transition: background 0.15s;
+}
+.btn-kronos-refresh:hover { background: #253447; }
+.btn-kronos-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Tabs */
+.kronos-tabs { display: flex; gap: 0.25rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.ktab {
+  display: flex; align-items: center; gap: 0.35rem;
+  background: #0f1623; border: 1px solid #1e2d40; color: #64748b;
+  padding: 0.3rem 0.75rem; border-radius: 6px; font-size: 0.75rem;
+  cursor: pointer; transition: all 0.15s;
+}
+.ktab:hover { border-color: #334155; color: #94a3b8; }
+.ktab--active { background: #1e3a5f; border-color: #3b82f6; color: #60a5fa; font-weight: 700; }
+.ktab-dot { width: 7px; height: 7px; border-radius: 50%; }
+.dot--completed { background: #22c55e; box-shadow: 0 0 5px #22c55e88; }
+.dot--running   { background: #60a5fa; box-shadow: 0 0 5px #60a5fa88; animation: pulse 1.5s infinite; }
+.dot--error     { background: #f87171; }
+.dot--pending   { background: #475569; }
+
+/* Run summary */
+.kronos-panel { background: #0a1120; border: 1px solid #1e2d40; border-radius: 12px; overflow: hidden; }
+.kronos-run-summary {
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  border-bottom: 1px solid #1e2d40; padding: 0;
+}
+.krs-block {
+  padding: 1rem 0.9rem; border-right: 1px solid #1e2d40;
+  display: flex; flex-direction: column; gap: 0.2rem;
+}
+.krs-block:last-child { border-right: none; }
+.krs-label { font-size: 0.62rem; color: #475569; text-transform: uppercase; letter-spacing: 0.06em; }
+.krs-val { font-size: 1rem; font-weight: 800; color: #e2e8f0; }
+.krs-status { font-size: 0.85rem; }
+.krs-sub { font-size: 0.6rem; color: #334155; }
+
+/* Weights table */
+.kronos-weights { padding: 0; }
+.kw-header {
+  display: grid;
+  grid-template-columns: 1.8fr 1.2fr 140px 100px 90px;
+  padding: 0.4rem 0.9rem; border-bottom: 1px solid #1e2d40;
+  font-size: 0.62rem; color: #475569; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.kw-row {
+  display: grid;
+  grid-template-columns: 1.8fr 1.2fr 140px 100px 90px;
+  padding: 0.55rem 0.9rem; border-bottom: 1px solid #0f1623;
+  align-items: center; font-size: 0.78rem; transition: background 0.1s;
+}
+.kw-row:hover { background: #0f162344; }
+.kw-row:last-child { border-bottom: none; }
+.kw-name { color: #cbd5e1; font-size: 0.75rem; }
+.kw-weight { font-weight: 700; display: flex; flex-direction: column; gap: 0.25rem; }
+.kw--high { color: #22c55e; }
+.kw--mid  { color: #60a5fa; }
+.kw--low  { color: #f87171; }
+.kw-bar-bg { height: 4px; background: #1e2d40; border-radius: 2px; overflow: hidden; }
+.kw-bar    { height: 100%; border-radius: 2px; transition: width 0.5s; }
+.kw-pps { display: flex; align-items: center; gap: 0.4rem; }
+.pps-mini-bar-bg { flex: 1; height: 6px; background: #1e2d40; border-radius: 3px; overflow: hidden; }
+.pps-mini-bar    { height: 100%; border-radius: 3px; transition: width 0.5s; }
+.pps-num { font-size: 0.72rem; font-weight: 700; color: #94a3b8; min-width: 24px; text-align: right; }
+.kw-hit { font-weight: 700; font-size: 0.78rem; }
+.kw-signal { }
+.sig { font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.4rem; border-radius: 4px; }
+.sig--strong  { background: #052e1633; color: #22c55e; }
+.sig--neutral { background: #1e3a5f33; color: #60a5fa; }
+.sig--weak    { background: #450a0a33; color: #f87171; }
+
+.empty-weights { padding: 1.5rem; color: #475569; font-size: 0.8rem; text-align: center; }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 </style>
