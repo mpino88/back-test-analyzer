@@ -23,7 +23,7 @@ import type { Pool } from 'pg';
 import pino from 'pino';
 import type { GameType, DrawType } from '../../types/agent.types.js';
 import type { AnalysisPeriod, PairHalf } from '../../types/analysis.types.js';
-import { DRAWS_CTE_ALL } from '../ballbotAdapter.js';
+// DRAWS_CTE_ALL removido: TrendMomentum usa query directa sin filtro draw_type (Ballbot formula)
 
 const logger = pino({ name: 'TrendMomentum' });
 
@@ -47,19 +47,30 @@ export class TrendMomentum {
   // Usado tanto por runPairs() como por el endpoint de backtesting
   async computeStats(
     game_type: GameType,
-    draw_type: DrawType,
+    _draw_type: DrawType,   // ignorado — Ballbot usa ventana COMBINADA (midday+evening)
     half: PairHalf
   ): Promise<{ stats: MomentumStat[]; total_all: number; total_recent: number }> {
 
+    // ═══ BALLBOT FORMULA EXACTA — ventana COMBINADA ════════════════════════
+    // Ballbot "Fuerza de Tendencia Pro" calcula momentum usando TODOS los sorteos
+    // del juego (midday + evening mezclados) sin distinción de turno.
+    //
+    // Bug anterior: filtraba por draw_type → solo 547 draws en vez de 1094.
+    // Resultado: momentum de pares como 88 (salió en Evening) era 0 para Midday
+    //            → no aparecía en candidatos → MISS en sorteos que Ballbot acertaba.
+    //
+    // Fix: sin filtro draw_type. Evening va antes que Midday en mismo día
+    //      (occurrió más tarde) → ordering: date DESC, evening first.
     const { rows: allRows } = await this.pool.query<{
       p1: number; p2: number; p3: number; p4: number;
     }>(
-      `${DRAWS_CTE_ALL}
-       SELECT (digits->>'p1')::int AS p1, (digits->>'p2')::int AS p2,
-              (digits->>'p3')::int AS p3, (digits->>'p4')::int AS p4
-       FROM lottery_results
-       ORDER BY draw_date DESC`,
-      [game_type, draw_type]
+      `SELECT p1, p2, p3, p4
+       FROM hitdash.ingested_results
+       WHERE game_type = $1
+         AND draw_date >= CURRENT_DATE - interval '1095 days'
+       ORDER BY draw_date DESC,
+                CASE WHEN draw_type = 'evening' THEN 0 ELSE 1 END ASC`,
+      [game_type]
     );
 
     if (allRows.length === 0) return { stats: [], total_all: 0, total_recent: 0 };

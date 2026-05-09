@@ -1332,27 +1332,46 @@ ${ragSummary}`;
         .sort((a, b) => b.momentum - a.momentum)
         .slice(0, top_n);
 
-      // ── 2. Cargar TODO el historial — crítico para entrenamiento real ──
-      // FIX: antes cargaba solo eval_last+30 rows → entrenamiento con 30 draws
-      // → casi ningún par calificaba (countAll < 3) → 0% siempre.
-      // Ahora: TODO el historial como base, evaluar los últimos eval_last draws.
-      const { rows: allDraws } = await agentPool.query<{
-        draw_date: string;
-        p1: number; p2: number; p3: number; p4: number;
-      }>(
-        `SELECT draw_date::text, p1, p2, p3, p4
-         FROM hitdash.ingested_results
-         WHERE game_type = $1 AND draw_type = $2
-         ORDER BY draw_date DESC`,
-        [game_type, draw_type]
-      );
+      // ── 2. Cargar historial para backtest ──────────────────────────
+      // BALLBOT FORMULA: ventana COMBINADA (midday+evening) para entrenamiento.
+      // evalDraws → draw_type específico (los sorteos que evaluamos)
+      // combinedDraws → todos los sorteos del juego (el pool de training)
+      //
+      // Por qué: Ballbot "Fuerza de Tendencia Pro" usa los últimos 30 sorteos
+      // SIN distinción de turno. Filtrar por draw_type cortaba el pool a la mitad
+      // → pares que salieron en el otro turno tenían momentum=0 en este turno.
+      // Resultado anterior: 15% hit rate (= random). Con ventana combinada se
+      // espera edge estadístico real, alineado con Ballbot.
+      const [{ rows: evalAllDraws }, { rows: combinedDraws }] = await Promise.all([
+        agentPool.query<{
+          draw_date: string;
+          p1: number; p2: number; p3: number; p4: number;
+        }>(
+          `SELECT draw_date::text, p1, p2, p3, p4
+           FROM hitdash.ingested_results
+           WHERE game_type = $1 AND draw_type = $2
+           ORDER BY draw_date DESC`,
+          [game_type, draw_type]
+        ),
+        agentPool.query<{
+          draw_date: string; draw_type: string;
+          p1: number; p2: number; p3: number; p4: number;
+        }>(
+          `SELECT draw_date::text, draw_type, p1, p2, p3, p4
+           FROM hitdash.ingested_results
+           WHERE game_type = $1
+           ORDER BY draw_date DESC,
+                    CASE WHEN draw_type = 'evening' THEN 0 ELSE 1 END ASC`,
+          [game_type]
+        ),
+      ]);
 
-      if (allDraws.length < 60) {
+      if (evalAllDraws.length < 60) {
         res.json({
           game_type, draw_type, half, top_n,
           total_draws: total_all, recent_window: total_recent,
           top_candidates,
-          backtest: { insufficient_data: true, sample_size: allDraws.length },
+          backtest: { insufficient_data: true, sample_size: evalAllDraws.length },
           generated_at: new Date().toISOString(),
         });
         return;
@@ -1368,26 +1387,37 @@ ${ragSummary}`;
       const timeline: Array<{
         draw_date: string;
         winning_pair: string;
-        predicted_top: string[];   // top-5 para display
+        predicted_top: string[];
         hit: boolean;
-        rank: number | null;       // rank real en todos los candidatos (para n_scan)
-        rank_in_100: number;       // posición en ranking completo 1-100
+        rank: number | null;
+        rank_in_100: number;
         momentum_of_winner: number;
       }> = [];
 
-      // Walk-forward: evaluar los últimos eval_last sorteos
-      // Training = todos los sorteos ANTERIORES a cada punto de evaluación
-      const evalDraws = allDraws.slice(0, eval_last);
-      const TRAIN_MIN = 60;  // mínimo para que countAll >= 3 sea significativo
+      // Walk-forward: evaluar los últimos eval_last sorteos con ventana COMBINADA
+      // Para cada punto de evaluación (draw_type específico en fecha D):
+      //   trainDraws = todos los sorteos combinados con fecha < D
+      //                + mismo día midday si el eval es evening
+      //   recentTrain = últimos 30 de trainDraws (Ballbot's "últimos 30")
+      const evalDraws  = evalAllDraws.slice(0, eval_last);
+      const TRAIN_MIN  = 60;
 
       for (let i = 0; i < evalDraws.length; i++) {
-        const evalDraw  = evalDraws[i]!;
-        const winPair   = extractPair(evalDraw);
-        // allDraws[i+1...] = sorteos ANTERIORES a evalDraw (más antiguos)
-        const trainDraws = allDraws.slice(i + 1);
+        const evalDraw = evalDraws[i]!;
+        const evalDate = evalDraw.draw_date;
+        const winPair  = extractPair(evalDraw);
+
+        // Sorteos combinados ANTES de este punto de evaluación
+        const trainDraws = combinedDraws.filter(d => {
+          if (d.draw_date < evalDate) return true;
+          // Mismo día: para evening eval, el midday ya ocurrió → incluir
+          if (d.draw_date === evalDate && draw_type === 'evening' && d.draw_type === 'midday') return true;
+          return false;
+        });
+
         if (trainDraws.length < TRAIN_MIN) continue;
 
-        const recentTrain = trainDraws.slice(0, 30);
+        const recentTrain = trainDraws.slice(0, 30);  // últimos 30 combinados = Ballbot
         const totalAll    = trainDraws.length;
         const totalRecent = recentTrain.length;
 
