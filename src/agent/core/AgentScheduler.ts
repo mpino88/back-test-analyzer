@@ -101,19 +101,23 @@ export class AgentScheduler {
       name: string;
       game_type: GameType;
       draw_type: DrawType;
-      // ═══ COG-02 FIX: Crons en UTC fijos que funcionan todo el año (EDT y EST)
-      // Midday FL 12:30 PM ET = 16:30 UTC (EDT) = 17:30 UTC (EST) — tomamos 16:30 como balance
-      // Evening FL 7:29 PM ET = 23:29 UTC (EDT) = 00:29 UTC (EST) — tomamos 23:30 UTC
-      // Antes: 15:30 UTC = 11:30 AM ET en EDT (demasiado temprano, en EST = 10:30 AM)
-      // Ahora: 16:30 UTC = 12:30 PM ET en EDT = 11:30 AM ET en EST (60min antes del sorteo)
+      // ═══ TIMING CORRECTO: 2 horas antes de cada sorteo Florida ════════
+      // Sorteos FL: Midday 12:30 PM ET · Evening 7:29 PM ET
+      //
+      // 2h antes Midday:  10:30 AM EDT = 14:30 UTC  /  10:30 AM EST = 15:30 UTC
+      //   → tomamos 14:30 UTC (2h exactas en EDT, 3h en EST — siempre antes del sorteo)
+      //
+      // 2h antes Evening:  5:29 PM EDT = 21:29 UTC  /  5:29 PM EST = 22:29 UTC
+      //   → tomamos 21:30 UTC (2h exactas en EDT, 3h en EST — siempre antes del sorteo)
+      //
+      // nextDrawDate() calcula draw_date = HOY porque etNow < drawTime ✓
+      // Pick4 escalonado +5 min: BullMQ concurrency=1 — evita que se bloqueen entre sí.
       cron: string;
     }> = [
-      { name: 'pick3-midday',  game_type: 'pick3', draw_type: 'midday',  cron: '30 16 * * *' },
-      { name: 'pick3-evening', game_type: 'pick3', draw_type: 'evening', cron: '30 23 * * *' },
-      // ═══ F12 FIX: Escalonar pick4 +5 minutos para evitar bloqueo BullMQ concurrency=1
-      // Pick3 y Pick4 en el mismo cron exacto → solo 1 corre a la vez → pick4 llega tarde al sorteo
-      { name: 'pick4-midday',  game_type: 'pick4', draw_type: 'midday',  cron: '35 16 * * *' },
-      { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '35 23 * * *' },
+      { name: 'pick3-midday',  game_type: 'pick3', draw_type: 'midday',  cron: '30 14 * * *' },
+      { name: 'pick3-evening', game_type: 'pick3', draw_type: 'evening', cron: '30 21 * * *' },
+      { name: 'pick4-midday',  game_type: 'pick4', draw_type: 'midday',  cron: '35 14 * * *' },
+      { name: 'pick4-evening', game_type: 'pick4', draw_type: 'evening', cron: '35 21 * * *' },
     ];
 
     // ── Re-aprendizaje cognitivo semanal (domingo 03:00 UTC) ─────────

@@ -436,10 +436,11 @@ export class HitdashAgent {
       );
     }
 
-    // ═══ RESTAURACIÓN ALERTA PRESCRIPTIVA ════════════════════════════
-    // Analiza el momentum actual para recomendar una estrategia sostenida.
-    // Era parte del diseño original — perdida en las refactorizaciones anteriores.
-    await this.fireProactivePrescriptiveAlert(allRecs, game_type, draw_type);
+    // ═══ ALERTA PRESCRIPTIVA DESACTIVADA ══════════════════════════════
+    // La "Señal Estratégica" era ruido innecesario después de la Decisión Magistral.
+    // La Decisión Magistral ya contiene N, efectividad y pares → no hay información
+    // adicional que agregar. Desactivado por diseño limpio 2026-05-08.
+    // await this.fireProactivePrescriptiveAlert(allRecs, game_type, draw_type);
 
     const duration_ms = Date.now() - globalStart;
     await this.closeSession(sessionId, 'completed', {
