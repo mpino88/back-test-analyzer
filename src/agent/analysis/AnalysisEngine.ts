@@ -804,14 +804,21 @@ export class AnalysisEngine {
     let cognitive_basis = 'base:adaptive_top_n';
 
     // ── Intentar MOTOR-Σ primero ────────────────────────────────────────────
+    // BUG-FIX: sample_size < 5 causaba que el path MOTOR-Σ nunca se tomara
+    // aun teniendo datos válidos. sample_size ahora = 0 para DEFAULT, o el
+    // número real de draw_dates evaluados. Threshold bajado de 5 → 3.
+    // BUG-FIX 2: predicted_effectiveness nunca se asignaba en el path MOTOR-Σ
+    // → siempre quedaba 0. Ahora se asigna desde ppsN.hit_rate.
     const ppsN = await this.ppsService.computeOptimalN(game_type, draw_type, half);
-    if (ppsN.sample_size >= 5) {
-      optimal_n      = ppsN.optimal_n;
-      top_n          = ppsN.optimal_n;
-      cognitive_basis = `motor_sigma:${ppsN.basis}`;
+    if (ppsN.sample_size >= 3) {
+      optimal_n               = ppsN.optimal_n;
+      top_n                   = ppsN.optimal_n;
+      predicted_effectiveness = ppsN.hit_rate;   // ← FIX: antes nunca se asignaba
+      cognitive_basis         = `motor_sigma:${ppsN.basis}`;
       logger.info(
         {
           optimal_n,
+          predicted_effectiveness,
           hit_rate:      ppsN.hit_rate,
           expected_roi:  ppsN.expected_roi,
           is_profitable: ppsN.is_profitable,
@@ -820,8 +827,8 @@ export class AnalysisEngine {
           basis:         cognitive_basis,
         },
         ppsN.is_profitable
-          ? `AnalysisEngine: N=${optimal_n} rentable — ROI esperado ${(ppsN.expected_roi * 100).toFixed(1)}%/sorteo`
-          : `AnalysisEngine: N=${optimal_n} (mejor disponible — sin borde ≥1% aún, ${ppsN.sample_size} sorteos)`
+          ? `AnalysisEngine: N=${optimal_n} rentable — ROI esperado ${(ppsN.expected_roi * 100).toFixed(1)}%/sorteo · efectividad ${(ppsN.hit_rate * 100).toFixed(1)}%`
+          : `AnalysisEngine: N=${optimal_n} (mejor disponible — sin borde ≥1% aún, ${ppsN.sample_size} sorteos, efect.=${(ppsN.hit_rate * 100).toFixed(1)}%)`
       );
     } else {
       // Fallback: Cognitive N clásico desde backtest_results_v2

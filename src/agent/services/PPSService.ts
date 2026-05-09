@@ -278,7 +278,9 @@ export class PPSService {
         [game_type, draw_type, half, lookback]
       );
 
-      if (rows.length < 5) return { ...DEFAULT, sample_size: rows.length };
+      // BUG-FIX: DEFAULT usa sample_size=0 (señal explícita de "sin datos")
+      // para que AnalysisEngine lo detecte y use el fallback cognitive_n.
+      if (rows.length < 5) return DEFAULT;  // sample_size ya es 0 en DEFAULT
 
       // ── 2. Calcular effective_rank por sorteo (promedio ponderado por PPS) ──
       // effective_rank(sorteo) = Σ(rank × pps) / Σ(pps)
@@ -299,7 +301,7 @@ export class PPSService {
         effectiveRanks.push(wRank);
       }
 
-      if (effectiveRanks.length < 3) return { ...DEFAULT, sample_size: rows.length };
+      if (effectiveRanks.length < 3) return DEFAULT; // sample_size=0 → fallback
 
       effectiveRanks.sort((a, b) => a - b);
       const totalDraws = effectiveRanks.length;
