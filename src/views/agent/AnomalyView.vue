@@ -330,7 +330,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { apiFetch } from '../../utils/apiClient.js';
+import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 // ─── State ────────────────────────────────────────────────────
 const GAMES = [
@@ -392,7 +392,7 @@ async function loadAll() {
 async function loadAnomalies() {
   loadingAnomalies.value = true;
   try {
-    anomalyReport.value = await apiFetch(
+    anomalyReport.value = await apiGet(
       `/api/agent/anomalies?game_type=${selectedGame.value}&draw_type=${selectedDrawType.value}`
     );
   } catch { anomalyReport.value = null; }
@@ -402,9 +402,10 @@ async function loadAnomalies() {
 async function loadHypotheses() {
   loadingHyp.value = true;
   try {
-    hypotheses.value = await apiFetch(
+    const data = await apiGet(
       `/api/agent/hypotheses?game_type=${selectedGame.value}&draw_type=${selectedDrawType.value}&status=${hypStatusFilter.value}`
     );
+    hypotheses.value = Array.isArray(data) ? data : [];
   } catch { hypotheses.value = []; }
   finally { loadingHyp.value = false; }
 }
@@ -412,9 +413,10 @@ async function loadHypotheses() {
 async function loadStrategies() {
   loadingStrats.value = true;
   try {
-    allStrategies.value = await apiFetch(
+    const data = await apiGet(
       `/api/agent/dynamic-strategies?game_type=${selectedGame.value}&draw_type=${selectedDrawType.value}&include_retired=${showRetired.value}`
     );
+    allStrategies.value = Array.isArray(data) ? data : [];
   } catch { allStrategies.value = []; }
   finally { loadingStrats.value = false; }
 }
@@ -423,7 +425,7 @@ async function loadDigitAnalysis() {
   if (selectedGame.value !== 'pick3') { digitAnalysis.value = null; return; }
   loadingDigits.value = true;
   try {
-    const raw = await apiFetch(
+    const raw = await apiGet(
       `/api/agent/digit-analysis?game_type=pick3&draw_type=${selectedDrawType.value}`
     );
     // Normalizar — garantiza arrays aunque la API devuelva null en algún campo
@@ -442,16 +444,17 @@ async function loadDigitAnalysis() {
 
 async function loadScanLog() {
   try {
-    scanLog.value = await apiFetch('/api/agent/anomaly-scan-log?limit=15');
+    const data = await apiGet('/api/agent/anomaly-scan-log?limit=15');
+    scanLog.value = Array.isArray(data) ? data : [];
   } catch { scanLog.value = []; }
 }
 
 async function triggerScan() {
   scanning.value = true;
   try {
-    await apiFetch('/api/agent/anomalies/scan', {
-      method: 'POST',
-      body: JSON.stringify({ game_type: selectedGame.value, draw_type: selectedDrawType.value }),
+    await apiPost('/api/agent/anomalies/scan', {
+      game_type: selectedGame.value,
+      draw_type: selectedDrawType.value,
     });
     await loadAll();
   } catch { /* silencio */ }
