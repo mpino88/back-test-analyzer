@@ -18,7 +18,12 @@
             @click="selectGame(g.key)"
           >{{ g.label }}</button>
         </div>
-        <button class="btn-scan" :class="{ scanning }" @click="triggerScan" :disabled="scanning">
+        <button class="btn-bootstrap" :class="{ bootstrapping }" @click="triggerBootstrap" :disabled="bootstrapping || scanning"
+          :title="'Retroalimenta HELIX con el historial completo de sorteos'">
+          <span class="btn-icon">{{ bootstrapping ? '⟳' : '🧠' }}</span>
+          {{ bootstrapping ? 'Bootstrapping...' : 'Bootstrap histórico' }}
+        </button>
+        <button class="btn-scan" :class="{ scanning }" @click="triggerScan" :disabled="scanning || bootstrapping">
           <span class="btn-icon">{{ scanning ? '⟳' : '⚡' }}</span>
           {{ scanning ? 'Escaneando...' : 'Escanear ahora' }}
         </button>
@@ -26,6 +31,19 @@
           <span>{{ loading ? '⟳' : '↻' }}</span>
         </button>
       </div>
+    </div>
+
+    <!-- Bootstrap result banner -->
+    <div v-if="bootstrapResult" class="bootstrap-banner">
+      <span class="bb-icon">🧠</span>
+      <span class="bb-text">
+        Bootstrap completado —
+        <strong>{{ bootstrapResult.total_strategies_active }}</strong> estrategias activas ·
+        <strong>{{ bootstrapResult.total_hypotheses_validated }}</strong> hipótesis validadas ·
+        <strong>{{ bootstrapResult.total_draws_replayed }}</strong> sorteos históricos procesados ·
+        {{ (bootstrapResult.duration_ms / 1000).toFixed(1) }}s
+      </span>
+      <button class="bb-close" @click="bootstrapResult = null">×</button>
     </div>
 
     <!-- Draw type tabs -->
@@ -354,6 +372,8 @@ const loadingHyp       = ref(false);
 const loadingStrats    = ref(false);
 const loadingDigits    = ref(false);
 const scanning         = ref(false);
+const bootstrapping    = ref(false);
+const bootstrapResult  = ref(null);
 
 const anomalyReport  = ref(null);
 const hypotheses     = ref([]);
@@ -447,6 +467,18 @@ async function loadScanLog() {
     const data = await apiGet('/api/agent/anomaly-scan-log?limit=15');
     scanLog.value = Array.isArray(data) ? data : [];
   } catch { scanLog.value = []; }
+}
+
+async function triggerBootstrap() {
+  bootstrapping.value = true;
+  bootstrapResult.value = null;
+  try {
+    // sync con 90 draws de replay — respuesta en ~2-5 min
+    const result = await apiPost('/api/agent/bootstrap-learning/sync', { replay_draws: 90 });
+    bootstrapResult.value = result;
+    await loadAll();
+  } catch { /* silencio */ }
+  finally { bootstrapping.value = false; }
 }
 
 async function triggerScan() {
@@ -586,6 +618,37 @@ onMounted(() => loadAll());
 }
 .btn-scan:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn-scan.scanning .btn-icon { animation: spin 1s linear infinite; }
+.btn-bootstrap {
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(135deg, #059669, #0d9488);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: opacity 0.2s;
+}
+.btn-bootstrap:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-bootstrap.bootstrapping .btn-icon { animation: spin 1s linear infinite; }
+.bootstrap-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: linear-gradient(135deg, #064e3b, #065f46);
+  border: 1px solid #059669;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  font-size: 0.82rem;
+  color: #6ee7b7;
+}
+.bb-icon { font-size: 1.2rem; }
+.bb-text { flex: 1; }
+.bb-text strong { color: #34d399; }
+.bb-close { background: none; border: none; color: #6ee7b7; cursor: pointer; font-size: 1.1rem; padding: 0 0.25rem; }
 .btn-refresh {
   padding: 0.4rem 0.7rem;
   border-radius: 8px;

@@ -18,6 +18,7 @@ import { CognitiveLearner }    from '../../agent/learning/CognitiveLearner.js';
 import { AutoLearningLoop }        from '../../agent/learning/AutoLearningLoop.js';
 import { DigitAnalyzer }           from '../../agent/analysis/DigitAnalyzer.js';
 import { AutonomousOrchestrator }  from '../../agent/core/AutonomousOrchestrator.js';
+import { BootstrapLearning }       from '../../agent/learning/BootstrapLearning.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -38,6 +39,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const autoLearningLoop        = new AutoLearningLoop(agentPool);
   const digitAnalyzer           = new DigitAnalyzer(agentPool);
   const autonomousOrchestrator  = new AutonomousOrchestrator(agentPool);
+  const bootstrapLearning       = new BootstrapLearning(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -1753,6 +1755,46 @@ ${ragSummary}`;
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en digit analysis');
       res.status(500).json({ error: 'Error en digit analysis' });
+    }
+  });
+
+  // POST /api/agent/bootstrap-learning
+  // Retroalimenta HELIX con el historial completo de sorteos.
+  // Ejecutar una sola vez para inicializar estrategias dinámicas con datos históricos.
+  // Body: { replay_draws?: number }  (default 90)
+  router.post('/bootstrap-learning', async (req: Request, res: Response) => {
+    try {
+      const replayDraws = Number(req.body?.replay_draws ?? 90);
+      logger.info({ replay_draws: replayDraws }, 'Bootstrap learning iniciado');
+
+      // Responder inmediatamente — el bootstrap puede tardar varios minutos
+      res.json({ ok: true, message: 'Bootstrap iniciado en background', replay_draws: replayDraws });
+
+      // Ejecutar en background
+      setImmediate(async () => {
+        try {
+          const result = await bootstrapLearning.runFullBootstrap(replayDraws);
+          logger.info(result, 'Bootstrap learning completado');
+        } catch (err) {
+          logger.error({ error: String(err) }, 'Bootstrap learning falló');
+        }
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error iniciando bootstrap');
+      res.status(500).json({ error: 'Error iniciando bootstrap' });
+    }
+  });
+
+  // POST /api/agent/bootstrap-learning/sync — versión síncrona (espera resultado)
+  router.post('/bootstrap-learning/sync', async (req: Request, res: Response) => {
+    try {
+      const replayDraws = Number(req.body?.replay_draws ?? 90);
+      logger.info({ replay_draws: replayDraws }, 'Bootstrap learning SYNC iniciado');
+      const result = await bootstrapLearning.runFullBootstrap(replayDraws);
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en bootstrap sync');
+      res.status(500).json({ error: 'Error en bootstrap' });
     }
   });
 
