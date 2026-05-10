@@ -30,6 +30,7 @@ import { LearningEmbedder }  from './LearningEmbedder.js';
 import { DriftDetector }     from './DriftDetector.js';
 import { RAGService }        from '../services/RAGService.js';
 import { AutoLearningLoop }  from '../learning/AutoLearningLoop.js';
+import { HelixSentinel }     from '../core/HelixSentinel.js';
 import { TelegramNotifier }  from '../services/TelegramNotifier.js';
 import { PPSService }        from '../services/PPSService.js';
 
@@ -75,6 +76,7 @@ export class PostDrawProcessor {
   private readonly drift:          DriftDetector;
   private readonly ppsService:     PPSService;          // MOTOR-Σ
   private readonly autoLearning:   AutoLearningLoop;    // HELIX Autónomo
+  private readonly sentinel:       HelixSentinel;        // HELIX Sentinel proactivo
   // ═══ ANO-01 FIX: No instanciar TelegramNotifier aquí.
   // El singleton se inyecta desde server/index.ts via setNotifier().
   // Evita conexiones duplicadas al bot + garantiza credenciales válidas al boot.
@@ -92,6 +94,7 @@ export class PostDrawProcessor {
     this.drift        = new DriftDetector(ballbotPool);
     this.ppsService   = new PPSService(agentPool);        // MOTOR-Σ
     this.autoLearning = new AutoLearningLoop(agentPool);  // HELIX Autónomo
+    this.sentinel     = new HelixSentinel(agentPool);     // HELIX Sentinel proactivo
     // notifier se asigna vía setNotifier() — NO en el constructor
   }
 
@@ -270,6 +273,22 @@ export class PostDrawProcessor {
           strategies:  learningResult.strategies_evaluated,
           duration_ms: learningResult.duration_ms,
         }, 'AutoLearningLoop: ciclo autónomo completado');
+
+        // ── FASE H: HelixSentinel — proactividad autónoma ────────────────
+        // Se ejecuta DESPUÉS del AutoLearningLoop para tener datos frescos.
+        // Detecta condiciones críticas y alerta por Telegram sin intervención.
+        try {
+          // Inyectar notifier si está disponible
+          const sentinel = this.notifier
+            ? new (await import('../core/HelixSentinel.js')).HelixSentinel(this.agentPool, this.notifier)
+            : this.sentinel;
+          await sentinel.evaluate(game_type, draw_type, learningResult);
+        } catch (sentinelErr) {
+          logger.warn(
+            { error: sentinelErr instanceof Error ? sentinelErr.message : String(sentinelErr) },
+            'HelixSentinel: error en evaluación — no bloquea'
+          );
+        }
       } catch (err) {
         logger.warn(
           { error: err instanceof Error ? err.message : String(err) },

@@ -22,6 +22,7 @@ import { AnomalyDetector }           from '../analysis/AnomalyDetector.js';
 import { HypothesisGenerator }       from '../analysis/HypothesisGenerator.js';
 import { HypothesisValidator }        from '../analysis/HypothesisValidator.js';
 import { StrategyLifecycleManager }  from '../services/StrategyLifecycleManager.js';
+import { KronosAutoLearningBridge }  from './KronosAutoLearningBridge.js';
 
 const logger = pino({ name: 'AutoLearningLoop' });
 
@@ -50,12 +51,14 @@ export class AutoLearningLoop {
   private readonly hypothesisGenerator: HypothesisGenerator;
   private readonly hypothesisValidator: HypothesisValidator;
   private readonly lifecycleManager:   StrategyLifecycleManager;
+  private readonly kronosBridge:       KronosAutoLearningBridge;
 
   constructor(private readonly pool: Pool) {
     this.anomalyDetector     = new AnomalyDetector(pool);
     this.hypothesisGenerator = new HypothesisGenerator(pool);
     this.hypothesisValidator = new HypothesisValidator(pool);
     this.lifecycleManager    = new StrategyLifecycleManager(pool);
+    this.kronosBridge        = new KronosAutoLearningBridge(pool);
   }
 
   // ─── Punto de entrada principal ───────────────────────────────
@@ -99,7 +102,6 @@ export class AutoLearningLoop {
             try {
               const valResult = await this.hypothesisValidator.validate(hyp);
               if (valResult.passed) {
-                // Activar como micro-estrategia
                 const strat = await this.lifecycleManager.activateFromHypothesis(
                   hyp, { hit_rate: valResult.hit_rate, lift: valResult.lift }
                 );
@@ -109,6 +111,15 @@ export class AutoLearningLoop {
                     hit_rate:      valResult.hit_rate,
                     lift:          valResult.lift,
                   }, 'AutoLearningLoop: micro-estrategia ACTIVADA desde hipótesis validada');
+
+                  // ── KRONOS BRIDGE: reforzar algoritmos asociados ──────
+                  this.kronosBridge.onStrategyActivated({
+                    hypothesis_type: hyp.hypothesis_type,
+                    game_type:       game_type,
+                    draw_type:       draw_type,
+                    half:            HALVES[game_type][0] ?? 'du',
+                    lift:            valResult.lift,
+                  }).catch(() => undefined);
                 }
               }
             } catch (err) {

@@ -82,8 +82,15 @@
       <div class="stat-card">
         <div class="stat-icon">🚀</div>
         <div class="stat-body">
-          <div class="stat-value">{{ activeStrategies.length }}</div>
-          <div class="stat-label">Estrategias activas</div>
+          <div class="stat-value">{{ brain ? brain.totalLiveStrategies.value : activeStrategies.length }}</div>
+          <div class="stat-label">Estrategias vivas</div>
+        </div>
+      </div>
+      <div class="stat-card" v-if="brain && brain.consolidatedStrategies.value > 0">
+        <div class="stat-icon">⭐</div>
+        <div class="stat-body">
+          <div class="stat-value">{{ brain.consolidatedStrategies.value }}</div>
+          <div class="stat-label">Consolidadas</div>
         </div>
       </div>
       <div class="stat-card" v-if="selectedGame === 'pick3' && digitAnalysis">
@@ -347,8 +354,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, inject, onMounted } from 'vue';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
+
+// ── Brain Store: estado vivo compartido desde AgentLayout ─────────────────
+const brain = inject('helixBrain', null);
 
 // ─── State ────────────────────────────────────────────────────
 const GAMES = [

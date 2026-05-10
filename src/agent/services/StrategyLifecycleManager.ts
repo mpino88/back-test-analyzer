@@ -23,6 +23,7 @@ import pino from 'pino';
 import type { GameType, DrawType, LotteryDigits } from '../types/agent.types.js';
 import type { Hypothesis } from '../analysis/HypothesisGenerator.js';
 import type { ValidationResult } from '../analysis/HypothesisValidator.js';
+import { KronosAutoLearningBridge }  from '../learning/KronosAutoLearningBridge.js';
 
 // Re-export de ValidationResult para uso en AutoLearningLoop
 export type { ValidationResult };
@@ -64,7 +65,11 @@ export interface LifecycleUpdate {
 }
 
 export class StrategyLifecycleManager {
-  constructor(private readonly pool: Pool) {}
+  private readonly kronosBridge: KronosAutoLearningBridge;
+
+  constructor(private readonly pool: Pool) {
+    this.kronosBridge = new KronosAutoLearningBridge(pool);
+  }
 
   // ─── Activar estrategia desde hipótesis validada ──────────────
   async activateFromHypothesis(
@@ -267,6 +272,15 @@ export class StrategyLifecycleManager {
         hit,
         consecutive_misses: newConsec,
       }, `StrategyLifecycleManager: transición ${prevStatus} → ${newStatus}`);
+
+      // ── KRONOS BRIDGE: ajustar PPS en transiciones significativas ───
+      this.kronosBridge.onLifecycleTransition({
+        game_type:       strat.game_type,
+        draw_type:       strat.draw_type,
+        half:            strat.game_type === 'pick3' ? 'du' : 'ab',
+        new_status:      newStatus,
+        previous_status: prevStatus,
+      }).catch(() => undefined);
     }
 
     return {

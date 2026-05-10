@@ -27,7 +27,8 @@ export function createSSERouter(agentPool: Pool, redis: Redis): Router {
 
     const sendStatus = async (): Promise<void> => {
       try {
-        const [sessionRow, alertRow, ingestionRow, ragRow, cycleRow] = await Promise.all([
+        const [sessionRow, alertRow, ingestionRow, ragRow, cycleRow,
+               scanRow, stratRow, predRow] = await Promise.all([
           agentPool.query<{ status: string; created_at: string; game_type: string; draw_type: string; model_used: string; duration_ms: number }>(
             `SELECT status, created_at::text, game_type, draw_type, model_used, duration_ms
              FROM hitdash.agent_sessions
@@ -48,10 +49,29 @@ export function createSSERouter(agentPool: Pool, redis: Redis): Router {
              WHERE status = 'completed'
              ORDER BY created_at DESC LIMIT 1`
           ),
+          // ── SISTEMA NERVIOSO CENTRAL — datos autónomos ────────────────
+          agentPool.query<{ signals_found: number; hypotheses_generated: number; triggered_by: string; created_at: string }>(
+            `SELECT signals_found, hypotheses_generated, triggered_by, created_at::text
+             FROM hitdash.anomaly_scan_log
+             ORDER BY created_at DESC LIMIT 1`
+          ).catch(() => ({ rows: [] as any[] })),
+          agentPool.query<{ active: string; consolidated: string; monitoring: string }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE lifecycle_status = 'active')::text       AS active,
+               COUNT(*) FILTER (WHERE lifecycle_status = 'consolidated')::text  AS consolidated,
+               COUNT(*) FILTER (WHERE lifecycle_status = 'monitoring')::text    AS monitoring
+             FROM hitdash.dynamic_strategies`
+          ).catch(() => ({ rows: [] as any[] })),
+          agentPool.query<{ game_type: string; draw_type: string; half: string; pairs: string[]; optimal_n: number; hit: boolean | null; draw_date: string }>(
+            `SELECT game_type, draw_type, half, pairs, optimal_n, hit, draw_date::text
+             FROM hitdash.pair_recommendations
+             ORDER BY created_at DESC LIMIT 2`
+          ).catch(() => ({ rows: [] as any[] })),
         ]);
 
         const redisAlive = await redis.ping().then(() => true).catch(() => false);
 
+        const stratCounts = stratRow.rows[0] ?? { active: '0', consolidated: '0', monitoring: '0' };
         const payload = {
           online: true,
           timestamp: new Date().toISOString(),
@@ -61,6 +81,14 @@ export function createSSERouter(agentPool: Pool, redis: Redis): Router {
           rag_documents:    parseInt(ragRow.rows[0]!.count, 10),
           last_agent_cycle: cycleRow.rows[0]?.created_at ?? null,
           redis_ok:         redisAlive,
+          // ── SISTEMA NERVIOSO CENTRAL ──────────────────────────────────
+          autonomous: {
+            last_scan:            scanRow.rows[0] ?? null,
+            active_strategies:    parseInt(stratCounts.active, 10),
+            consolidated_strategies: parseInt(stratCounts.consolidated, 10),
+            monitoring_strategies: parseInt(stratCounts.monitoring, 10),
+            latest_predictions:   predRow.rows ?? [],
+          },
         };
 
         res.write(`data: ${JSON.stringify(payload)}\n\n`);

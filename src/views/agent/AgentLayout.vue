@@ -42,6 +42,9 @@
         <RouterLink to="/" class="nav-link nav-link--secondary">
           <span class="nav-link__icon">◀</span> Analyzer
         </RouterLink>
+        <div class="agent-nav__brain-status" :class="'brain--' + brain.brainStatus.value">
+          {{ brain.brainStatusLabel.value }}
+        </div>
         <div class="agent-nav__status" :class="connected ? 'status--live' : 'status--offline'">
           <span class="status__dot"></span>
           {{ connected ? 'Live' : 'Offline' }}
@@ -65,21 +68,29 @@
 </template>
 
 <script setup>
-import { computed, ref, onErrorCaptured } from 'vue';
+import { computed, ref, provide, onErrorCaptured } from 'vue';
 import { RouterLink, RouterView } from 'vue-router';
-import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
+import { useAgentStatus }    from '../../composables/agent/useAgentStatus.js';
+import { createHelixBrain }  from '../../composables/agent/useHelixBrain.js';
 
 const { status, connected } = useAgentStatus();
-const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
+
+// ── HELIX Brain Store — fuente única de verdad ───────────────────────────
+// Todos los views hijos pueden inject('helixBrain') para acceder al estado vivo
+// sin hacer fetches independientes para datos de sistema.
+const brain = createHelixBrain(status);
+provide('helixBrain', brain);
+
+// pendingAlerts sigue siendo local para el badge del nav (compatible con código existente)
+const pendingAlerts = computed(() => brain.pendingAlerts.value);
 
 // ─── Error boundary — captura cualquier crash silencioso en vistas hijas ───
-// Sin esto, Vue desmonta el componente que falla y queda negro sin explicación.
 const routeError = ref(null);
 onErrorCaptured((err, _instance, info) => {
   const msg = err instanceof Error ? err.message : String(err);
   routeError.value = { message: msg, info };
   console.error('[HELIX] Vista crash capturado —', info, err);
-  return false; // Detiene propagación — AgentLayout sigue renderizando
+  return false;
 });
 </script>
 
@@ -170,6 +181,18 @@ onErrorCaptured((err, _instance, info) => {
 .status--live .status__dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
 .status--offline .status__dot { background: #ef4444; }
 .status__dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.agent-nav__brain-status {
+  font-size: 0.68rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  margin: 0 0.75rem 0.4rem;
+  text-align: center;
+  font-weight: 600;
+}
+.brain--learning { background: #1e1b4b; color: #a78bfa; border: 1px solid #4c1d95; }
+.brain--watching { background: #1e3a5f; color: #60a5fa; border: 1px solid #1e40af; }
+.brain--idle     { background: #1a1a2e; color: #6b7280; border: 1px solid #374151; }
+.brain--unknown  { background: #1a1a2e; color: #6b7280; border: 1px solid #374151; }
 
 /* ─── Main ───────────────────────────────────────────────────── */
 .agent-main {

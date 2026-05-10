@@ -350,6 +350,29 @@ export class TelegramNotifier {
   }
 
 
+  // ── SENTINEL: alertas autónomas proactivas ───────────────────────────────
+  async notifySentinelAlert(params: {
+    event_type:  'critical_signal' | 'strategy_consolidated' | 'strategy_retired' | 'bootstrap_complete' | 'algo_degraded';
+    game_type:   string;
+    draw_type:   string;
+    title:       string;
+    body:        string;
+    urgency:     'info' | 'warning' | 'critical';
+  }): Promise<void> {
+    const icon = params.urgency === 'critical' ? '🔴'
+               : params.urgency === 'warning'  ? '🟡' : '🔵';
+    const pr   = new Date().toLocaleString('es-PR', { timeZone: 'America/Puerto_Rico' });
+    await this.send([
+      `${icon} *HELIX · Sentinel Autónomo*`,
+      `📍 ${params.game_type.toUpperCase()} ${params.draw_type}`,
+      ``,
+      `*${params.title}*`,
+      params.body,
+      ``,
+      `🕐 ${pr}`,
+    ].join('\n'));
+  }
+
   private async send(text: string, retries = 2): Promise<void> {
     if (!this.enabled || !this.bot) return;
 
