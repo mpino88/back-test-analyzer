@@ -158,10 +158,10 @@
 
             <!-- Combined pairs -->
             <div class="combined-section">
-              <div class="combined-label">Pares candidatos (3×3 = {{ digitAnalysis.combined_pairs.length }})</div>
+              <div class="combined-label">Pares candidatos (3×3 = {{ (digitAnalysis.combined_pairs ?? []).length }})</div>
               <div class="pair-grid">
                 <span
-                  v-for="pair in digitAnalysis.combined_pairs"
+                  v-for="pair in (digitAnalysis.combined_pairs ?? [])"
                   :key="pair"
                   class="pair-chip"
                 >{{ pair }}</span>
@@ -173,11 +173,11 @@
               <div class="heatmap-label">Score por dígito</div>
               <div class="heatmap-grid">
                 <div
-                  v-for="row in digitAnalysis.decena"
+                  v-for="row in (digitAnalysis.decena ?? [])"
                   :key="row.digit + '-d'"
                   class="heatmap-cell"
                   :style="{ opacity: 0.3 + row.score * 0.7 }"
-                  :class="{ 'heatmap-top': digitAnalysis.top_decenas.includes(row.digit), 'anomaly-bonus': row.anomaly_bonus }"
+                  :class="{ 'heatmap-top': (digitAnalysis.top_decenas ?? []).includes(row.digit), 'anomaly-bonus': row.anomaly_bonus }"
                   :title="`d${row.digit}: score=${row.score.toFixed(3)} z=${row.z_score.toFixed(2)}`"
                 >
                   <div class="hm-digit">{{ row.digit }}</div>
@@ -187,10 +187,10 @@
             </div>
 
             <!-- Signals applied -->
-            <div v-if="digitAnalysis.anomaly_signals_applied.length" class="signals-applied">
+            <div v-if="digitAnalysis.anomaly_signals_applied?.length" class="signals-applied">
               <div class="applied-label">⚡ Señales aplicadas:</div>
               <div class="applied-list">
-                <span v-for="s in digitAnalysis.anomaly_signals_applied" :key="s" class="applied-chip">{{ s }}</span>
+                <span v-for="s in (digitAnalysis.anomaly_signals_applied ?? [])" :key="s" class="applied-chip">{{ s }}</span>
               </div>
             </div>
           </div>
@@ -423,9 +423,19 @@ async function loadDigitAnalysis() {
   if (selectedGame.value !== 'pick3') { digitAnalysis.value = null; return; }
   loadingDigits.value = true;
   try {
-    digitAnalysis.value = await apiFetch(
+    const raw = await apiFetch(
       `/api/agent/digit-analysis?game_type=pick3&draw_type=${selectedDrawType.value}`
     );
+    // Normalizar — garantiza arrays aunque la API devuelva null en algún campo
+    digitAnalysis.value = raw ? {
+      ...raw,
+      decena:                  Array.isArray(raw.decena)                  ? raw.decena                  : [],
+      unidad:                  Array.isArray(raw.unidad)                  ? raw.unidad                  : [],
+      top_decenas:             Array.isArray(raw.top_decenas)             ? raw.top_decenas             : [],
+      top_unidades:            Array.isArray(raw.top_unidades)            ? raw.top_unidades            : [],
+      combined_pairs:          Array.isArray(raw.combined_pairs)          ? raw.combined_pairs          : [],
+      anomaly_signals_applied: Array.isArray(raw.anomaly_signals_applied) ? raw.anomaly_signals_applied : [],
+    } : null;
   } catch { digitAnalysis.value = null; }
   finally { loadingDigits.value = false; }
 }
