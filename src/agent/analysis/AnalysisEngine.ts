@@ -39,6 +39,7 @@ import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
 import { TrendMomentum }         from './algorithms/TrendMomentum.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
+import type { DynamicStrategy }             from '../services/StrategyLifecycleManager.js';
 import type {
   ComprehensiveAnalysis,
   ConsensusScore,
@@ -536,7 +537,8 @@ export class AnalysisEngine {
     game_type: GameType,
     draw_type: DrawType,
     half: PairHalf = 'du',
-    period: AnalysisPeriod = 90
+    period: AnalysisPeriod = 90,
+    dynamicStrategies: DynamicStrategy[] = []   // ← Inyección autónoma
   ): Promise<PairAnalysis> {
     const globalStart = Date.now();
 
@@ -770,6 +772,51 @@ export class AnalysisEngine {
       }
     }
     ranked_pairs.sort((a, b) => b.score - a.score);
+
+    // ── DYNAMIC STRATEGY BOOSTS ──────────────────────────────────────────────
+    // Aplica score_boost de estrategias dinámicas validadas estadísticamente.
+    // Las estrategias con lifecycle_status 'active' o 'consolidated' tienen
+    // hit_rate validado > 20% y lift > 1.5x — merecen influir en el ranking.
+    if (dynamicStrategies.length > 0) {
+      const maxScoreBefore = ranked_pairs[0]?.score ?? 1;
+      let boostsApplied = 0;
+
+      for (const strat of dynamicStrategies) {
+        // Boost por pares target directos
+        if (strat.target_pairs?.length) {
+          for (const targetPair of strat.target_pairs) {
+            const rp = ranked_pairs.find(p => p.pair === targetPair);
+            if (rp) {
+              rp.score += strat.score_boost * maxScoreBefore;  // proporcional al espacio de scores
+              boostsApplied++;
+            }
+          }
+        }
+        // Boost por dígitos target (suma boost a todos los pares que contienen el dígito)
+        if (strat.target_digits) {
+          const td = strat.target_digits;
+          const halfBoost = strat.score_boost * 0.5 * maxScoreBefore; // mitad del boost, distribuido
+          for (const rp of ranked_pairs) {
+            const d = parseInt(rp.pair[0]!, 10);
+            const u = parseInt(rp.pair[1]!, 10);
+            if ((td.p2?.includes(d)) || (td.p3?.includes(u))) {
+              rp.score += halfBoost;
+              boostsApplied++;
+            }
+          }
+        }
+      }
+
+      // Re-sort tras aplicar boosts
+      ranked_pairs.sort((a, b) => b.score - a.score);
+
+      if (boostsApplied > 0) {
+        logger.info(
+          { boosts_applied: boostsApplied, strategies: dynamicStrategies.map(s => s.name), game_type, draw_type },
+          'AnalysisEngine: dynamic strategy boosts aplicados — re-sort ejecutado'
+        );
+      }
+    }
 
     // A1 FIX: When all consensus scores are degenerate (≤ 0.001), the sort preserves
     // iteration order (00→99), producing a useless sequential recommendation.

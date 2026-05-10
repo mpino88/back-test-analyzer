@@ -1087,7 +1087,8 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         // ───────────────────────────────────────────────────────────
         // CAPA 3 — PATH DE CONSULTA: contexto DB completo + LLM
         // ───────────────────────────────────────────────────────────
-        const [recRows, btRows, alertRows, awRows, sessionRow, drawRows] = await Promise.all([
+        const [recRows, btRows, alertRows, awRows, sessionRow, drawRows,
+               autonomousSignals, autonomousStrategies] = await Promise.all([
           agentPool.query<{
             draw_date: string; draw_type: string; half: string;
             pairs: string[]; hit: boolean | null; hit_at_rank: number | null;
@@ -1137,6 +1138,19 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
              ORDER BY draw_date DESC, draw_type DESC LIMIT 10`,
             [gt]
           ).catch(() => ({ rows: [] as any[] })),
+
+          // ── SISTEMA NERVIOSO CENTRAL: señales autónomas activas ──────
+          autoLearningLoop.getCurrentSignals(gt, extractDrawType(lower))
+            .catch(() => ({ signals: [] as any[] })),
+
+          // ── Estrategias dinámicas activas ────────────────────────────
+          agentPool.query<{ name: string; lifecycle_status: string; score_boost: number; hits_in_prod: number; misses_in_prod: number; target_pairs: string[] | null }>(
+            `SELECT name, lifecycle_status, score_boost::float, hits_in_prod, misses_in_prod, target_pairs
+             FROM hitdash.dynamic_strategies
+             WHERE game_type = $1 AND lifecycle_status IN ('monitoring','active','consolidated')
+             ORDER BY score_boost DESC LIMIT 5`,
+            [gt]
+          ).catch(() => ({ rows: [] as any[] })),
         ]);
 
         // Excluir category='pattern' (sorteos crudos) — ya están en ingested_results como contexto estructurado.
@@ -1180,11 +1194,33 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
           : '\nMEMORIA RAG (aprendizajes previos):\n' +
             ragResults.map(r => `[${r.category}] ${r.content.slice(0, 200)}`).join('\n');
 
+        // ── Contexto autónomo para el system prompt ─────────────────
+        const autonomousSignalsList = (autonomousSignals as any).signals ?? [];
+        const criticalSignals = autonomousSignalsList
+          .filter((s: any) => Math.abs(s.z_score) >= 2)
+          .map((s: any) => `${s.type.replace(/_/g,'·')} val=${s.value} z=${Number(s.z_score).toFixed(2)} ventana=${s.window}d`)
+          .join('\n') || 'Sin señales estadísticas significativas actualmente.';
+
+        const dynStratRows = (autonomousStrategies as any).rows ?? [];
+        const dynStratSummary = dynStratRows.length === 0
+          ? 'Sin micro-estrategias dinámicas activas.'
+          : dynStratRows.map((s: any) =>
+              `${s.name} [${s.lifecycle_status}] boost=${Number(s.score_boost).toFixed(2)} hits=${s.hits_in_prod} misses=${s.misses_in_prod}` +
+              (s.target_pairs?.length ? ` pares=${s.target_pairs.join(',')}` : '')
+            ).join('\n');
+
         const systemPrompt = `Eres HITDASH, el agente estadístico de Bliss Systems LLC para análisis de lotería.
 Respondes ÚNICAMENTE desde el contexto de tu base de datos que se te proporciona a continuación.
 Si un dato no está en el contexto, di explícitamente "No tengo esa información en mi base de datos."
 No inventes números ni porcentajes. Sé directo, conciso y profesional en español.
+Puedes explicar el PORQUÉ de cada predicción usando las señales autónomas y estrategias activas.
 Juego activo: ${gt.toUpperCase()}.
+
+─── 🧬 SEÑALES AUTÓNOMAS ACTIVAS (AnomalyDetector) ───
+${criticalSignals}
+
+─── 🚀 MICRO-ESTRATEGIAS DINÁMICAS ACTIVAS ───
+${dynStratSummary}
 
 ─── RECOMENDACIONES RECIENTES ───
 ${recSummary}

@@ -7,14 +7,17 @@
 import type { Pool } from 'pg';
 import pino from 'pino';
 
-import { AnalysisEngine }    from '../analysis/AnalysisEngine.js';
-import { CartonGenerator }   from '../services/CartonGenerator.js';
-import { PairRecommender }   from '../services/PairRecommender.js';
-import { LLMRouter }         from '../services/LLMRouter.js';
-import { TelegramNotifier }  from '../services/TelegramNotifier.js';
-import { RAGService }        from '../services/RAGService.js';
-import { PairBacktestEngine } from '../backtest/PairBacktestEngine.js';
+import { AnalysisEngine }          from '../analysis/AnalysisEngine.js';
+import { CartonGenerator }          from '../services/CartonGenerator.js';
+import { PairRecommender }          from '../services/PairRecommender.js';
+import { LLMRouter }                from '../services/LLMRouter.js';
+import { TelegramNotifier }         from '../services/TelegramNotifier.js';
+import { RAGService }               from '../services/RAGService.js';
+import { PairBacktestEngine }       from '../backtest/PairBacktestEngine.js';
 import { runBacktestJob, STRATEGY_CATALOG } from '../backtest/backtestJobRunner.js';
+import { StrategyLifecycleManager } from '../services/StrategyLifecycleManager.js';
+import { AutoLearningLoop }         from '../learning/AutoLearningLoop.js';
+import { DigitAnalyzer }            from '../analysis/DigitAnalyzer.js';
 
 import type {
   GameType, DrawType, TriggerType, Carton, CartonSize, AgentAlert,
@@ -70,13 +73,17 @@ const PROACTIVE_BACKTEST_MIN_DRAWS_SINCE_LAST = 30; // triggers if ≥30 new dra
 const PROACTIVE_BACKTEST_MAX_DAYS_WITHOUT     = 7;  // triggers if >7 days without backtest
 
 export class HitdashAgent {
-  private readonly analysisEngine:    AnalysisEngine;
-  private readonly cartonGenerator:   CartonGenerator;
-  private readonly pairRecommender:   PairRecommender;
-  private readonly llmRouter:         LLMRouter;
-  private readonly notifier:          TelegramNotifier;
-  private readonly ragService:        RAGService;
+  private readonly analysisEngine:     AnalysisEngine;
+  private readonly cartonGenerator:    CartonGenerator;
+  private readonly pairRecommender:    PairRecommender;
+  private readonly llmRouter:          LLMRouter;
+  private readonly notifier:           TelegramNotifier;
+  private readonly ragService:         RAGService;
   private readonly pairBacktestEngine: PairBacktestEngine;
+  // ── SISTEMA NERVIOSO CENTRAL ──────────────────────────────────────────────
+  private readonly lifecycleManager:   StrategyLifecycleManager;
+  private readonly autoLearning:       AutoLearningLoop;
+  private readonly digitAnalyzer:      DigitAnalyzer;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -91,6 +98,10 @@ export class HitdashAgent {
     this.notifier            = notifier ?? new TelegramNotifier();
     this.ragService          = ragService;
     this.pairBacktestEngine  = new PairBacktestEngine(agentPool);
+    // ── SISTEMA NERVIOSO CENTRAL ─────────────────────────────────────────
+    this.lifecycleManager    = new StrategyLifecycleManager(agentPool);
+    this.autoLearning        = new AutoLearningLoop(agentPool);
+    this.digitAnalyzer       = new DigitAnalyzer(agentPool);
   }
 
   // ─── Proactive backtest check ─────────────────────────────────────
@@ -354,23 +365,53 @@ export class HitdashAgent {
     const query = `${game_type.toUpperCase()} ${draw_type} análisis predictivo ${draw_date}`;
     const queryVector = await this.ragService.embedText(query);
 
+    // ── SISTEMA NERVIOSO CENTRAL — cargar estado autónomo ─────────────────
+    // Se ejecuta en paralelo para no añadir latencia al pipeline principal.
+    const [activeStrategies, anomalyReport] = await Promise.all([
+      this.lifecycleManager.getActiveStrategies(game_type, draw_type).catch(() => []),
+      this.autoLearning.getCurrentSignals(game_type, draw_type).catch(() => ({ signals: [] })),
+    ]);
+
+    reasoning_chain.push({
+      step: 'autonomous_context_loaded',
+      active_strategies: activeStrategies.length,
+      anomaly_signals:   anomalyReport.signals.length,
+      ts: new Date().toISOString(),
+    });
+
+    logger.info(
+      { active_strategies: activeStrategies.length, anomaly_signals: anomalyReport.signals.length },
+      'HitdashAgent: contexto autónomo cargado'
+    );
+
     let allRecs: import('../types/agent.types.js').PairRecommendation[] = [];
 
     if (game_type === 'pick3') {
-      const pairAnalysis = await this.analysisEngine.analyzePairs(game_type, draw_type, 'du', 90);
+      // ── DigitAnalyzer: señal posicional Pick3 ─────────────────────────
+      const digitRec = await this.digitAnalyzer.analyzeDigits(draw_type, anomalyReport.signals)
+        .catch(() => null);
+
+      // ── AnalysisEngine CON dynamic strategy boosts ────────────────────
+      const pairAnalysis = await this.analysisEngine.analyzePairs(
+        game_type, draw_type, 'du', 90, activeStrategies
+      );
+
       reasoning_chain.push({
         step: 'pair_analysis_complete',
         half: 'du',
         top_n: pairAnalysis.top_n,
         optimal_n: pairAnalysis.optimal_n,
         top3_pairs: pairAnalysis.ranked_pairs.slice(0, 3).map(r => r.pair),
+        dynamic_boosts_applied: activeStrategies.length,
+        digit_top_decenas: digitRec?.top_decenas ?? [],
+        digit_top_unidades: digitRec?.top_unidades ?? [],
         ts: new Date().toISOString(),
       });
 
-      // ═══ MOTOR-Σ: LLM validation desactivada (USE_LLM_VALIDATION=false) ═══
-      // Los pesos PPS ya aprenden qué algoritmo predice mejor — no se necesita
-      // un LLM que reordene la lista con sesgo narrativo.
-      let llmReasoning = 'HELIX · 20 algoritmos · KRONOS cognitivo · consenso adaptativo.';
+      // ═══ MOTOR-Σ + SISTEMA NERVIOSO CENTRAL: reasoning enriquecido ═══
+      let llmReasoning = this.buildAutonomousReasoning(
+        game_type, draw_type, activeStrategies, anomalyReport.signals, digitRec
+      );
       let validatedPairs: string[] = [];
 
       if (USE_LLM_VALIDATION) {
@@ -383,16 +424,12 @@ export class HitdashAgent {
         validatedPairs = llmResult.validated_pairs;
       }
 
-      // N viene directamente de MOTOR-Σ computeOptimalN() — un solo eje de verdad
       const rec = this.pairRecommender.recommend(pairAnalysis, undefined, validatedPairs);
       allRecs = [rec];
 
       await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmReasoning);
       await this.persistPairRecommendations([rec], game_type, draw_type, draw_date, sessionId);
 
-      // ═══ RESTAURACIÓN COG-N: Generar cartones desde optimal_n ════════
-      // El tamaño del cartón NO es estático [9,16] — lo dicta el Cognitive N
-      // del PairRecommender, preservando la intención matemática original.
       await this.generateAndPersistCartonesFromPairs(
         [rec], game_type, draw_type, draw_date, sessionId
       );
@@ -400,12 +437,13 @@ export class HitdashAgent {
     } else {
       // pick4: analyze AB and CD independently
       const [abAnalysis, cdAnalysis] = await Promise.all([
-        this.analysisEngine.analyzePairs(game_type, draw_type, 'ab', 90),
-        this.analysisEngine.analyzePairs(game_type, draw_type, 'cd', 90),
+        this.analysisEngine.analyzePairs(game_type, draw_type, 'ab', 90, activeStrategies),
+        this.analysisEngine.analyzePairs(game_type, draw_type, 'cd', 90, activeStrategies),
       ]);
 
-      // ═══ MOTOR-Σ: LLM desactivado para Pick 4 también ═══
-      let llmReasoningP4 = 'HELIX · 20 algoritmos · KRONOS cognitivo · consenso adaptativo Pick 4.';
+      let llmReasoningP4 = this.buildAutonomousReasoning(
+        game_type, draw_type, activeStrategies, anomalyReport.signals, null
+      );
       let validatedPairsAB: string[] = [];
       let validatedPairsCD: string[] = [];
 
@@ -420,7 +458,6 @@ export class HitdashAgent {
         validatedPairsCD = llmResult.validated_pairs;
       }
 
-      // N viene directamente de MOTOR-Σ computeOptimalN() — un solo eje de verdad
       const recs = this.pairRecommender.recommendPick4(
         abAnalysis, cdAnalysis, undefined,
         validatedPairsAB, validatedPairsCD
@@ -430,7 +467,6 @@ export class HitdashAgent {
       await this.notifier.notifyPairs(recs, game_type, draw_type, draw_date, llmReasoningP4);
       await this.persistPairRecommendations(recs, game_type, draw_type, draw_date, sessionId);
 
-      // ═══ RESTAURACIÓN COG-N: Generar cartones Pick 4 ════════════════
       await this.generateAndPersistCartonesFromPairs(
         recs, game_type, draw_type, draw_date, sessionId
       );
@@ -1124,5 +1160,46 @@ Responde con este JSON exacto:
         logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'Error persistiendo pair recommendations — continuando');
       }
     }
+  }
+
+  // ── SISTEMA NERVIOSO CENTRAL: construir reasoning enriquecido ────────────
+  // Genera el texto de razonamiento que va a Telegram, incorporando contexto
+  // autónomo real: señales activas, estrategias dinámicas, análisis posicional.
+  private buildAutonomousReasoning(
+    game_type:   GameType,
+    draw_type:   DrawType,
+    strategies:  import('../services/StrategyLifecycleManager.js').DynamicStrategy[],
+    signals:     import('../analysis/AnomalyDetector.js').AnomalySignal[],
+    digitRec:    import('../analysis/DigitAnalyzer.js').DigitRecommendation | null
+  ): string {
+    const parts: string[] = [];
+
+    // Base
+    parts.push(`HELIX · MOTOR-Σ · KRONOS cognitivo`);
+
+    // Estrategias dinámicas activas
+    const activeStrats = strategies.filter(s =>
+      s.lifecycle_status === 'active' || s.lifecycle_status === 'consolidated'
+    );
+    if (activeStrats.length > 0) {
+      const stratNames = activeStrats.slice(0, 3).map(s => s.name.replace(/_/g, ' ')).join(', ');
+      parts.push(`🚀 ${activeStrats.length} micro-estrategia${activeStrats.length > 1 ? 's' : ''} activa${activeStrats.length > 1 ? 's' : ''}: ${stratNames}`);
+    }
+
+    // Señales de anomalía más fuertes
+    const criticalSignals = signals.filter(s => Math.abs(s.z_score) >= 2.5);
+    if (criticalSignals.length > 0) {
+      const sigTexts = criticalSignals.slice(0, 2).map(s =>
+        `${s.value} (z=${s.z_score.toFixed(1)})`
+      ).join(', ');
+      parts.push(`📡 Anomalías: ${sigTexts}`);
+    }
+
+    // DigitAnalyzer (Pick3)
+    if (game_type === 'pick3' && digitRec) {
+      parts.push(`🔢 Decenas: ${digitRec.top_decenas.join('|')} · Unidades: ${digitRec.top_unidades.join('|')}`);
+    }
+
+    return parts.join(' · ');
   }
 }

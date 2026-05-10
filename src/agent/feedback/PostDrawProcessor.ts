@@ -494,6 +494,30 @@ export class PostDrawProcessor {
         [hit, actualPair, rank, rec.id]
       ).catch(() => undefined);
 
+      // ─── CIRUGÍA 4: Actualizar contribution_count en dynamic_strategies ───
+      // Si la recomendación fue un HIT, incrementar contribution_count en las
+      // estrategias dinámicas activas que tenían ese par como target.
+      if (hit && actualPair) {
+        this.agentPool.query(
+          `UPDATE hitdash.dynamic_strategies
+           SET contribution_count = contribution_count + 1
+           WHERE game_type = $1 AND draw_type = $2
+             AND lifecycle_status IN ('monitoring','active','consolidated')
+             AND (
+               target_pairs @> ARRAY[$3]::text[]
+               OR (target_digits IS NOT NULL AND (
+                 target_digits->'p2' @> to_jsonb(($4)::int)
+                 OR target_digits->'p3' @> to_jsonb(($5)::int)
+               ))
+             )`,
+          [
+            game_type, draw_type, actualPair,
+            parseInt(actualPair[0]!, 10),
+            parseInt(actualPair[1]!, 10),
+          ]
+        ).catch(() => undefined);
+      }
+
       // ─── N-rank EMA feedback → calibra computeCognitiveN() en tiempo real ──
       // hit: usar rank real (1=perfecto); miss: penalizar con rango central 55
       // Actualiza backtest_results_v2.expected_rank para 'apex_adaptive' con EMA(α=0.15)
