@@ -97,6 +97,26 @@ export class AgentScheduler {
 
   // ─── Registrar los 4 jobs cron (pick3+pick4 × midday+evening) ─
   async register(): Promise<void> {
+    // ═══ LIMPIEZA DE REDIS ANTES DE REGISTRAR ═══════════════════════════
+    // PROBLEMA: cuando se cambia el patrón cron (ej. 23:30→21:30 UTC),
+    // BullMQ conserva los jobs YA ENCOLADOS del patrón viejo en Redis.
+    // Estos jobs viejos disparan en su hora original y generan predicciones
+    // para el DÍA SIGUIENTE, bloqueando luego los crons correctos por idempotencia.
+    // SOLUCIÓN: eliminar todos los schedulers y jobs pendientes al boot.
+    // Así solo los nuevos patrones existen en Redis.
+    try {
+      const existingSchedulers = await this.queue.getJobSchedulers();
+      if (existingSchedulers.length > 0) {
+        await Promise.all(existingSchedulers.map(s => this.queue.removeJobScheduler(s.key ?? s.id)));
+        logger.info({ count: existingSchedulers.length }, 'AgentScheduler: schedulers obsoletos eliminados de Redis');
+      }
+      // Drenar jobs delayed/waiting del patrón antiguo
+      await this.queue.drain(true);
+      logger.info('AgentScheduler: cola drenada — jobs pendientes de patrones viejos eliminados');
+    } catch (err) {
+      logger.warn({ error: String(err) }, 'AgentScheduler: limpieza de Redis parcial — continuando con registro');
+    }
+
     const jobs: Array<{
       name: string;
       game_type: GameType;
