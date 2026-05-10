@@ -1,14 +1,15 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — PostDrawProcessor v2.1.0  (MOTOR-Σ + Drift Action)
+// HITDASH — PostDrawProcessor v3.0.0  (MOTOR-Σ + Agente Autónomo)
 // Orquestador del ciclo feedback completo post-sorteo
 //
-// Flujo MOTOR-Σ:
+// Flujo MOTOR-Σ + Autonomous:
 //   FASE A: Pair hit detection (pair_recommendations.hit)
 //   FASE B: PPS update por algoritmo  ← MOTOR-Σ
 //   FASE C: Adaptive top_n + weights (legacy)
 //   FASE D: Comparación cartones legacy
-//   FASE E: Drift detection + acción automática  ← CERRADO (antes PARCIAL)
+//   FASE E: Drift detection + acción automática
 //   FASE F: Accuracy alert
+//   FASE G: AutoLearningLoop  ← HELIX Autónomo (NEW)
 //
 // FASE E — Acción automática al detectar drift:
 //   • adaptive_weights.weight → blend hacia neutro 1.0  (÷2 + 0.5)
@@ -28,6 +29,7 @@ import { StrategyEvaluator } from './StrategyEvaluator.js';
 import { LearningEmbedder }  from './LearningEmbedder.js';
 import { DriftDetector }     from './DriftDetector.js';
 import { RAGService }        from '../services/RAGService.js';
+import { AutoLearningLoop }  from '../learning/AutoLearningLoop.js';
 import { TelegramNotifier }  from '../services/TelegramNotifier.js';
 import { PPSService }        from '../services/PPSService.js';
 
@@ -67,11 +69,12 @@ export class PostDrawProcessor {
   private readonly queue: Queue;
   private worker: Worker | null = null;
 
-  private readonly comparator:  ResultComparator;
-  private readonly evaluator:   StrategyEvaluator;
-  private readonly embedder:    LearningEmbedder;
-  private readonly drift:       DriftDetector;
-  private readonly ppsService:  PPSService;        // MOTOR-Σ
+  private readonly comparator:     ResultComparator;
+  private readonly evaluator:      StrategyEvaluator;
+  private readonly embedder:       LearningEmbedder;
+  private readonly drift:          DriftDetector;
+  private readonly ppsService:     PPSService;          // MOTOR-Σ
+  private readonly autoLearning:   AutoLearningLoop;    // HELIX Autónomo
   // ═══ ANO-01 FIX: No instanciar TelegramNotifier aquí.
   // El singleton se inyecta desde server/index.ts via setNotifier().
   // Evita conexiones duplicadas al bot + garantiza credenciales válidas al boot.
@@ -82,12 +85,13 @@ export class PostDrawProcessor {
     private readonly agentPool: Pool,
     ragService: RAGService
   ) {
-    this.queue      = new Queue(QUEUE_NAME, { connection: redisConnection() });
-    this.comparator = new ResultComparator();
-    this.evaluator  = new StrategyEvaluator(agentPool);
-    this.embedder   = new LearningEmbedder(agentPool, ragService);
-    this.drift      = new DriftDetector(ballbotPool);
-    this.ppsService = new PPSService(agentPool);   // MOTOR-Σ
+    this.queue        = new Queue(QUEUE_NAME, { connection: redisConnection() });
+    this.comparator   = new ResultComparator();
+    this.evaluator    = new StrategyEvaluator(agentPool);
+    this.embedder     = new LearningEmbedder(agentPool, ragService);
+    this.drift        = new DriftDetector(ballbotPool);
+    this.ppsService   = new PPSService(agentPool);        // MOTOR-Σ
+    this.autoLearning = new AutoLearningLoop(agentPool);  // HELIX Autónomo
     // notifier se asigna vía setNotifier() — NO en el constructor
   }
 
@@ -250,6 +254,29 @@ export class PostDrawProcessor {
         });
       }
     }
+
+    // ─── FASE G: AutoLearningLoop — ciclo autónomo HELIX ─────────────────────
+    // No bloquea: errores son logueados y el flujo continúa.
+    // Detecta anomalías → genera hipótesis → valida → activa micro-estrategias.
+    setImmediate(async () => {
+      try {
+        const learningResult = await this.autoLearning.processDrawResult(
+          game_type, draw_type, draw_date, actual_digits
+        );
+        logger.info({
+          anomalies:   learningResult.anomalies_detected,
+          hypotheses:  learningResult.hypotheses_generated,
+          validated:   learningResult.hypotheses_validated,
+          strategies:  learningResult.strategies_evaluated,
+          duration_ms: learningResult.duration_ms,
+        }, 'AutoLearningLoop: ciclo autónomo completado');
+      } catch (err) {
+        logger.warn(
+          { error: err instanceof Error ? err.message : String(err) },
+          'AutoLearningLoop: error en ciclo autónomo — no bloquea flujo principal'
+        );
+      }
+    });
 
     logger.info(
       {

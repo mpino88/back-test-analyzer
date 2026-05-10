@@ -15,6 +15,9 @@ import { LLMRouter }          from '../../agent/services/LLMRouter.js';
 import { PPSService }          from '../../agent/services/PPSService.js';
 import { TrendMomentum }       from '../../agent/analysis/algorithms/TrendMomentum.js';
 import { CognitiveLearner }    from '../../agent/learning/CognitiveLearner.js';
+import { AutoLearningLoop }        from '../../agent/learning/AutoLearningLoop.js';
+import { DigitAnalyzer }           from '../../agent/analysis/DigitAnalyzer.js';
+import { AutonomousOrchestrator }  from '../../agent/core/AutonomousOrchestrator.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -32,6 +35,9 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const ppsService           = new PPSService(agentPool);
   const trendMomentumAlgo    = new TrendMomentum(agentPool);
   const cognitiveLearner     = new CognitiveLearner(agentPool);
+  const autoLearningLoop        = new AutoLearningLoop(agentPool);
+  const digitAnalyzer           = new DigitAnalyzer(agentPool);
+  const autonomousOrchestrator  = new AutonomousOrchestrator(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -1598,6 +1604,152 @@ ${ragSummary}`;
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo PPS ranking');
       res.status(500).json({ error: 'Error obteniendo PPS ranking' });
+    }
+  });
+
+  // ──────────────────────────────────────────────────────────────
+  // AUTONOMOUS AGENT ENDPOINTS — Fase Autónoma HELIX
+  // ──────────────────────────────────────────────────────────────
+
+  // GET /api/agent/anomalies?game_type=pick3&draw_type=evening
+  router.get('/anomalies', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const report = await autoLearningLoop.getCurrentSignals(game_type, draw_type);
+      res.json(report);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo señales de anomalía');
+      res.status(500).json({ error: 'Error obteniendo señales de anomalía' });
+    }
+  });
+
+  // POST /api/agent/anomalies/scan — disparo manual de escaneo
+  router.post('/anomalies/scan', async (req: Request, res: Response) => {
+    try {
+      const { game_type = 'pick3', draw_type = 'evening' } = req.body as {
+        game_type?: GameType; draw_type?: DrawType;
+      };
+      const result = await autoLearningLoop.manualScan(game_type, draw_type);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en escaneo manual');
+      res.status(500).json({ error: 'Error en escaneo manual' });
+    }
+  });
+
+  // GET /api/agent/hypotheses?game_type=pick3&draw_type=evening&status=pending
+  router.get('/hypotheses', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const status    = (req.query.status as string) || 'all';
+
+      const whereStatus = status === 'all'
+        ? ''
+        : `AND validation_status = '${status}'`;
+
+      const { rows } = await agentPool.query(
+        `SELECT id::text, game_type, draw_type, hypothesis_type,
+                condition_json, predicted_pair, predicted_digit, predicted_position,
+                predicted_hit_rate, confidence_basis, minimum_sample, validation_window,
+                validation_status, validation_hit_rate, validation_lift,
+                validation_p_value, validation_draws, created_at, validated_at
+         FROM hitdash.hypotheses
+         WHERE game_type = $1 AND draw_type = $2
+           ${whereStatus}
+         ORDER BY created_at DESC
+         LIMIT 100`,
+        [game_type, draw_type]
+      );
+      res.json(rows);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo hipótesis');
+      res.status(500).json({ error: 'Error obteniendo hipótesis' });
+    }
+  });
+
+  // GET /api/agent/dynamic-strategies?game_type=pick3&draw_type=evening
+  router.get('/dynamic-strategies', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const include_retired = req.query.include_retired === 'true';
+
+      const statusFilter = include_retired
+        ? `AND lifecycle_status IN ('monitoring','active','degrading','consolidated','retired')`
+        : `AND lifecycle_status IN ('monitoring','active','degrading','consolidated')`;
+
+      const { rows } = await agentPool.query(
+        `SELECT id::text, game_type, draw_type, hypothesis_id::text,
+                name, description, strategy_type, target_pairs, target_digits,
+                score_boost, lifecycle_status, draws_active, hits_in_prod,
+                misses_in_prod, consecutive_misses, activation_hit_rate,
+                min_expected_hit_rate, contribution_count, created_at, activated_at,
+                last_evaluated, retired_at
+         FROM hitdash.dynamic_strategies
+         WHERE game_type = $1 AND draw_type = $2
+           ${statusFilter}
+         ORDER BY score_boost DESC, hits_in_prod DESC`,
+        [game_type, draw_type]
+      );
+      res.json(rows);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo estrategias dinámicas');
+      res.status(500).json({ error: 'Error obteniendo estrategias dinámicas' });
+    }
+  });
+
+  // GET /api/agent/digit-analysis?game_type=pick3&draw_type=evening
+  router.get('/digit-analysis', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+
+      if (game_type !== 'pick3') {
+        return res.status(400).json({ error: 'digit-analysis solo disponible para pick3' });
+      }
+
+      // Obtener señales de anomalía activas primero (para bonus)
+      const anomalyReport = await autoLearningLoop.getCurrentSignals(game_type, draw_type);
+      const analysis = await digitAnalyzer.analyzeDigits(draw_type, anomalyReport.signals);
+      res.json(analysis);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en digit analysis');
+      res.status(500).json({ error: 'Error en digit analysis' });
+    }
+  });
+
+  // GET /api/agent/autonomous-recommendations?game_type=pick3&draw_type=evening
+  router.get('/autonomous-recommendations', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const result = await autonomousOrchestrator.generateRecommendations(game_type, draw_type);
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en autonomous recommendations');
+      res.status(500).json({ error: 'Error en autonomous recommendations' });
+    }
+  });
+
+  // GET /api/agent/anomaly-scan-log?limit=20
+  router.get('/anomaly-scan-log', async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(Number(req.query.limit ?? 20), 100);
+      const { rows } = await agentPool.query(
+        `SELECT id, game_type, draw_type, signals_found, hypotheses_generated,
+                hypotheses_validated, hypotheses_rejected, strategies_activated,
+                strategies_retired, scan_duration_ms, triggered_by, created_at
+         FROM hitdash.anomaly_scan_log
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+      res.json(rows);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo anomaly scan log');
+      res.status(500).json({ error: 'Error obteniendo anomaly scan log' });
     }
   });
 

@@ -25,6 +25,9 @@
         <RouterLink to="/agent/tracking"          class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📡</span> Cognición
         </RouterLink>
+        <RouterLink to="/agent/anomalies"         class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">🧬</span> Autónomo
+        </RouterLink>
         <RouterLink to="/agent/alerts"            class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>
           Alertas

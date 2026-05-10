@@ -29,6 +29,7 @@ const MIGRATIONS = [
   '012_agentic_strategies.sql',
   '013_motor_sigma.sql',      // MOTOR-Σ: algo_rank_history, pps_state, algo_prediction_snapshot
   '014_cognitive_learner.sql', // CognitiveLearner: cognitive_learning_runs, cognitive_algo_weights
+  '015_autonomous_agent.sql',  // Agente autónomo: hypotheses, dynamic_strategies, anomaly_scan_log
 ];
 
 async function migrate(): Promise<void> {
