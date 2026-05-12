@@ -72,7 +72,7 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   gap_analysis:      'gap_overdue_focus',
   hot_cold:          'hot_cold_weighted',
   pairs_correlation: 'pair_correlation',
-  fibonacci_resonance:  'fibonacci_resonance',
+  fibonacci_pisano:  'fibonacci_pisano',
   streak:            'streak_reversal',
   position:          'position_bias',
   // MovingAverages.runPairs() computa (sma7-sma14)+ema → blend de moving_avg_signal + momentum_ema
@@ -100,7 +100,7 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   gap_overdue_focus: 12,
   hot_cold_weighted: 15,
   pair_correlation:  20,
-  fibonacci_resonance:  25,
+  fibonacci_pisano:  25,
   streak_reversal:   10,
   position_bias:     22,
   moving_avg_signal: 15,
@@ -296,7 +296,7 @@ export class AnalysisEngine {
     const gapResult    = unwrap(rGap,    'gap_analysis');
     const hcResult     = unwrap(rHC,     'hot_cold');
     const pairsResult  = unwrap(rPairs,  'pairs_correlation');
-    const fibResult    = unwrap(rFib,    'fibonacci_resonance');
+    const fibResult    = unwrap(rFib,    'fibonacci_pisano');
     const streakResult = unwrap(rStreak, 'streak');
     const posResult    = unwrap(rPos,    'position');
     const maResult     = unwrap(rMA,     'moving_averages');
@@ -401,7 +401,7 @@ export class AnalysisEngine {
           if (entry.alignment_score > 0) {
             addSignal(pos, entry.digit, {
               digit: entry.digit,
-              algorithm: 'fibonacci_resonance',
+              algorithm: 'fibonacci_pisano',
               score: clamp01(entry.alignment_score / 2.0),
               reason: `pisano_idx=${entry.current_pisano_index} align=${entry.alignment_score}`,
             });
@@ -686,7 +686,7 @@ export class AnalysisEngine {
       ['gap_analysis',      effectiveWeight('gap_analysis'),      rGap],
       ['hot_cold',          effectiveWeight('hot_cold'),          rHC],
       ['pairs_correlation', effectiveWeight('pairs_correlation'), rPairs],
-      ['fibonacci_resonance',  effectiveWeight('fibonacci_resonance'),  rFib],
+      ['fibonacci_pisano',  effectiveWeight('fibonacci_pisano'),  rFib],
       ['streak',            effectiveWeight('streak'),            rStreak],
       ['position',          effectiveWeight('position'),          rPos],
       // moving_averages recibe su propio peso + el factor de momentum_ema (blend)

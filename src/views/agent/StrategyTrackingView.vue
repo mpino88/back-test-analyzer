@@ -1140,7 +1140,7 @@ function algoLabel(name) {
     pair_return_cycle: '🔁 Ciclo Retorno', sum_pattern_filter: '➕ Suma Patrón',
     double_triple: '🎲 Doble/Triple', cross_draw: '✕ Cross-Draw',
     moving_avg_signal: '📈 Moving Avg', position_bias: '🎯 Sesgo Posicional',
-    pair_correlation: '🔗 Correlación', fibonacci_pisano: '🌀 Fibonacci',
+    pair_correlation: '🔗 Correlación', fibonacci_pisano: '🌀 FibResonance',
     decade_family: '🏘 Familias Décadas', max_per_weekday: '📆 Máx. Día',
   };
   return MAP[name] ?? name;

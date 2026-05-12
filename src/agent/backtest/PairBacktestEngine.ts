@@ -486,31 +486,77 @@ const pairCorrelation: PairRankFn = (draws, half) => {
   }).sort((a, b) => b.score - a.score);
 };
 
-// ─── 9. fibonacci_pisano ─────────────────────────────────────
-// phase_freq(XY) / general_freq(XY) donde phase = draws.length % 60
+// ─── 9. fibonacci_pisano (clase: FibonacciResonancePro) ──────────
+// Multi-sequence Gaussian resonance: Fibonacci + Lucas + Tribonacci + Primes + Triangular
+// score = 0.05 + 0.30×W_composite + 0.20×momentum + 0.15×hist_freq
+//       + 0.15×cycle_consistency + 0.10×gap_alignment + 0.05×anti_recency
+// (ID mantenido como "fibonacci_pisano" para continuidad PPS y backtest histórico)
+const _FRP_SEQ = {
+  fib:  [1,1,2,3,5,8,13,21,34,55,89,144],
+  luc:  [2,1,3,4,7,11,18,29,47,76,123],
+  tri:  [1,1,2,4,7,13,24,44,81,149],
+  pri:  [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,101,103,107,109,113,127,131,137,139,149,151,157,163,167,173,179,181,191,193,197,199],
+  tri2: [1,3,6,10,15,21,28,36,45,55,66,78,91,105,120,136,153,171,190],
+};
+const _FRP_W = [0.30, 0.20, 0.20, 0.15, 0.15];
+function _frpGauss(t: number, c: number, s: number): number { const d = t - c; return Math.exp(-(d*d)/(2*s*s)); }
+function _frpRes(t: number, seq: number[]): number {
+  if (t <= 0) return 0;
+  let W = 0; const seqArr = seq;
+  for (const F_n of seqArr) { if (F_n > t * 3) break; W += _frpGauss(t, F_n, Math.max(1.0, F_n * 0.15)); }
+  return Math.min(1.0, W / seqArr.length * 3);
+}
+function _frpComposite(t: number): number {
+  const seqs = [_FRP_SEQ.fib, _FRP_SEQ.luc, _FRP_SEQ.tri, _FRP_SEQ.pri, _FRP_SEQ.tri2];
+  return Math.min(1.0, seqs.reduce((acc, seq, i) => acc + (_FRP_W[i] ?? 0) * _frpRes(t, seq), 0));
+}
+function _frpCycleCons(gaps: number[]): number {
+  if (gaps.length < 3) return 0.5;
+  const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+  const cv = mean > 0 ? Math.sqrt(gaps.reduce((acc, g) => acc + (g - mean) ** 2, 0) / gaps.length) / mean : 1;
+  return Math.max(0, Math.min(1, 1 - cv));
+}
+
 const pairFibonacciPisano: PairRankFn = (draws, half) => {
   if (draws.length === 0) return pairFrequencyRank(draws, half);
-  const currentPhase = draws.length % 60;
-  const total        = draws.length;
+  const total = draws.length;
+  const RECENT = 60;
+  const recentStart = Math.max(0, total - RECENT);
 
-  const generalCount = new Map<string, number>(ALL_PAIRS.map(p => [p, 0]));
-  const phaseCount   = new Map<string, number>(ALL_PAIRS.map(p => [p, 0]));
-  let phaseTotal     = 0;
+  const lastSeenIdx: Record<string, number> = {};
+  const gaps: Record<string, number[]> = {};
+  const countGeneral: Record<string, number> = {};
+  const countRecent: Record<string, number> = {};
 
-  draws.forEach((d, idx) => {
+  // Draws are ordered DESC (index 0 = latest). Reverse for ASC processing.
+  const asc = [...draws].reverse();
+  asc.forEach((d, idx) => {
     const pair = extractPair(d, half);
-    generalCount.set(pair, (generalCount.get(pair) ?? 0) + 1);
-    if (idx % 60 === currentPhase) {
-      phaseCount.set(pair, (phaseCount.get(pair) ?? 0) + 1);
-      phaseTotal++;
+    countGeneral[pair] = (countGeneral[pair] ?? 0) + 1;
+    if (idx >= total - RECENT) countRecent[pair] = (countRecent[pair] ?? 0) + 1;
+    if (lastSeenIdx[pair] !== undefined) {
+      if (!gaps[pair]) gaps[pair] = [];
+      gaps[pair]!.push(idx - lastSeenIdx[pair]!);
     }
+    lastSeenIdx[pair] = idx;
   });
 
   return ALL_PAIRS.map(pair => {
-    const generalFreq = total > 0 ? (generalCount.get(pair) ?? 0) / total : 0;
-    const phaseFreq   = phaseTotal > 0 ? (phaseCount.get(pair) ?? 0) / phaseTotal : 0;
-    const alignment   = generalFreq > 0 ? phaseFreq / generalFreq : 0;
-    return { pair, score: alignment };
+    const seen = lastSeenIdx[pair];
+    if (seen === undefined) return { pair, score: 0.05 };
+    const pairGaps = gaps[pair] ?? [];
+    const lastGap = (total - 1) - seen;
+    const avgGap = pairGaps.length > 0 ? pairGaps.reduce((a, b) => a + b, 0) / pairGaps.length : total;
+    const histFreq  = (countGeneral[pair] ?? 0) / total;
+    const recentFreq = (countRecent[pair] ?? 0) / Math.min(RECENT, total);
+    const W         = _frpComposite(lastGap);
+    const momentum  = Math.min(1, Math.max(0, histFreq > 0 ? recentFreq / histFreq - 0.5 : 0));
+    const cc        = _frpCycleCons(pairGaps);
+    const gapAlign  = avgGap > 0 ? Math.max(0, 1 - Math.abs(lastGap / avgGap - 1)) : 0;
+    const antiRec   = lastGap >= 3 ? 1.0 : lastGap / 3;
+    const score = 0.05 + 0.30*W + 0.20*momentum + 0.15*Math.min(1, histFreq * 50)
+                + 0.15*cc + 0.10*gapAlign + 0.05*antiRec;
+    return { pair, score: Math.max(0, Math.min(1, score)) };
   }).sort((a, b) => b.score - a.score);
 };
 

@@ -174,7 +174,7 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   pairs_correlation: 0.75,
   moving_averages:   0.7,
   streak:            0.65,
-  fibonacci_resonance: 0.5,  // FibonacciResonancePro — multi-sequence Gaussian
+  fibonacci_pisano:    0.5,  // FibonacciResonancePro (mismo ID para continuidad PPS)
   est_individuales:    0.6,  // Ballbot est_individuales — maxHistorical gap proximity
   // ─── Ballbot Clones (agentic strategies v2) ────────────────────
   bayesian_score:    1.1,   // multi-señal 6 componentes — peso máximo
