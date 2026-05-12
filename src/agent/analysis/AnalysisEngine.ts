@@ -37,6 +37,8 @@ import { DoubleTripleDetector }  from './algorithms/DoubleTripleDetector.js';
 import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
 // ─── Ballbot canonical strategy (v4) ────────────────────────────────────────
 import { TrendMomentum }         from './algorithms/TrendMomentum.js';
+// ─── Ballbot absorption (v5 — est_individuales) ─────────────────────────────
+import { EstIndividuales }       from './algorithms/EstIndividuales.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
 import type { DynamicStrategy }             from '../services/StrategyLifecycleManager.js';
@@ -215,7 +217,8 @@ export class AnalysisEngine {
   private readonly dblTriple:    DoubleTripleDetector;
   private readonly crossDraw:    CrossDrawCorrelation;
   // ─── Ballbot canonical (v4) ───────────────────────────────────
-  private readonly trendMomentum: TrendMomentum;
+  private readonly trendMomentum:   TrendMomentum;
+  private readonly estIndividuales: EstIndividuales;
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
   private readonly ppsService:  PPSService;
 
@@ -248,7 +251,8 @@ export class AnalysisEngine {
     this.sumPattern    = new SumPatternFilter(agentPool);
     this.dblTriple     = new DoubleTripleDetector(agentPool);
     this.crossDraw     = new CrossDrawCorrelation(agentPool);
-    this.trendMomentum = new TrendMomentum(agentPool);
+    this.trendMomentum    = new TrendMomentum(agentPool);
+    this.estIndividuales  = new EstIndividuales(agentPool);
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
     this.ppsService = new PPSService(agentPool);
   }
@@ -552,7 +556,7 @@ export class AnalysisEngine {
            rFreqShort, rHCShort,
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
            rPairReturn, rSumPattern, rDoubleTriple, rCrossDraw,
-           rTrendMomentum,
+           rTrendMomentum, rEstIndividuales,
     ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
@@ -583,6 +587,8 @@ export class AnalysisEngine {
       this.crossDraw.runPairs(game_type, draw_type, half, period),
       // ─── Ballbot canonical (v4) ──────────────────────────────────────────
       this.trendMomentum.runPairs(game_type, draw_type, half, period),
+      // ─── Ballbot absorption (v5) — hottest-due individual numbers ────────
+      this.estIndividuales.runPairs(game_type, draw_type, half, 365),
     ]);
 
     const algorithms_succeeded: string[] = [];
@@ -699,6 +705,7 @@ export class AnalysisEngine {
       ['cross_draw',         effectiveWeight('cross_draw'),         rCrossDraw],
       // ─── Ballbot canonical (v4) — misma fórmula que "Fuerza de Tendencia Pro" ──
       ['trend_momentum',     effectiveWeight('trend_momentum'),     rTrendMomentum],
+      ['est_individuales',   effectiveWeight('est_individuales'),   rEstIndividuales],
     ];
 
     // Accumulate weighted scores per pair "00"-"99"
