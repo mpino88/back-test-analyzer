@@ -73,13 +73,78 @@ export class HelixSentinel {
 
     for (const c of combos) {
       // En modo proactivo solo corremos los chequeos ligeros (no requieren AutoLearningResult)
+      // ROUND 2 FIX 4.4: añadido checkPPSDelta — detecta cambios PPS súbitos
       await Promise.all([
         this.checkCriticalSignals(c.game_type, c.draw_type),
         this.checkAlgoDegradation(c.game_type, c.draw_type),
+        this.checkPPSDelta(c.game_type, c.draw_type),
       ]).catch(() => {});
     }
 
     logger.info({ duration_ms: Date.now() - t0 }, 'HelixSentinel: ciclo proactivo completado');
+  }
+
+  // ─── ROUND 2 FIX 4.1-4.5: PPS Delta Watcher ──────────────────────────────
+  // Detecta caídas/subidas súbitas en PPS dentro de las últimas 6 evaluaciones
+  // por algoritmo. Si |Δpps| > 15 puntos → alerta Telegram.
+  // Cooldown propio: 3h (más reactivo que el genérico 6h del Sentinel).
+  private async checkPPSDelta(game_type: GameType, draw_type: DrawType): Promise<void> {
+    const half = game_type === 'pick3' ? 'du' : 'ab';
+    const DELTA_THRESHOLD = 15;     // puntos PPS de cambio que activan alerta
+    const LOOKBACK_DRAWS  = 6;      // últimas 6 evaluaciones
+
+    try {
+      const { rows } = await this.pool.query<{ algo_name: string; pps_before: number; pps_after: number }>(
+        `SELECT algo_name, pps_before, pps_after
+         FROM hitdash.algo_rank_history
+         WHERE game_type = $1 AND draw_type = $2 AND half = $3
+         ORDER BY draw_date DESC LIMIT $4 * 30`,
+        [game_type, draw_type, half, LOOKBACK_DRAWS]
+      );
+
+      if (rows.length === 0) return;
+
+      // Agrupar por algo y tomar el más reciente vs el más antiguo en ventana
+      const byAlgo = new Map<string, { latest: number; oldest: number; samples: number }>();
+      for (const r of rows) {
+        const entry = byAlgo.get(r.algo_name);
+        if (!entry) {
+          byAlgo.set(r.algo_name, { latest: Number(r.pps_after), oldest: Number(r.pps_before), samples: 1 });
+        } else {
+          entry.oldest = Number(r.pps_before); // se va sobreescribiendo, queda el más viejo
+          entry.samples++;
+        }
+      }
+
+      const alerts: Array<{ algo: string; delta: number; latest: number; samples: number }> = [];
+      for (const [algo, e] of byAlgo) {
+        if (e.samples < 3) continue;        // muy pocos datos para delta confiable
+        const delta = e.latest - e.oldest;
+        if (Math.abs(delta) >= DELTA_THRESHOLD) {
+          alerts.push({ algo, delta: +delta.toFixed(1), latest: +e.latest.toFixed(1), samples: e.samples });
+        }
+      }
+
+      for (const a of alerts.slice(0, 2)) { // max 2 por ciclo
+        const key = `sentinel:pps_delta:${game_type}:${draw_type}:${a.algo}:${a.delta > 0 ? 'UP' : 'DOWN'}`;
+        if (await this.isOnCooldown(key, 3)) continue;  // cooldown 3h específico
+        await this.notifier.notifySentinelAlert({
+          event_type: 'pps_delta',
+          game_type, draw_type,
+          urgency: Math.abs(a.delta) >= 25 ? 'critical' : 'warning',
+          title: `📈 PPS Delta ${a.delta > 0 ? '↑' : '↓'} ${a.algo}`,
+          body: [
+            `• Cambio: \`${a.delta > 0 ? '+' : ''}${a.delta}\` puntos`,
+            `• PPS actual: \`${a.latest}\``,
+            `• Ventana: ${a.samples} evaluaciones recientes`,
+            `• Significado: ${a.delta > 0 ? 'algoritmo mejorando rápidamente' : 'algoritmo degradándose rápidamente'}`,
+          ].join('\n'),
+        });
+        await this.setCooldown(key);
+      }
+    } catch (err) {
+      logger.debug({ error: String(err) }, 'HelixSentinel.checkPPSDelta: skip (no data)');
+    }
   }
 
   // ─── Punto de entrada: evaluar después de cada sorteo ────────────────────
@@ -277,12 +342,13 @@ export class HelixSentinel {
   }
 
   // ─── Anti-spam: cooldown en DB ────────────────────────────────────────────
-  private async isOnCooldown(key: string): Promise<boolean> {
+  // ROUND 2 FIX 4.5: cooldownHours opcional para alertas con cadencia distinta
+  private async isOnCooldown(key: string, cooldownHours: number = COOLDOWN_HOURS): Promise<boolean> {
     try {
       const { rows } = await this.pool.query(
         `SELECT 1 FROM hitdash.sentinel_cooldowns
-         WHERE event_key = $1 AND fired_at > now() - interval '${COOLDOWN_HOURS} hours'`,
-        [key]
+         WHERE event_key = $1 AND fired_at > now() - ($2 || ' hours')::interval`,
+        [key, cooldownHours]
       );
       return rows.length > 0;
     } catch {

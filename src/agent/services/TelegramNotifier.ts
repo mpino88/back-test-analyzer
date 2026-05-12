@@ -146,10 +146,45 @@ export class TelegramNotifier {
     const gameLabel = game_type === 'pick3' ? 'Pick 3' : 'Pick 4';
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
-    // PATCH 2026-05-12: header honesto sobre estado del motor estadístico
+    // ─── ROUND 2 FIX (1.1-1.5): No-edge GUARD comportamiento configurable ──
+    // HELIX_NO_EDGE_BEHAVIOR ∈ { 'warn' | 'tighten' | 'block' }
+    //   'warn'    → notifica con badge 🔴/🟡 (default — no rompe nada)
+    //   'tighten' → fuerza N=5 + warning prominente (apuesta defensiva)
+    //   'block'   → suprime notificación entirely (modo silencio)
+    const noEdgeBehavior = (process.env['HELIX_NO_EDGE_BEHAVIOR'] ?? 'warn').toLowerCase();
     const anyEdge = recs.some(r => r.has_edge === true);
+
+    if (!anyEdge && noEdgeBehavior === 'block') {
+      logger.warn(
+        { game_type, draw_type, draw_date, behavior: 'block', recs_count: recs.length },
+        '🚫 HELIX NO-EDGE BLOCK: predicción suprimida, ninguna rec con borde detectable'
+      );
+      return; // GUARD REAL: no notify
+    }
+
+    if (!anyEdge && noEdgeBehavior === 'tighten') {
+      // Recortar cada rec a top 5 pares (apuesta defensiva)
+      for (const rec of recs) {
+        rec.pairs = rec.pairs.slice(0, 5);
+        rec.top_n = Math.min(rec.top_n, 5);
+        // Recalcular tiers para N=5
+        rec.tiers = {
+          must:  rec.pairs.slice(0, 2),
+          cover: rec.pairs.slice(2, 4),
+          watch: rec.pairs.slice(4, 5),
+        };
+      }
+      logger.warn(
+        { game_type, draw_type, draw_date, behavior: 'tighten', new_top_n: 5 },
+        '⚠️  HELIX NO-EDGE TIGHTEN: N recortado a 5 pares defensivos'
+      );
+    }
+
+    // PATCH 2026-05-12: header honesto sobre estado del motor estadístico
     const headerTitle = anyEdge
       ? `🧬 *HELIX — Motor Adaptativo (borde detectado)*`
+      : noEdgeBehavior === 'tighten'
+      ? `⚠️ *HELIX — Modo Defensivo (sin borde, N=5 conservador)*`
       : `🧬 *HELIX — Motor Adaptativo (calibrando, sin borde aún)*`;
     const header = [
       headerTitle,
@@ -374,7 +409,7 @@ export class TelegramNotifier {
 
   // ── SENTINEL: alertas autónomas proactivas ───────────────────────────────
   async notifySentinelAlert(params: {
-    event_type:  'critical_signal' | 'strategy_consolidated' | 'strategy_retired' | 'bootstrap_complete' | 'algo_degraded';
+    event_type:  'critical_signal' | 'strategy_consolidated' | 'strategy_retired' | 'bootstrap_complete' | 'algo_degraded' | 'pps_delta';
     game_type:   string;
     draw_type:   string;
     title:       string;

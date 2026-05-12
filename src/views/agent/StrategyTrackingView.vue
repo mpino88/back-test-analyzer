@@ -4,7 +4,7 @@
     <!-- ── HEADER ─────────────────────────────────────────────── -->
     <div class="tracking-header">
       <div class="tracking-header__left">
-        <h1 class="tracking-title">Estrategias · Cognición & Aprendizaje</h1>
+        <h1 class="tracking-title">Estrategias · Performance & Aprendizaje Adaptativo</h1>
         <p class="tracking-subtitle">Análisis profundo · Razonamiento adaptativo · Inteligencia colectiva</p>
       </div>
       <div class="tracking-header__controls">

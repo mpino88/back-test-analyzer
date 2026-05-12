@@ -28,10 +28,14 @@ import type { Hypothesis } from './HypothesisGenerator.js';
 
 const logger = pino({ name: 'HypothesisValidator' });
 
-// Umbrales de activación
-const MIN_HIT_RATE  = 0.20;
-const MAX_P_VALUE   = 0.15;
-const MIN_LIFT      = 1.5;
+// ─── ROUND 2 FIX 3.2-3.4: Umbrales relajados ───────────────────────────────
+// Antes: MIN_LIFT=1.5, MIN_HIT_RATE=0.20 → ~95% rechazo, estrategias muertas al nacer.
+// Ahora: MIN_LIFT=1.15, MIN_HIT_RATE=0.18 → permite que más estrategias entren al ciclo
+//        de vida. Si no funcionan, StrategyLifecycle las jubila igual (PROBATION→RETIRED).
+// Filosofía: mejor más estrategias en prueba con criba post-activación que ninguna activada.
+const MIN_HIT_RATE  = 0.18;  // antes 0.20
+const MAX_P_VALUE   = 0.20;  // antes 0.15 — permite p hasta 20% (más laxo, lifecycle filtra)
+const MIN_LIFT      = 1.15;  // antes 1.5 — bastará +15% sobre baseline
 const PREDICT_WINDOW = 3;    // verificar si acierta en los próximos 3 sorteos
 
 export interface ValidationResult {
@@ -68,9 +72,10 @@ export class HypothesisValidator {
 
     try {
       // Cargar historial suficiente para validación walk-forward
+      // ROUND 2 FIX 3.3: ventana 60 → 30 (menos historia requerida → más hipótesis evaluables)
       const draws = await this.loadDraws(
         game_type, draw_type,
-        hypothesis.validation_window + 60
+        hypothesis.validation_window + 30
       );
 
       if (draws.length < hypothesis.minimum_sample + PREDICT_WINDOW) {

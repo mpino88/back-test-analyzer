@@ -493,8 +493,8 @@ export class HitdashAgent {
     }
 
     // ═══ ALERTA PRESCRIPTIVA DESACTIVADA ══════════════════════════════
-    // La "Señal Estratégica" era ruido innecesario después de la Decisión Magistral.
-    // La Decisión Magistral ya contiene N, efectividad y pares → no hay información
+    // La "Señal Estratégica" era ruido innecesario después de la Recomendación Adaptativa.
+    // La Recomendación Adaptativa ya contiene N, efectividad y pares → no hay información
     // adicional que agregar. Desactivado por diseño limpio 2026-05-08.
     // await this.fireProactivePrescriptiveAlert(allRecs, game_type, draw_type);
 

@@ -12,7 +12,7 @@
 // Flujo:
 //   1. Pre-sorteo: HitdashAgent llama storeAll() → guarda candidatos en DB
 //   2. Post-sorteo: PostDrawProcessor llama recordHits() → compara vs real
-//   3. Dashboard Cognición → muestra historial de aciertos por algoritmo
+//   3. Dashboard Performance → muestra historial de aciertos por algoritmo
 //
 // Threshold mapping de Ballbot:
 //   trend_momentum:    countAll ≥ 3, momentum ≥ 1.0 → top 20

@@ -23,7 +23,7 @@
           <span class="nav-link__icon">⚙️</span> BT Control
         </RouterLink>
         <RouterLink to="/agent/tracking"          class="nav-link" active-class="nav-link--active">
-          <span class="nav-link__icon">📡</span> Cognición
+          <span class="nav-link__icon">📡</span> Performance
         </RouterLink>
         <RouterLink to="/agent/anomalies"         class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🧬</span> Autónomo

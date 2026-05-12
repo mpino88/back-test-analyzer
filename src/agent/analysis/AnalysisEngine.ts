@@ -717,10 +717,38 @@ export class AnalysisEngine {
     // Se persiste al final para que PostDrawProcessor pueda computar rank_of_winner.
     const algoScores = new Map<string, Record<string, number>>();
 
+    // ─── ROUND 2 FIX 2.5: Algorithm Killswitch — skip DISABLED, multiplicar weight DEGRADED ──
+    // Antes de normalizar, consultamos AlgorithmHealthMonitor.
+    // DISABLED → algo no contribuye al consensus (hit_rate sostenido < baseline×1.10).
+    // DEGRADED → algo contribuye con weight × 0.5 (hit_rate sostenido < baseline).
+    let healthMap = new Map<string, { status: 'healthy' | 'degraded' | 'disabled'; weight_multiplier: number }>();
+    try {
+      const { AlgorithmHealthMonitor } = await import('../services/AlgorithmHealthMonitor.js');
+      const hm = new AlgorithmHealthMonitor(this.agentPool);
+      const health = await hm.getHealth(game_type, draw_type, half);
+      healthMap = new Map(
+        Array.from(health.entries()).map(([k, v]) => [k, { status: v.status, weight_multiplier: v.weight_multiplier }])
+      );
+    } catch (err) {
+      logger.debug({ error: String(err) }, 'AnalysisEngine: AlgorithmHealthMonitor skip (no data yet)');
+    }
+
     // ─── PASO 1: Normalizar scores por algoritmo (sin sumar todavía) ──
     const normalizedPerAlgo = new Map<string, { weight: number; normalized: Record<string, number> }>();
+    const killedAlgos:   string[] = [];
+    const degradedAlgos: string[] = [];
     for (const [name, weight, result] of algResults) {
       if (result.status === 'fulfilled') {
+        // KILLSWITCH check
+        const health = healthMap.get(name);
+        if (health?.status === 'disabled') {
+          killedAlgos.push(name);
+          continue; // skip — no contribuye al consensus
+        }
+        const healthMult = health?.weight_multiplier ?? 1.0;
+        if (health?.status === 'degraded') degradedAlgos.push(name);
+        const effWeightHealth = weight * healthMult;
+
         algorithms_succeeded.push(name);
         const scores = result.value;
         const maxScore = Math.max(...Object.values(scores), 1e-9);
@@ -728,7 +756,7 @@ export class AnalysisEngine {
         for (const [key, score] of Object.entries(scores)) {
           normalized[key] = score / maxScore;
         }
-        normalizedPerAlgo.set(name, { weight, normalized });
+        normalizedPerAlgo.set(name, { weight: effWeightHealth, normalized });
         // Guardar para snapshot solo si el algo produjo diferenciación real
         const vals = Object.values(normalized);
         const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
@@ -741,6 +769,13 @@ export class AnalysisEngine {
         });
         logger.warn({ algorithm: name, error: result.reason }, 'runPairs fallido — excluido del consensus');
       }
+    }
+
+    if (killedAlgos.length > 0 || degradedAlgos.length > 0) {
+      logger.info(
+        { killed: killedAlgos, degraded: degradedAlgos, healthy_count: normalizedPerAlgo.size },
+        '🔪 Killswitch aplicado al consensus'
+      );
     }
 
     // ─── PASO 2: PENALTY de REDUNDANCIA (PATCH 2026-05-12) ────────────────

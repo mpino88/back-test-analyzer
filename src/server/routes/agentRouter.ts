@@ -1818,6 +1818,30 @@ ${ragSummary}`;
 
   // ── COMPARATIVA SIMÉTRICA — endpoints ────────────────────────────────────
 
+  // GET /api/agent/algorithm-health?game_type=pick3&draw_type=evening&half=du
+  // ROUND 2 FIX 2.6: expone status (healthy|degraded|disabled) por algoritmo
+  router.get('/algorithm-health', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const half      = (req.query.half as string) || (game_type === 'pick3' ? 'du' : 'ab');
+      const { AlgorithmHealthMonitor } = await import('../../agent/services/AlgorithmHealthMonitor.js');
+      const monitor = new AlgorithmHealthMonitor(agentPool);
+      const summary = await monitor.getHealthSummary(game_type, draw_type, half);
+      res.json({
+        game_type, draw_type, half,
+        total: summary.length,
+        healthy:  summary.filter(s => s.status === 'healthy').length,
+        degraded: summary.filter(s => s.status === 'degraded').length,
+        disabled: summary.filter(s => s.status === 'disabled').length,
+        algorithms: summary,
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en algorithm-health');
+      res.status(500).json({ error: 'Error obteniendo health' });
+    }
+  });
+
   // GET /api/agent/algo-comparison/hit-rates?game_type=pick3&draw_type=evening&half=du&days=30
   router.get('/algo-comparison/hit-rates', async (req: Request, res: Response) => {
     try {
