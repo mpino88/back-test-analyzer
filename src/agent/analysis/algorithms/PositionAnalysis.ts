@@ -145,9 +145,10 @@ export class PositionAnalysis {
     };
   }
 
-  // ─── Pair mode (v2) ─────────────────────────────────────────────
-  // Score = empirical joint frequency f(XY). Deviation from 0.01 uniform baseline
-  // captures position bias: pairs whose positions systematically favor certain digits.
+  // ─── Pair mode v2 — diagonal combination (matches Ballbot positional_analysis) ──
+  // Uses per-digit frequency at each position separately, then combines via
+  // diagonal traversal: pairs ranked by (freq_decena_rank + freq_unidad_rank).
+  // This avoids the N=100 flat ranking problem of pure joint frequency.
   async runPairs(
     game_type: GameType,
     draw_type: DrawType,
@@ -163,22 +164,36 @@ export class PositionAnalysis {
     );
 
     const total = rows.length;
-    const pairCounts: Record<string, number> = {};
+    const countA: number[] = new Array(10).fill(0) as number[];
+    const countB: number[] = new Array(10).fill(0) as number[];
 
     for (const row of rows) {
       const d = row.digits as Record<string, number | undefined>;
       const a = d[posA!], b = d[posB!];
       if (a !== undefined && b !== undefined) {
-        const key = `${a}${b}`;
-        pairCounts[key] = (pairCounts[key] ?? 0) + 1;
+        countA[a]! += 1;
+        countB[b]! += 1;
       }
     }
 
+    // Rank digits by frequency DESC (rank 0 = most frequent)
+    const rankA = countA.map((_, i) => i).sort((x, y) => countA[y]! - countA[x]!);
+    const rankB = countB.map((_, i) => i).sort((x, y) => countB[y]! - countB[x]!);
+    const rankPosA = new Array(10).fill(0) as number[];
+    const rankPosB = new Array(10).fill(0) as number[];
+    rankA.forEach((digit, rank) => { rankPosA[digit] = rank; });
+    rankB.forEach((digit, rank) => { rankPosB[digit] = rank; });
+
+    // Score = marginal probability product — but rank-weighted via diagonal
+    // diagonalScore = 1 / (1 + rankA[x] + rankB[y])   (Ballbot diagonal traversal)
     const scores: Record<string, number> = {};
     for (let x = 0; x <= 9; x++) {
       for (let y = 0; y <= 9; y++) {
         const key = `${x}${y}`;
-        scores[key] = total > 0 ? (pairCounts[key] ?? 0) / total : 0;
+        const diagScore = 1 / (1 + rankPosA[x]! + rankPosB[y]!);
+        // Blend with raw joint freq (20%) to preserve actual empirical signal
+        const jointFreq = total > 0 ? (countA[x]! / total) * (countB[y]! / total) * 100 : 0;
+        scores[key] = Math.min(1.0, 0.80 * diagScore + 0.20 * Math.min(1.0, jointFreq));
       }
     }
     return scores;
