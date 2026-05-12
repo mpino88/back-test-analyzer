@@ -60,6 +60,7 @@ interface AgentRunParams {
   game_type: GameType;
   draw_type: DrawType;
   draw_date: string; // YYYY-MM-DD
+  top_n_override?: number; // user-configurable 5-15 (clamped to N_HARD_CAP)
 }
 
 // Structure returned by LLM validation step
@@ -360,7 +361,9 @@ export class HitdashAgent {
     globalStart: number,
     reasoning_chain: any[]
   ): Promise<string> {
-    const { game_type, draw_type, draw_date } = params;
+    const { game_type, draw_type, draw_date, top_n_override } = params;
+    // User override clamped to hard cap (5-15)
+    const userTopN = top_n_override ? Math.max(5, Math.min(15, top_n_override)) : undefined;
 
     reasoning_chain.push({ step: 'pair_mode_start', ts: new Date().toISOString() });
 
@@ -427,7 +430,7 @@ export class HitdashAgent {
         validatedPairs = llmResult.validated_pairs;
       }
 
-      const rec = this.pairRecommender.recommend(pairAnalysis, undefined, validatedPairs);
+      const rec = this.pairRecommender.recommend(pairAnalysis, userTopN, validatedPairs);
       allRecs = [rec];
 
       await this.notifier.notifyPairs([rec], game_type, draw_type, draw_date, llmReasoning);
@@ -468,7 +471,7 @@ export class HitdashAgent {
       }
 
       const recs = this.pairRecommender.recommendPick4(
-        abAnalysis, cdAnalysis, undefined,
+        abAnalysis, cdAnalysis, userTopN,
         validatedPairsAB, validatedPairsCD
       );
       allRecs = recs;

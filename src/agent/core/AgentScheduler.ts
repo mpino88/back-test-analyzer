@@ -24,6 +24,7 @@ interface AgentJobData {
   draw_type: DrawType;
   draw_date: string;   // YYYY-MM-DD
   trigger: 'cron' | 'manual';
+  top_n_override?: number; // user-configurable (5-15)
 }
 
 function redisConnection(): { host: string; port: number; password?: string } {
@@ -260,6 +261,7 @@ export class AgentScheduler {
           game_type,
           draw_type,
           draw_date,
+          top_n_override: job.data.top_n_override,
         });
 
         // ─── Proactive backtest check post-ciclo ─────────────────────
@@ -320,7 +322,8 @@ export class AgentScheduler {
   async triggerManual(
     game_type: GameType,
     draw_type: DrawType,
-    draw_date?: string
+    draw_date?: string,
+    top_n_override?: number
   ): Promise<string> {
     const date = draw_date ?? nextDrawDate(draw_type);
     const job = await this.queue.add(
@@ -330,6 +333,7 @@ export class AgentScheduler {
         draw_type,
         draw_date: date,
         trigger: 'manual',
+        top_n_override,
       } satisfies AgentJobData,
       { jobId: `manual-${game_type}-${draw_type}-${Date.now()}` }
     );

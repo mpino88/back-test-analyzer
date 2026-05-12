@@ -75,6 +75,10 @@
           <option value="evening">Evening</option>
         </select>
         <input v-model="triggerDate" type="date" class="input-date" />
+        <label class="topn-label">
+          <span class="topn-badge">N={{ triggerTopN }}</span>
+          <input v-model.number="triggerTopN" type="range" min="5" max="15" step="1" class="topn-slider" title="Número de pares a predecir (5-15)" />
+        </label>
         <button class="btn-trigger" :disabled="triggering" @click="triggerAgent">
           {{ triggering ? 'Disparando...' : '⚡ Ejecutar ahora' }}
         </button>
@@ -197,6 +201,7 @@ onMounted(fetchLatestRecs);
 const triggerGame  = ref('pick3');
 const triggerDraw  = ref('midday');
 const triggerDate  = ref(new Date().toISOString().split('T')[0]);
+const triggerTopN  = ref(10);
 const triggering   = ref(false);
 const triggerMsg   = ref('');
 const triggerError = ref(false);
@@ -209,8 +214,9 @@ async function triggerAgent() {
       game_type: triggerGame.value,
       draw_type: triggerDraw.value,
       draw_date: triggerDate.value,
+      top_n: triggerTopN.value,
     });
-    triggerMsg.value = `✅ Job encolado: ${data.job_id}`;
+    triggerMsg.value = `✅ Job encolado: ${data.job_id} (N=${triggerTopN.value})`;
     triggerError.value = false;
   } catch (e) {
     triggerMsg.value = `❌ ${e.message}`;
@@ -269,6 +275,9 @@ function formatDate(iso) {
 
 /* Trigger form */
 .trigger-form { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+.topn-label { display: flex; align-items: center; gap: 0.5rem; }
+.topn-badge { background: #1e2d40; color: #4a9eff; border-radius: 6px; padding: 0.25rem 0.5rem; font-size: 0.8rem; font-weight: 700; min-width: 3rem; text-align: center; }
+.topn-slider { width: 80px; accent-color: #1d4ed8; cursor: pointer; }
 .input-select, .input-date {
   background: #0f1623; border: 1px solid #1e2d40; color: #e2e8f0;
   padding: 0.5rem 0.75rem; border-radius: 8px; font-size: 0.875rem;

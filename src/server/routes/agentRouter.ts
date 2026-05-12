@@ -259,10 +259,11 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       return;
     }
 
-    const { game_type, draw_type, draw_date } = req.body as {
+    const { game_type, draw_type, draw_date, top_n } = req.body as {
       game_type?: string;
       draw_type?: string;
       draw_date?: string;
+      top_n?: number;
     };
 
     if (!['pick3', 'pick4'].includes(game_type ?? '')) {
@@ -273,14 +274,16 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       res.status(400).json({ error: 'draw_type inválido: midday | evening' });
       return;
     }
+    const topNOverride = top_n ? Math.max(5, Math.min(15, Number(top_n))) : undefined;
 
     try {
       const jobId = await scheduler.triggerManual(
         game_type as GameType,
         draw_type as DrawType,
-        draw_date
+        draw_date,
+        topNOverride
       );
-      res.json({ success: true, job_id: jobId });
+      res.json({ success: true, job_id: jobId, top_n_override: topNOverride });
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error disparando agente manualmente');
       res.status(500).json({ error: 'Error disparando agente manualmente' });
