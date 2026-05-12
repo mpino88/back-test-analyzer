@@ -1820,6 +1820,43 @@ ${ragSummary}`;
 
   // GET /api/agent/algorithm-health?game_type=pick3&draw_type=evening&half=du
   // ROUND 2 FIX 2.6: expone status (healthy|degraded|disabled) por algoritmo
+  // ─── GET /api/agent/retrospective/validate ──────────────────────
+  // Validación retrospectiva HONESTA usando snapshots históricos reales.
+  // Query params: game_type, draw_type, half, days (default 90)
+  router.get('/retrospective/validate', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const half      = (req.query.half as string) || (game_type === 'pick3' ? 'du' : 'ab');
+      const days      = Math.min(Number(req.query.days ?? 90), 365);
+
+      const { RetrospectiveValidator } = await import('../../agent/services/RetrospectiveValidator.js');
+      const validator = new RetrospectiveValidator(agentPool);
+      const metrics = await validator.validate(game_type, draw_type, half, days);
+      res.json(metrics);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'retrospective/validate failed');
+      res.status(500).json({ error: 'Error en validación retrospectiva', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ─── GET /api/agent/patterns/mine ────────────────────────────────
+  // Análisis de patrones empíricos: DOW bias, mes, gaps, autocorr, streaks.
+  router.get('/patterns/mine', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as string) || 'pick3';
+      const draw_type = (req.query.draw_type as string) || 'evening';
+
+      const { PatternMiner } = await import('../../agent/services/PatternMiner.js');
+      const miner = new PatternMiner(agentPool);
+      const report = await miner.mine(game_type, draw_type);
+      res.json(report);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'patterns/mine failed');
+      res.status(500).json({ error: 'Error en análisis de patrones', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   router.get('/algorithm-health', async (req: Request, res: Response) => {
     try {
       const game_type = (req.query.game_type as GameType) || 'pick3';

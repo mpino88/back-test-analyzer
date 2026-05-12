@@ -28,6 +28,9 @@
         <RouterLink to="/agent/anomalies"         class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🧬</span> Autónomo
         </RouterLink>
+        <RouterLink to="/agent/retrospective"     class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">🔬</span> Validación
+        </RouterLink>
         <RouterLink to="/agent/alerts"            class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>
           Alertas

@@ -28,6 +28,7 @@ const router = createRouter({
         { path: 'strategies',  component: () => import('./views/agent/StrategiesView.vue') },
         { path: 'progressive', component: () => import('./views/agent/ProgressiveView.vue') },
         { path: 'anomalies',   component: () => import('./views/agent/AnomalyView.vue') },
+        { path: 'retrospective', component: () => import('./views/agent/RetrospectiveView.vue') },
         // Rutas legadas — redirect a equivalente activo
         { path: 'cartones',    redirect: '/agent/rendimiento' },
         { path: 'accuracy',    redirect: '/agent/rendimiento' },
