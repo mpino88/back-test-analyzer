@@ -30,7 +30,8 @@ const MIGRATIONS = [
   '013_motor_sigma.sql',      // MOTOR-Σ: algo_rank_history, pps_state, algo_prediction_snapshot
   '014_cognitive_learner.sql', // CognitiveLearner: cognitive_learning_runs, cognitive_algo_weights
   '015_autonomous_agent.sql',  // Agente autónomo: hypotheses, dynamic_strategies, anomaly_scan_log
-  '016_sentinel_cooldowns.sql', // HelixSentinel: anti-spam cooldowns table
+  '016_sentinel_cooldowns.sql',       // HelixSentinel: anti-spam cooldowns table
+  '017_algorithm_candidate_history.sql', // Comparativa algoritmo vs resultado real
 ];
 
 async function migrate(): Promise<void> {

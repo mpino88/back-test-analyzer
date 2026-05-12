@@ -15,9 +15,10 @@ import { TelegramNotifier }         from '../services/TelegramNotifier.js';
 import { RAGService }               from '../services/RAGService.js';
 import { PairBacktestEngine }       from '../backtest/PairBacktestEngine.js';
 import { runBacktestJob, STRATEGY_CATALOG } from '../backtest/backtestJobRunner.js';
-import { StrategyLifecycleManager } from '../services/StrategyLifecycleManager.js';
-import { AutoLearningLoop }         from '../learning/AutoLearningLoop.js';
-import { DigitAnalyzer }            from '../analysis/DigitAnalyzer.js';
+import { StrategyLifecycleManager }    from '../services/StrategyLifecycleManager.js';
+import { AutoLearningLoop }            from '../learning/AutoLearningLoop.js';
+import { DigitAnalyzer }               from '../analysis/DigitAnalyzer.js';
+import { AlgorithmCandidateService }   from '../services/AlgorithmCandidateService.js';
 
 import type {
   GameType, DrawType, TriggerType, Carton, CartonSize, AgentAlert,
@@ -81,9 +82,10 @@ export class HitdashAgent {
   private readonly ragService:         RAGService;
   private readonly pairBacktestEngine: PairBacktestEngine;
   // ── SISTEMA NERVIOSO CENTRAL ──────────────────────────────────────────────
-  private readonly lifecycleManager:   StrategyLifecycleManager;
-  private readonly autoLearning:       AutoLearningLoop;
-  private readonly digitAnalyzer:      DigitAnalyzer;
+  private readonly lifecycleManager:      StrategyLifecycleManager;
+  private readonly autoLearning:          AutoLearningLoop;
+  private readonly digitAnalyzer:         DigitAnalyzer;
+  private readonly algorithmCandidateSvc: AlgorithmCandidateService;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -99,9 +101,10 @@ export class HitdashAgent {
     this.ragService          = ragService;
     this.pairBacktestEngine  = new PairBacktestEngine(agentPool);
     // ── SISTEMA NERVIOSO CENTRAL ─────────────────────────────────────────
-    this.lifecycleManager    = new StrategyLifecycleManager(agentPool);
-    this.autoLearning        = new AutoLearningLoop(agentPool);
-    this.digitAnalyzer       = new DigitAnalyzer(agentPool);
+    this.lifecycleManager       = new StrategyLifecycleManager(agentPool);
+    this.autoLearning           = new AutoLearningLoop(agentPool);
+    this.digitAnalyzer          = new DigitAnalyzer(agentPool);
+    this.algorithmCandidateSvc  = new AlgorithmCandidateService(agentPool);
   }
 
   // ─── Proactive backtest check ─────────────────────────────────────
@@ -434,6 +437,12 @@ export class HitdashAgent {
         [rec], game_type, draw_type, draw_date, sessionId
       );
 
+      // ── COMPARATIVA: guardar candidatos por algoritmo (non-blocking) ─────
+      setImmediate(() => {
+        this.algorithmCandidateSvc.storeAll(game_type, draw_type, 'du', draw_date, sessionId)
+          .catch(err => logger.warn({ error: String(err) }, 'HitdashAgent: error guardando algorithm_candidates Pick3'));
+      });
+
     } else {
       // pick4: analyze AB and CD independently
       const [abAnalysis, cdAnalysis] = await Promise.all([
@@ -470,6 +479,14 @@ export class HitdashAgent {
       await this.generateAndPersistCartonesFromPairs(
         recs, game_type, draw_type, draw_date, sessionId
       );
+
+      // ── COMPARATIVA: guardar candidatos por algoritmo Pick4 (non-blocking) ─
+      setImmediate(() => {
+        Promise.all([
+          this.algorithmCandidateSvc.storeAll(game_type, draw_type, 'ab', draw_date, sessionId),
+          this.algorithmCandidateSvc.storeAll(game_type, draw_type, 'cd', draw_date, sessionId),
+        ]).catch(err => logger.warn({ error: String(err) }, 'HitdashAgent: error guardando algorithm_candidates Pick4'));
+      });
     }
 
     // ═══ ALERTA PRESCRIPTIVA DESACTIVADA ══════════════════════════════

@@ -18,7 +18,8 @@ import { CognitiveLearner }    from '../../agent/learning/CognitiveLearner.js';
 import { AutoLearningLoop }        from '../../agent/learning/AutoLearningLoop.js';
 import { DigitAnalyzer }           from '../../agent/analysis/DigitAnalyzer.js';
 import { AutonomousOrchestrator }  from '../../agent/core/AutonomousOrchestrator.js';
-import { BootstrapLearning }       from '../../agent/learning/BootstrapLearning.js';
+import { BootstrapLearning }           from '../../agent/learning/BootstrapLearning.js';
+import { AlgorithmCandidateService }   from '../../agent/services/AlgorithmCandidateService.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -40,6 +41,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const digitAnalyzer           = new DigitAnalyzer(agentPool);
   const autonomousOrchestrator  = new AutonomousOrchestrator(agentPool);
   const bootstrapLearning       = new BootstrapLearning(agentPool);
+  const algoComparativaService  = new AlgorithmCandidateService(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -1808,6 +1810,58 @@ ${ragSummary}`;
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en autonomous recommendations');
       res.status(500).json({ error: 'Error en autonomous recommendations' });
+    }
+  });
+
+  // ── COMPARATIVA SIMÉTRICA — endpoints ────────────────────────────────────
+
+  // GET /api/agent/algo-comparison/hit-rates?game_type=pick3&draw_type=evening&half=du&days=30
+  router.get('/algo-comparison/hit-rates', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const half      = (req.query.half as string) || (game_type === 'pick3' ? 'du' : 'ab');
+      const days      = Math.min(Number(req.query.days ?? 30), 180);
+      const rates = await algoComparativaService.getHitRates(game_type, draw_type, half as any, days);
+      res.json(rates);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en algo-comparison hit-rates');
+      res.status(500).json({ error: 'Error obteniendo hit rates' });
+    }
+  });
+
+  // GET /api/agent/algo-comparison/history?game_type=pick3&draw_type=evening&half=du&days=30
+  router.get('/algo-comparison/history', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as GameType) || 'pick3';
+      const draw_type = (req.query.draw_type as DrawType) || 'evening';
+      const half      = (req.query.half as string) || (game_type === 'pick3' ? 'du' : 'ab');
+      const days      = Math.min(Number(req.query.days ?? 30), 180);
+      const history = await algoComparativaService.getHistory(game_type, draw_type, half as any, days);
+      res.json(history);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en algo-comparison history');
+      res.status(500).json({ error: 'Error obteniendo historial' });
+    }
+  });
+
+  // POST /api/agent/algo-comparison/run — ejecutar candidatos manualmente para hoy
+  router.post('/algo-comparison/run', async (req: Request, res: Response) => {
+    try {
+      const { game_type = 'pick3', draw_type = 'evening', half = 'du', draw_date } = req.body as {
+        game_type?: GameType; draw_type?: DrawType; half?: string; draw_date?: string;
+      };
+      const date     = draw_date ?? new Date().toISOString().split('T')[0]!;
+      const fakeSession = `manual-${Date.now()}`;
+      res.json({ ok: true, message: 'Ejecutando en background', draw_date: date });
+      setImmediate(async () => {
+        try {
+          await algoComparativaService.storeAll(game_type, draw_type, half as any, date, fakeSession);
+          logger.info({ game_type, draw_type, half, date }, 'algo-comparison/run completado');
+        } catch (e) { logger.error({ error: String(e) }, 'algo-comparison/run falló'); }
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'Error ejecutando candidatos' });
     }
   });
 

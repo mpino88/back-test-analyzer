@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — TrendMomentum v1.0.0
+// HITDASH — TrendMomentum v2.0.0
 //
 // Fórmula exacta de Ballbot "Fuerza de Tendencia Pro":
 //
@@ -13,6 +13,11 @@
 //   pick3 du: p2*10 + p3  (decena + unidad)
 //   pick4 ab: p1*10 + p2
 //   pick4 cd: p3*10 + p4
+//
+// Ventana: SOLO el draw_type objetivo (como Ballbot validDateKeys(map, period))
+//   pick3 evening → 6,565 sorteos de noche / últimos 30 de noche
+//   pick3 midday  → 6,565 sorteos de día   / últimos 30 de día
+//   Mezclar mid+eve inflaba freq_recent y distorsionaba momentum.
 //
 // Score para el consensus:
 //   Normalizado al rango [0,1] via min-max sobre momentum scores.
@@ -47,30 +52,27 @@ export class TrendMomentum {
   // Usado tanto por runPairs() como por el endpoint de backtesting
   async computeStats(
     game_type: GameType,
-    _draw_type: DrawType,   // ignorado — Ballbot usa ventana COMBINADA (midday+evening)
+    draw_type: DrawType,   // USADO — igual que Ballbot validDateKeys(map, period)
     half: PairHalf
   ): Promise<{ stats: MomentumStat[]; total_all: number; total_recent: number }> {
 
-    // ═══ BALLBOT FORMULA EXACTA — ventana COMBINADA ════════════════════════
-    // Ballbot "Fuerza de Tendencia Pro" calcula momentum usando TODOS los sorteos
-    // del juego (midday + evening mezclados) sin distinción de turno.
+    // ═══ BALLBOT FORMULA EXACTA — ventana POR draw_type ════════════════════
+    // Ballbot usa validDateKeys(map, period, mapSource) que filtra las fechas
+    // donde existe ese period (m/e). Histórico = todos los sorteos de ESE turno.
+    // Reciente = últimos 30 sorteos de ESE turno.
     //
-    // Bug anterior: filtraba por draw_type → solo 547 draws en vez de 1094.
-    // Resultado: momentum de pares como 88 (salió en Evening) era 0 para Midday
-    //            → no aparecía en candidatos → MISS en sorteos que Ballbot acertaba.
-    //
-    // Fix: sin filtro draw_type. Evening va antes que Midday en mismo día
-    //      (occurrió más tarde) → ordering: date DESC, evening first.
+    // Corrección v2: la ventana combinada (mid+eve) distorsionaba momentum.
+    // Un par fuerte de noche inflaba freq_recent de mediodía → momentum falso.
+    // Ahora cada turno usa su propia distribución histórica y reciente.
     const { rows: allRows } = await this.pool.query<{
       p1: number; p2: number; p3: number; p4: number;
     }>(
       `SELECT p1, p2, p3, p4
        FROM hitdash.ingested_results
-       WHERE game_type = $1
-         AND draw_date >= CURRENT_DATE - interval '1095 days'
-       ORDER BY draw_date DESC,
-                CASE WHEN draw_type = 'evening' THEN 0 ELSE 1 END ASC`,
-      [game_type]
+       WHERE game_type  = $1
+         AND draw_type  = $2
+       ORDER BY draw_date DESC`,
+      [game_type, draw_type]
     );
 
     if (allRows.length === 0) return { stats: [], total_all: 0, total_recent: 0 };
@@ -133,7 +135,7 @@ export class TrendMomentum {
 
   async runPairs(
     game_type: GameType,
-    draw_type: DrawType,
+    draw_type: DrawType,   // ahora propagado a computeStats
     half: PairHalf,
     _period: AnalysisPeriod = 90
   ): Promise<Record<string, number>> {

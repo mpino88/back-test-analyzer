@@ -674,6 +674,99 @@
       </div>
 
     </template>
+
+    <!-- ══════════════════════════════════════════════════════════
+         📊 COMPARATIVA — Panel de aciertos por algoritmo
+         Simétrico a Ballbot buildTestingVerificationBlock
+         ══════════════════════════════════════════════════════════ -->
+    <template v-if="!loading">
+      <div class="section comp-section">
+        <div class="section-title-row">
+          <span class="section-title">📊 Comparativa por Algoritmo</span>
+          <div class="comp-controls">
+            <select v-model="compGame" @change="loadComparativa" class="comp-select">
+              <option value="pick3">Pick 3</option>
+              <option value="pick4">Pick 4</option>
+            </select>
+            <select v-model="compDrawType" @change="loadComparativa" class="comp-select">
+              <option value="evening">Noche</option>
+              <option value="midday">Mediodía</option>
+            </select>
+            <select v-model="compDays" @change="loadComparativa" class="comp-select">
+              <option value="7">7 días</option>
+              <option value="15">15 días</option>
+              <option value="30">30 días</option>
+            </select>
+            <button class="btn-comp-run" @click="runComparativaManual" :disabled="compRunning">
+              {{ compRunning ? '⟳' : '▶' }} Ejecutar hoy
+            </button>
+          </div>
+        </div>
+
+        <div v-if="compLoading" class="state-msg"><div class="spinner"></div> Cargando comparativa…</div>
+        <div v-else-if="!compRates.length" class="state-msg">
+          Sin datos — las comparativas se generan automáticamente con cada predicción.<br>
+          Usa "▶ Ejecutar hoy" para generar candidatos ahora.
+        </div>
+        <div v-else>
+          <!-- Tabla de hit rates por algoritmo -->
+          <div class="comp-table-wrap">
+            <table class="comp-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Algoritmo</th>
+                  <th>Hit Rate</th>
+                  <th>Hits/Evaluados</th>
+                  <th>Pos. promedio</th>
+                  <th>Candidatos avg</th>
+                  <th>Señal</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(r, i) in compRates" :key="r.algo_name" :class="compRowClass(r)">
+                  <td class="comp-rank">{{ i + 1 }}</td>
+                  <td class="comp-algo">{{ r.algo_name }}</td>
+                  <td class="comp-rate">
+                    <div class="comp-rate-bar-wrap">
+                      <div class="comp-rate-bar" :style="{ width: (r.hit_rate * 100).toFixed(0) + '%', background: compRateColor(r.hit_rate) }"></div>
+                    </div>
+                    <span class="comp-rate-val" :style="{ color: compRateColor(r.hit_rate) }">
+                      {{ (r.hit_rate * 100).toFixed(1) }}%
+                    </span>
+                  </td>
+                  <td class="comp-hits">{{ r.total_hits }}/{{ r.total_evaluated }}</td>
+                  <td class="comp-pos">{{ r.avg_hit_position ?? '—' }}</td>
+                  <td class="comp-cands">{{ r.avg_candidates }}</td>
+                  <td class="comp-signal">
+                    <span v-if="r.hit_rate >= 0.40" class="sig sig--strong">↑ FUERTE</span>
+                    <span v-else-if="r.hit_rate >= 0.20" class="sig sig--neutral">→ BUENO</span>
+                    <span v-else class="sig sig--weak">↓ DÉBIL</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Historial de los últimos sorteos por algoritmo -->
+          <div class="comp-history-section" v-if="compHistory.length">
+            <div class="comp-history-title">Historial reciente (últimas fechas)</div>
+            <div class="comp-history-grid">
+              <div v-for="dateGroup in compHistoryByDate" :key="dateGroup.date" class="comp-date-col">
+                <div class="comp-date-header">{{ dateGroup.date }}</div>
+                <div v-for="row in dateGroup.rows" :key="row.algo_name" class="comp-algo-row">
+                  <span class="comp-algo-name">{{ row.algo_name.replace(/_/g,' ') }}</span>
+                  <span class="comp-hit-badge" :class="row.hit === true ? 'badge-hit' : row.hit === false ? 'badge-miss' : 'badge-pending'">
+                    {{ row.hit === true ? `✅ #${row.hit_at_position}` : row.hit === false ? '❌' : '⏳' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
   </div>
 </template>
 
@@ -682,6 +775,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { Chart, registerables } from 'chart.js';
 import { useStrategyTracking, STRATEGY_META } from '../../composables/agent/useStrategyTracking.js';
 import { apiFetch } from '../../utils/apiClient.js';
+import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 Chart.register(...registerables);
 
@@ -921,6 +1015,70 @@ watch(strategies, () => {
 });
 
 onUnmounted(() => chartInstance?.destroy());
+
+// ══════════════════════════════════════════════════════════════
+// 📊 COMPARATIVA — Lógica del panel de aciertos por algoritmo
+// ══════════════════════════════════════════════════════════════
+const compGame      = ref('pick3');
+const compDrawType  = ref('evening');
+const compDays      = ref('30');
+const compLoading   = ref(false);
+const compRunning   = ref(false);
+const compRates     = ref([]);
+const compHistory   = ref([]);
+
+const compHistoryByDate = computed(() => {
+  const byDate = {};
+  for (const row of compHistory.value) {
+    if (!byDate[row.draw_date]) byDate[row.draw_date] = { date: row.draw_date, rows: [] };
+    byDate[row.draw_date].rows.push(row);
+  }
+  return Object.values(byDate).slice(0, 7); // últimas 7 fechas
+});
+
+async function loadComparativa() {
+  compLoading.value = true;
+  const half = compGame.value === 'pick3' ? 'du' : 'ab';
+  try {
+    const [rates, history] = await Promise.all([
+      apiGet(`/api/agent/algo-comparison/hit-rates?game_type=${compGame.value}&draw_type=${compDrawType.value}&half=${half}&days=${compDays.value}`),
+      apiGet(`/api/agent/algo-comparison/history?game_type=${compGame.value}&draw_type=${compDrawType.value}&half=${half}&days=${compDays.value}`),
+    ]);
+    compRates.value   = Array.isArray(rates)   ? rates   : [];
+    compHistory.value = Array.isArray(history) ? history : [];
+  } catch { compRates.value = []; compHistory.value = []; }
+  finally { compLoading.value = false; }
+}
+
+async function runComparativaManual() {
+  compRunning.value = true;
+  const half = compGame.value === 'pick3' ? 'du' : 'ab';
+  try {
+    await apiPost('/api/agent/algo-comparison/run', {
+      game_type: compGame.value,
+      draw_type: compDrawType.value,
+      half,
+    });
+    // Esperar un momento y recargar
+    setTimeout(() => loadComparativa(), 3000);
+  } catch { /* silencio */ }
+  finally { setTimeout(() => { compRunning.value = false; }, 3000); }
+}
+
+function compRateColor(rate) {
+  if (rate >= 0.40) return '#22c55e';
+  if (rate >= 0.20) return '#f59e0b';
+  return '#ef4444';
+}
+
+function compRowClass(r) {
+  if (r.hit_rate >= 0.40) return 'comp-row--strong';
+  if (r.hit_rate >= 0.20) return 'comp-row--ok';
+  return 'comp-row--weak';
+}
+
+// Cargar comparativa al montar
+onMounted(() => loadComparativa());
 
 // ══════════════════════════════════════════════════════════════
 // 🧬 KRONOS — Lógica del panel de aprendizaje cognitivo
@@ -1451,4 +1609,51 @@ function kronosFmtDate(iso) {
 .empty-weights { padding: 1.5rem; color: #475569; font-size: 0.8rem; text-align: center; }
 
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* ══ 📊 COMPARATIVA ══════════════════════════════════════════ */
+.comp-section { margin-top: 1.5rem; }
+.comp-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.comp-select {
+  background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+  padding: 0.3rem 0.6rem; border-radius: 6px; font-size: 0.75rem; cursor: pointer;
+}
+.btn-comp-run {
+  background: #1d4ed8; border: none; color: #fff;
+  padding: 0.3rem 0.75rem; border-radius: 6px; font-size: 0.75rem;
+  cursor: pointer; font-weight: 600;
+}
+.btn-comp-run:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.comp-table-wrap { overflow-x: auto; margin-top: 0.75rem; }
+.comp-table {
+  width: 100%; border-collapse: collapse; font-size: 0.78rem;
+}
+.comp-table th {
+  background: #1e293b; color: #64748b; padding: 0.5rem 0.75rem;
+  text-align: left; font-weight: 600; font-size: 0.7rem;
+  border-bottom: 1px solid #334155;
+}
+.comp-table td { padding: 0.45rem 0.75rem; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+.comp-row--strong td { background: #052e1611; }
+.comp-row--weak td   { background: #450a0a11; }
+.comp-rank  { color: #64748b; width: 30px; }
+.comp-algo  { font-family: monospace; font-size: 0.72rem; }
+.comp-rate  { display: flex; align-items: center; gap: 0.5rem; min-width: 120px; }
+.comp-rate-bar-wrap { width: 60px; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden; }
+.comp-rate-bar      { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.comp-rate-val      { font-weight: 700; font-size: 0.75rem; }
+.comp-hits  { color: #94a3b8; }
+.comp-pos   { color: #94a3b8; }
+.comp-cands { color: #94a3b8; }
+
+.comp-history-section  { margin-top: 1.25rem; }
+.comp-history-title    { font-size: 0.78rem; color: #64748b; margin-bottom: 0.5rem; font-weight: 600; }
+.comp-history-grid     { display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem; }
+.comp-date-col         { min-width: 140px; background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 0.5rem; }
+.comp-date-header      { font-size: 0.68rem; color: #60a5fa; font-weight: 700; margin-bottom: 0.4rem; }
+.comp-algo-row         { display: flex; justify-content: space-between; align-items: center; padding: 0.15rem 0; }
+.comp-algo-name        { font-size: 0.65rem; color: #94a3b8; font-family: monospace; }
+.badge-hit     { background: #052e16; color: #22c55e; border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.65rem; font-weight: 700; }
+.badge-miss    { background: #450a0a; color: #f87171; border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.65rem; font-weight: 700; }
+.badge-pending { background: #1e293b; color: #64748b;  border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.65rem; }
 </style>

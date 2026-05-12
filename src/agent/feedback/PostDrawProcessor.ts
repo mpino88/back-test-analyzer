@@ -29,9 +29,10 @@ import { StrategyEvaluator } from './StrategyEvaluator.js';
 import { LearningEmbedder }  from './LearningEmbedder.js';
 import { DriftDetector }     from './DriftDetector.js';
 import { RAGService }        from '../services/RAGService.js';
-import { AutoLearningLoop }  from '../learning/AutoLearningLoop.js';
-import { HelixSentinel }     from '../core/HelixSentinel.js';
-import { TelegramNotifier }  from '../services/TelegramNotifier.js';
+import { AutoLearningLoop }          from '../learning/AutoLearningLoop.js';
+import { HelixSentinel }             from '../core/HelixSentinel.js';
+import { TelegramNotifier }          from '../services/TelegramNotifier.js';
+import { AlgorithmCandidateService } from '../services/AlgorithmCandidateService.js';
 import { PPSService }        from '../services/PPSService.js';
 
 import type { GameType, DrawType, LotteryDigits } from '../types/agent.types.js';
@@ -75,8 +76,9 @@ export class PostDrawProcessor {
   private readonly embedder:       LearningEmbedder;
   private readonly drift:          DriftDetector;
   private readonly ppsService:     PPSService;          // MOTOR-Σ
-  private readonly autoLearning:   AutoLearningLoop;    // HELIX Autónomo
-  private readonly sentinel:       HelixSentinel;        // HELIX Sentinel proactivo
+  private readonly autoLearning:    AutoLearningLoop;          // HELIX Autónomo
+  private readonly sentinel:        HelixSentinel;             // HELIX Sentinel proactivo
+  private readonly algoComparativa: AlgorithmCandidateService; // Comparativa simétrica
   // ═══ ANO-01 FIX: No instanciar TelegramNotifier aquí.
   // El singleton se inyecta desde server/index.ts via setNotifier().
   // Evita conexiones duplicadas al bot + garantiza credenciales válidas al boot.
@@ -93,8 +95,9 @@ export class PostDrawProcessor {
     this.embedder     = new LearningEmbedder(agentPool, ragService);
     this.drift        = new DriftDetector(ballbotPool);
     this.ppsService   = new PPSService(agentPool);        // MOTOR-Σ
-    this.autoLearning = new AutoLearningLoop(agentPool);  // HELIX Autónomo
-    this.sentinel     = new HelixSentinel(agentPool);     // HELIX Sentinel proactivo
+    this.autoLearning    = new AutoLearningLoop(agentPool);          // HELIX Autónomo
+    this.sentinel        = new HelixSentinel(agentPool);             // HELIX Sentinel proactivo
+    this.algoComparativa = new AlgorithmCandidateService(agentPool); // Comparativa simétrica
     // notifier se asigna vía setNotifier() — NO en el constructor
   }
 
@@ -551,6 +554,26 @@ export class PostDrawProcessor {
            AND half          = $3`,
         [emaRank, game_type, rec.half]
       ).catch(() => undefined);
+    }
+
+    // ── COMPARATIVA SIMÉTRICA: registrar hits por algoritmo ─────────────────
+    // Corre en background — no bloquea el flujo principal
+    if (actualDU || actualAB) {
+      const actualPair = game_type === 'pick3' ? actualDU : actualAB;
+      const half       = game_type === 'pick3' ? 'du' : 'ab';
+      if (actualPair) {
+        setImmediate(() => {
+          this.algoComparativa.recordHits(game_type, draw_type, half, draw_date, actualPair)
+            .catch(err => logger.warn({ error: String(err) }, 'PostDrawProcessor: error en recordHits algo comparativa'));
+        });
+      }
+      // Pick4 CD también
+      if (game_type === 'pick4' && actualCD) {
+        setImmediate(() => {
+          this.algoComparativa.recordHits(game_type, draw_type, 'cd', draw_date, actualCD!)
+            .catch(err => logger.warn({ error: String(err) }, 'PostDrawProcessor: error en recordHits algo CD'));
+        });
+      }
     }
 
     logger.info(
