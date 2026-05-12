@@ -33,7 +33,7 @@ import { FrequencyAnalysis }      from '../analysis/algorithms/FrequencyAnalysis
 import { GapAnalysis }            from '../analysis/algorithms/GapAnalysis.js';
 import { HotColdClassifier }      from '../analysis/algorithms/HotColdClassifier.js';
 import { PairCorrelation }        from '../analysis/algorithms/PairCorrelation.js';
-import { FibonacciPisano }        from '../analysis/algorithms/FibonacciPisano.js';
+import { FibonacciResonancePro }  from '../analysis/algorithms/FibonacciResonancePro.js';
 import { StreakDetection }        from '../analysis/algorithms/StreakDetection.js';
 import { PositionAnalysis }       from '../analysis/algorithms/PositionAnalysis.js';
 import { MovingAverages }         from '../analysis/algorithms/MovingAverages.js';
@@ -51,6 +51,7 @@ import { TrendMomentum }         from '../analysis/algorithms/TrendMomentum.js';
 import { CycleDetector }         from '../analysis/algorithms/CycleDetector.js';
 import { TerminalAnalysis }      from '../analysis/algorithms/TerminalAnalysis.js';
 import { MirrorComplement }      from '../analysis/algorithms/MirrorComplement.js';
+import { EstIndividuales }       from '../analysis/algorithms/EstIndividuales.js';
 
 const logger = pino({ name: 'AlgorithmCandidateService' });
 
@@ -112,7 +113,8 @@ export class AlgorithmCandidateService {
       gap_analysis:       { algo: new GapAnalysis(hitPool),           topN: TOP_N_DEFAULT, minScore: 0.01 },
       hot_cold:           { algo: new HotColdClassifier(hitPool),     topN: TOP_N_DEFAULT, minScore: 0.01 },
       pairs_correlation:  { algo: new PairCorrelation(hitPool),       topN: TOP_N_DEFAULT, minScore: 0.01 },
-      fibonacci_pisano:   { algo: new FibonacciPisano(hitPool),       topN: TOP_N_DEFAULT, minScore: 0.02 },
+      fibonacci_resonance: { algo: new FibonacciResonancePro(hitPool), topN: TOP_N_DEFAULT, minScore: 0.40 },
+      est_individuales:    { algo: new EstIndividuales(hitPool),        topN: TOP_N_DEFAULT, minScore: 0.80 },
       streak_detection:   { algo: new StreakDetection(hitPool),       topN: TOP_N_DEFAULT, minScore: 0.50 },
       position_analysis:  { algo: new PositionAnalysis(hitPool),      topN: TOP_N_DEFAULT, minScore: 0.01 },
       moving_averages:    { algo: new MovingAverages(hitPool),        topN: TOP_N_DEFAULT, minScore: 0.01 },

@@ -19,7 +19,7 @@ import { FrequencyAnalysis }  from './algorithms/FrequencyAnalysis.js';
 import { GapAnalysis }        from './algorithms/GapAnalysis.js';
 import { HotColdClassifier }  from './algorithms/HotColdClassifier.js';
 import { PairCorrelation }    from './algorithms/PairCorrelation.js';
-import { FibonacciPisano }    from './algorithms/FibonacciPisano.js';
+import { FibonacciResonancePro } from './algorithms/FibonacciResonancePro.js';
 import { StreakDetection }    from './algorithms/StreakDetection.js';
 import { PositionAnalysis }   from './algorithms/PositionAnalysis.js';
 import { MovingAverages }     from './algorithms/MovingAverages.js';
@@ -70,7 +70,7 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   gap_analysis:      'gap_overdue_focus',
   hot_cold:          'hot_cold_weighted',
   pairs_correlation: 'pair_correlation',
-  fibonacci_pisano:  'fibonacci_pisano',
+  fibonacci_resonance:  'fibonacci_resonance',
   streak:            'streak_reversal',
   position:          'position_bias',
   // MovingAverages.runPairs() computa (sma7-sma14)+ema → blend de moving_avg_signal + momentum_ema
@@ -98,7 +98,7 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   gap_overdue_focus: 12,
   hot_cold_weighted: 15,
   pair_correlation:  20,
-  fibonacci_pisano:  25,
+  fibonacci_resonance:  25,
   streak_reversal:   10,
   position_bias:     22,
   moving_avg_signal: 15,
@@ -198,7 +198,7 @@ export class AnalysisEngine {
   private readonly gap:   GapAnalysis;
   private readonly hc:    HotColdClassifier;
   private readonly pairs: PairCorrelation;
-  private readonly fib:   FibonacciPisano;
+  private readonly fib:   FibonacciResonancePro;
   private readonly streak: StreakDetection;
   private readonly pos:   PositionAnalysis;
   private readonly ma:    MovingAverages;
@@ -232,7 +232,7 @@ export class AnalysisEngine {
     this.gap    = new GapAnalysis(analysisPool);
     this.hc     = new HotColdClassifier(analysisPool);
     this.pairs  = new PairCorrelation(analysisPool);
-    this.fib    = new FibonacciPisano(analysisPool);
+    this.fib    = new FibonacciResonancePro(analysisPool);
     this.streak = new StreakDetection(analysisPool);
     this.pos    = new PositionAnalysis(analysisPool);
     this.ma     = new MovingAverages(analysisPool);
@@ -292,7 +292,7 @@ export class AnalysisEngine {
     const gapResult    = unwrap(rGap,    'gap_analysis');
     const hcResult     = unwrap(rHC,     'hot_cold');
     const pairsResult  = unwrap(rPairs,  'pairs_correlation');
-    const fibResult    = unwrap(rFib,    'fibonacci_pisano');
+    const fibResult    = unwrap(rFib,    'fibonacci_resonance');
     const streakResult = unwrap(rStreak, 'streak');
     const posResult    = unwrap(rPos,    'position');
     const maResult     = unwrap(rMA,     'moving_averages');
@@ -397,7 +397,7 @@ export class AnalysisEngine {
           if (entry.alignment_score > 0) {
             addSignal(pos, entry.digit, {
               digit: entry.digit,
-              algorithm: 'fibonacci_pisano',
+              algorithm: 'fibonacci_resonance',
               score: clamp01(entry.alignment_score / 2.0),
               reason: `pisano_idx=${entry.current_pisano_index} align=${entry.alignment_score}`,
             });
@@ -680,7 +680,7 @@ export class AnalysisEngine {
       ['gap_analysis',      effectiveWeight('gap_analysis'),      rGap],
       ['hot_cold',          effectiveWeight('hot_cold'),          rHC],
       ['pairs_correlation', effectiveWeight('pairs_correlation'), rPairs],
-      ['fibonacci_pisano',  effectiveWeight('fibonacci_pisano'),  rFib],
+      ['fibonacci_resonance',  effectiveWeight('fibonacci_resonance'),  rFib],
       ['streak',            effectiveWeight('streak'),            rStreak],
       ['position',          effectiveWeight('position'),          rPos],
       // moving_averages recibe su propio peso + el factor de momentum_ema (blend)
@@ -903,6 +903,14 @@ export class AnalysisEngine {
         { optimal_n, basis: cognitive_basis, pps_sample: ppsN.sample_size },
         'AnalysisEngine: N óptimo (cognitive_n fallback — PPS aún acumulando)'
       );
+    }
+
+    // ── N-cap: máximo 15 pares en CERTEZA ALTA — evitar N=69 (cobertura ≠ predicción) ──
+    const N_HARD_CAP = 15;
+    if (optimal_n > N_HARD_CAP) {
+      logger.info({ before: optimal_n, after: N_HARD_CAP }, 'AnalysisEngine: N reducido al hard-cap');
+      optimal_n = N_HARD_CAP;
+      top_n     = N_HARD_CAP;
     }
 
     // ── MOTOR-Σ: persistir snapshot para aprendizaje post-sorteo ──────────────

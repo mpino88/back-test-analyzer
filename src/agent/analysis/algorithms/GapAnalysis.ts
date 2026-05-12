@@ -113,46 +113,53 @@ export class GapAnalysis {
     };
   }
 
-  // ─── Pair mode (v2) ─────────────────────────────────────────────
+  // ─── Pair mode v2 — calendar-day gaps (matches Ballbot gap_due.ts) ──
   async runPairs(
     game_type: GameType,
     draw_type: DrawType,
     half: PairHalf,
-    period: AnalysisPeriod = 90
+    period: AnalysisPeriod = 365
   ): Promise<Record<string, number>> {
     const periodDays = period === 'all' ? 9999 : period;
     const [posA, posB] = half === 'du' ? ['p2', 'p3'] : half === 'ab' ? ['p1', 'p2'] : ['p3', 'p4'];
 
-    // Ordered DESC: index 0 = most recent draw
-    const { rows } = await this.pool.query<{ digits: LotteryDigits }>(
+    // ASC order → chronological to compute calendar-day gaps correctly
+    const { rows } = await this.pool.query<{ draw_date: string | Date; digits: LotteryDigits }>(
       `${DRAWS_CTE}
-       SELECT digits FROM lottery_results ORDER BY draw_date DESC`,
+       SELECT draw_date, digits FROM lottery_results ORDER BY draw_date ASC`,
       [toDbGame(game_type), toDbPeriod(draw_type), periodDays]
     );
 
-    const total = rows.length;
-    const lastSeen: Record<string, number> = {};
-    const occurrences: Record<string, number> = {};
+    const today = new Date();
+    const pairDates: Record<string, Date[]> = {};
 
-    rows.forEach((row, idx) => {
+    for (const row of rows) {
       const d = row.digits as Record<string, number | undefined>;
       const a = d[posA!], b = d[posB!];
-      if (a !== undefined && b !== undefined) {
-        const key = `${a}${b}`;
-        if (!(key in lastSeen)) lastSeen[key] = idx; // draws since last seen (0 = appeared in latest draw)
-        occurrences[key] = (occurrences[key] ?? 0) + 1;
-      }
-    });
+      if (a === undefined || b === undefined) continue;
+      const key = `${a}${b}`;
+      if (!pairDates[key]) pairDates[key] = [];
+      pairDates[key]!.push(new Date(row.draw_date));
+    }
 
     const scores: Record<string, number> = {};
     for (let x = 0; x <= 9; x++) {
       for (let y = 0; y <= 9; y++) {
         const key = `${x}${y}`;
-        const gap_actual = lastSeen[key] ?? total;
-        const count = occurrences[key] ?? 0;
-        const avg_gap = count > 0 ? total / count : total;
-        // overdue_score > 1.0 means pair is overdue → higher priority (gap reversal)
-        scores[key] = avg_gap > 0 ? gap_actual / avg_gap : 0;
+        const dates = pairDates[key];
+        if (!dates || dates.length < 3) { scores[key] = 0; continue; }
+
+        // Calendar-day gaps between consecutive appearances
+        const calGaps: number[] = [];
+        for (let i = 1; i < dates.length; i++) {
+          calGaps.push(Math.floor((dates[i]!.getTime() - dates[i-1]!.getTime()) / 86_400_000));
+        }
+        const avgGap = calGaps.reduce((s, g) => s + g, 0) / calGaps.length;
+        const currentGap = Math.floor((today.getTime() - dates.at(-1)!.getTime()) / 86_400_000);
+
+        // dueFactor: matches Ballbot exactly — >1 = overdue, >2 = súper due
+        const dueFactor = avgGap > 0 ? currentGap / avgGap : 0;
+        scores[key] = Math.max(0, dueFactor);
       }
     }
     return scores;
