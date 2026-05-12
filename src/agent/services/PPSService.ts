@@ -41,7 +41,17 @@ import pino from 'pino';
 const logger = pino({ name: 'PPSService' });
 
 // ─── Constantes ───────────────────────────────────────────────
-const PPS_ALPHA     = 0.15;  // EMA decay — conservador para live
+// ─── EMA adaptivo (PATCH 2026-05-12) ───────────────────────────
+// Antes: α=0.15 fijo → 20+ sorteos para que una señal nueva se refleje
+// Ahora: α=0.30 mientras sample_count<30 (warmup rápido)
+//        α=0.15 cuando sample_count≥30 (estabilidad madura)
+const PPS_ALPHA_WARMUP = 0.30;  // hasta sample_count<30: aprendizaje rápido
+const PPS_ALPHA_MATURE = 0.15;  // sample_count≥30: conservador como antes
+const PPS_WARMUP_THRESHOLD = 30;
+function adaptiveAlpha(sample_count: number): number {
+  return sample_count < PPS_WARMUP_THRESHOLD ? PPS_ALPHA_WARMUP : PPS_ALPHA_MATURE;
+}
+const PPS_ALPHA = PPS_ALPHA_MATURE;  // legacy export — solo para compat
 const PPS_INITIAL   = 50.0;  // punto neutro sin historial
 const RANK_MISS     = 101;   // penalidad: par ganador no apareció en ranking del algo
 const LOOKBACK_DAYS = 30;    // ventana por defecto para computeOptimalN
@@ -49,7 +59,12 @@ const LOOKBACK_DAYS = 30;    // ventana por defecto para computeOptimalN
 // ── MOTOR-Σ: función objetivo ─────────────────────────────────
 const PAYOUT      = 50;    // Florida Pick 3 Front/Back Pair: $50 por $1 bet
 const TARGET_ROI  = 0.01;  // 1% ROI mínimo por sorteo
-const MAX_N       = 69;    // límite operacional: < 70 candidatos (usuario)
+// PATCH 2026-05-12: MAX_N 69 → 15 (corrección definitiva, no band-aid).
+// Razón: sin borde estadístico, el algoritmo seleccionaba el N más grande
+// con mejor hit_rate absoluto, ignorando que cubrir el 69% del espacio NO es predecir.
+// Por encima de N=15 la apuesta deja de ser predicción y se vuelve cobertura ciega.
+const MAX_N           = 15;  // límite duro de búsqueda (antes 69)
+const MAX_N_NO_EDGE   = 10;  // límite cuando profitable=false (más conservador todavía)
 
 // ─── Tipos ───────────────────────────────────────────────────
 export interface AlgoRankRecord {
@@ -72,6 +87,133 @@ export interface OptimalNResult {
 // ─── PPSService ───────────────────────────────────────────────
 export class PPSService {
   constructor(private readonly pool: Pool) {}
+
+  // ════════════════════════════════════════════════════════════
+  // SEED via REPLAY HISTÓRICO (PATCH 2026-05-12 — fix definitivo)
+  // Caso de uso: combos nuevos sin backtest_results_v2.
+  // Lee snapshots históricos de hitdash.pps_pair_snapshots (si existen)
+  // y aplica updateFromDraw() retroactivamente sobre los últimos N sorteos.
+  // Si no hay snapshots → no hace nada (no inventa datos).
+  // ════════════════════════════════════════════════════════════
+  async seedPPSFromReplay(
+    game_type: string,
+    draw_type: string,
+    half:      string,
+    lookbackDraws: number = 60
+  ): Promise<{ replayed: number; algos_updated: number }> {
+    // Verificar si ya hay sample_count alto — si sí, skip
+    const { rows: existing } = await this.pool.query<{ max_sc: number }>(
+      `SELECT COALESCE(MAX(sample_count), 0)::int AS max_sc FROM hitdash.pps_state
+       WHERE game_type=$1 AND draw_type=$2 AND half=$3`,
+      [game_type, draw_type, half]
+    ).catch(() => ({ rows: [{ max_sc: 0 }] }));
+    if ((existing[0]?.max_sc ?? 0) >= 10) {
+      logger.info({ game_type, draw_type, half }, 'PPSService.seedReplay: PPS ya maduro, skip');
+      return { replayed: 0, algos_updated: 0 };
+    }
+
+    // Cargar snapshots históricos + resultados ganadores
+    const { rows: draws } = await this.pool.query<{ draw_date: string; winning_pair: string }>(
+      `SELECT draw_date::text, ${half === 'du' ? "(p2::text || p3::text)" : half === 'ab' ? "(p1::text || p2::text)" : "(p3::text || p4::text)"} AS winning_pair
+       FROM hitdash.ingested_results
+       WHERE game_type=$1 AND draw_type=$2
+       ORDER BY draw_date DESC LIMIT $3`,
+      [game_type, draw_type, lookbackDraws]
+    ).catch(() => ({ rows: [] as Array<{ draw_date: string; winning_pair: string }> }));
+
+    if (draws.length === 0) {
+      logger.info({ game_type, draw_type, half }, 'PPSService.seedReplay: sin sorteos históricos');
+      return { replayed: 0, algos_updated: 0 };
+    }
+
+    // Cronológico ASC
+    const chronological = draws.reverse();
+    let replayed = 0;
+    const algosUpdated = new Set<string>();
+
+    for (const d of chronological) {
+      try {
+        const records = await this.processPostDraw(
+          game_type, draw_type, d.draw_date, half, d.winning_pair
+        );
+        if (records.length > 0) {
+          replayed++;
+          records.forEach(r => algosUpdated.add(r.algo_name));
+        }
+      } catch (err) {
+        logger.debug({ err: String(err), draw_date: d.draw_date }, 'PPSService.seedReplay: sorteo sin snapshot, skip');
+      }
+    }
+
+    logger.info(
+      { game_type, draw_type, half, replayed, algos_updated: algosUpdated.size },
+      '🌱 PPSService.seedReplay: PPS sembrado via replay histórico'
+    );
+    return { replayed, algos_updated: algosUpdated.size };
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // SEED: Sembrar PPS desde backtest_results_v2 (PATCH 2026-05-12)
+  // Antes: combo nuevo → PPS=50 neutral por semanas
+  // Ahora: si backtest_results_v2 tiene datos, sembrar PPS desde
+  //        expected_rank y sample_count desde total_eval_pts.
+  // Mapeo: pps_seed = max(10, min(95, 101 − expected_rank))
+  //        sample_count_seed = ceil(total_eval_pts / 100)  (escalado)
+  // ════════════════════════════════════════════════════════════
+  async seedPPSFromBacktest(
+    game_type: string,
+    draw_type: string,
+    half:      string
+  ): Promise<{ seeded: number; skipped: number }> {
+    // Si ya hay datos PPS, no sobrescribir
+    const { rows: existing } = await this.pool.query<{ cnt: number }>(
+      `SELECT COUNT(*)::int AS cnt FROM hitdash.pps_state
+       WHERE game_type=$1 AND draw_type=$2 AND half=$3 AND sample_count >= 3`,
+      [game_type, draw_type, half]
+    ).catch(() => ({ rows: [{ cnt: 0 } as { cnt: number }] }));
+    if ((existing[0]?.cnt ?? 0) > 0) {
+      logger.info({ game_type, draw_type, half }, 'PPSService.seed: PPS ya tiene datos, skip');
+      return { seeded: 0, skipped: 1 };
+    }
+
+    // Cargar backtest_results_v2
+    const { rows: bt } = await this.pool.query<{
+      strategy_name: string; expected_rank: number; total_eval_pts: number;
+    }>(
+      `SELECT strategy_name, expected_rank, total_eval_pts
+       FROM hitdash.backtest_results_v2
+       WHERE game_type=$1 AND half=$2
+         AND expected_rank IS NOT NULL AND expected_rank > 0
+         AND total_eval_pts >= 30`,
+      [game_type, half]
+    ).catch(() => ({ rows: [] as Array<{ strategy_name: string; expected_rank: number; total_eval_pts: number }> }));
+
+    if (bt.length === 0) {
+      logger.info({ game_type, draw_type, half }, 'PPSService.seed: backtest_results_v2 vacío, sin seed posible');
+      return { seeded: 0, skipped: 0 };
+    }
+
+    let seeded = 0;
+    for (const row of bt) {
+      const expRank = Math.max(1, Math.min(101, Number(row.expected_rank)));
+      const ppsSeed = Math.max(10, Math.min(95, +(101 - expRank).toFixed(2)));
+      const sampleSeed = Math.max(3, Math.min(50, Math.ceil(Number(row.total_eval_pts) / 100)));
+
+      await this.pool.query(
+        `INSERT INTO hitdash.pps_state (algo_name, game_type, draw_type, half, pps, sample_count)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (algo_name, game_type, draw_type, half) DO NOTHING`,
+        [row.strategy_name, game_type, draw_type, half, ppsSeed, sampleSeed]
+      ).catch(err => logger.warn({ err: String(err), algo: row.strategy_name }, 'PPSService.seed: insert falló'));
+      seeded++;
+    }
+
+    logger.info(
+      { game_type, draw_type, half, seeded, source: 'backtest_results_v2' },
+      'PPSService.seed: sembrado desde backtest histórico'
+    );
+    return { seeded, skipped: 0 };
+  }
 
   // ════════════════════════════════════════════════════════════
   // PREDICCIÓN: Guardar scores de cada algoritmo antes del sorteo
@@ -163,8 +305,17 @@ export class PPSService {
       return [];
     }
 
-    // ── 2. Cargar PPS actuales ──────────────────────────────────
+    // ── 2. Cargar PPS actuales + sample counts (para α adaptivo) ──
     const currentPPS = await this.loadPPS(game_type, draw_type, half);
+    const sampleCounts = new Map<string, number>();
+    try {
+      const { rows: sc } = await this.pool.query<{ algo_name: string; sample_count: number }>(
+        `SELECT algo_name, sample_count FROM hitdash.pps_state
+         WHERE game_type=$1 AND draw_type=$2 AND half=$3`,
+        [game_type, draw_type, half]
+      );
+      for (const r of sc) sampleCounts.set(r.algo_name, Number(r.sample_count));
+    } catch { /* tabla podría no existir aún — ok */ }
 
     const records: AlgoRankRecord[] = [];
 
@@ -179,11 +330,15 @@ export class PPSService {
       const idx = sorted.indexOf(winning_pair);
       const rank_of_winner = idx >= 0 ? idx + 1 : RANK_MISS;
 
-      // ── PPS update: EMA(α=0.15) ────────────────────────────────
+      // ── PPS update: EMA con α ADAPTIVO ─────────────────────────
+      // α=0.30 mientras sample_count<30 (warmup rápido para nuevos combos)
+      // α=0.15 cuando sample_count≥30 (estabilidad madura)
       // contribution: 100 si rank=1 (perfecto), 0 si miss total (rank=101)
+      const sc          = sampleCounts.get(algo_name) ?? 0;
+      const alpha       = adaptiveAlpha(sc);
       const contribution = RANK_MISS - rank_of_winner;  // 0–100
       const pps_before   = currentPPS.get(algo_name) ?? PPS_INITIAL;
-      const pps_after    = +(PPS_ALPHA * contribution + (1 - PPS_ALPHA) * pps_before).toFixed(4);
+      const pps_after    = +(alpha * contribution + (1 - alpha) * pps_before).toFixed(4);
 
       records.push({ algo_name, rank_of_winner, pps_before, pps_after });
 
@@ -338,8 +493,11 @@ export class PPSService {
           break;
         }
 
-        // Guardar mejor ROI aunque no llegue al target (fallback honesto)
-        if (roi > bestRoi) {
+        // PATCH 2026-05-12: cuando no hay borde, NO expandir N indefinidamente.
+        // Antes: el "best ROI fallback" elegía N alto porque hit_rate↑ con N↑.
+        // Ahora: limitamos el fallback a N ≤ MAX_N_NO_EDGE (10).
+        // Filosofía: sin borde estadístico, mejor menos pares que más cobertura ciega.
+        if (N <= MAX_N_NO_EDGE && roi > bestRoi) {
           bestRoi     = roi;
           bestN       = N;
           bestHitRate = hitRate;

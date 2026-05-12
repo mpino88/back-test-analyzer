@@ -146,13 +146,27 @@ export class TelegramNotifier {
     const gameLabel = game_type === 'pick3' ? 'Pick 3' : 'Pick 4';
     const drawLabel = draw_type === 'midday' ? '🌤 Midday' : '🌆 Evening';
 
+    // PATCH 2026-05-12: header honesto sobre estado del motor estadístico
+    const anyEdge = recs.some(r => r.has_edge === true);
+    const headerTitle = anyEdge
+      ? `🧬 *HELIX — Motor Adaptativo (borde detectado)*`
+      : `🧬 *HELIX — Motor Adaptativo (calibrando, sin borde aún)*`;
     const header = [
-      `🧬 *HELIX — Decisión Magistral*`,
+      headerTitle,
       `📅 ${draw_date} | ${gameLabel} ${drawLabel}`,
       '────────────────────────',
     ].join('\n');
 
     const blocks: string[] = [];
+
+    // PATCH 2026-05-12: Warning visible al usuario si NINGUNA rec tiene borde
+    const anyHasEdge = recs.some(r => r.has_edge === true);
+    if (!anyHasEdge && recs.length > 0) {
+      logger.warn(
+        { game_type, draw_type, draw_date, recs_count: recs.length },
+        '⚠️  HELIX SIN BORDE: ninguna recomendación supera baseline aleatorio +3pp'
+      );
+    }
 
     for (const rec of recs) {
       const halfLabel =
@@ -182,15 +196,23 @@ export class TelegramNotifier {
 
       block.push('');
 
-      const randomBaseline = rec.optimal_n / 100;
-      const vsAzarDelta    = (rec.predicted_effectiveness - randomBaseline) * 100;
-      const vsAzarStr      = `${vsAzarDelta >= 0 ? '+' : ''}${vsAzarDelta.toFixed(1)}%`;
+      // PATCH 2026-05-12: Edge metric transparente — usa campos calculados por PairRecommender
+      const randomBaseline = rec.baseline_random ?? (rec.optimal_n / 100);
+      const expectedEdge   = rec.expected_edge   ?? (rec.predicted_effectiveness - randomBaseline);
+      const hasEdge        = rec.has_edge        ?? (expectedEdge >= 0.03);
+      const vsAzarStr      = `${expectedEdge >= 0 ? '+' : ''}${(expectedEdge * 100).toFixed(1)}pp`;
+      const edgeBadge      = hasEdge ? '🟢' : (expectedEdge >= 0 ? '🟡' : '🔴');
 
       block.push(
         rec.predicted_effectiveness > 0
-          ? `📊 N=${rec.optimal_n} · ${(rec.predicted_effectiveness * 100).toFixed(1)}% efectividad · *${vsAzarStr}* vs azar`
+          ? `📊 N=${rec.optimal_n} · ${(rec.predicted_effectiveness * 100).toFixed(1)}% efectividad`
           : `📊 N=${rec.optimal_n} · HELIX calibrando — KRONOS en aprendizaje`
       );
+      if (rec.predicted_effectiveness > 0) {
+        block.push(
+          `${edgeBadge} Edge: *${vsAzarStr}* vs azar (baseline=${(randomBaseline*100).toFixed(0)}%) ${hasEdge ? '— borde medible' : '— sin borde aún'}`
+        );
+      }
 
       blocks.push(block.join('\n'));
     }

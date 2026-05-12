@@ -49,7 +49,7 @@ export function createSSERouter(agentPool: Pool, redis: Redis): Router {
              WHERE status = 'completed'
              ORDER BY created_at DESC LIMIT 1`
           ),
-          // ── SISTEMA NERVIOSO CENTRAL — datos autónomos ────────────────
+          // ── CONTEXTO ADAPTATIVO — datos autónomos ────────────────
           agentPool.query<{ signals_found: number; hypotheses_generated: number; triggered_by: string; created_at: string }>(
             `SELECT signals_found, hypotheses_generated, triggered_by, created_at::text
              FROM hitdash.anomaly_scan_log
@@ -81,7 +81,7 @@ export function createSSERouter(agentPool: Pool, redis: Redis): Router {
           rag_documents:    parseInt(ragRow.rows[0]!.count, 10),
           last_agent_cycle: cycleRow.rows[0]?.created_at ?? null,
           redis_ok:         redisAlive,
-          // ── SISTEMA NERVIOSO CENTRAL ──────────────────────────────────
+          // ── CONTEXTO ADAPTATIVO ──────────────────────────────────
           autonomous: {
             last_scan:            scanRow.rows[0] ?? null,
             active_strategies:    parseInt(stratCounts.active, 10),

@@ -1146,7 +1146,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
             [gt]
           ).catch(() => ({ rows: [] as any[] })),
 
-          // ── SISTEMA NERVIOSO CENTRAL: señales autónomas activas ──────
+          // ── CONTEXTO ADAPTATIVO: señales autónomas activas ──────
           autoLearningLoop.getCurrentSignals(gt, extractDrawType(lower))
             .catch(() => ({ signals: [] as any[] })),
 

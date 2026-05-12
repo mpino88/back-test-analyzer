@@ -119,6 +119,13 @@ export interface PairRecommendation {
   optimal_n:               number;
   predicted_effectiveness: number;
   cognitive_basis:         string;
+  // ─── PATCH 2026-05-12: Edge metric (transparencia de borde real) ──
+  // expected_edge = predicted_effectiveness - baseline_random
+  // baseline_random = N / 100 (probabilidad si predijéramos al azar)
+  // Si edge ≤ 0 → el agente NO tiene borde estadístico medible
+  baseline_random?:        number;  // N/100
+  expected_edge?:          number;  // predicted_effectiveness - baseline_random
+  has_edge?:               boolean; // true si expected_edge > 0.03 (3pp sobre azar)
 }
 
 // ─── Alertas ────────────────────────────────────────────────────

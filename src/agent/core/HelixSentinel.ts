@@ -30,10 +30,56 @@ const PPS_DROP_PCT   = 0.20;   // 20% caída en PPS → alerta
 export class HelixSentinel {
   private readonly notifier:        TelegramNotifier;
   private readonly anomalyDetector: AnomalyDetector;
+  private proactiveTimer:           NodeJS.Timeout | null = null;
+  private readonly PROACTIVE_INTERVAL_MS = 30 * 60 * 1000; // 30 min
 
   constructor(private readonly pool: Pool, notifier?: TelegramNotifier) {
     this.notifier        = notifier ?? new TelegramNotifier();
     this.anomalyDetector = new AnomalyDetector(pool);
+  }
+
+  // ─── PATCH 2026-05-12: Modo PROACTIVO real (no solo post-sorteo) ──────────
+  // Cada 30 min escanea TODOS los combos sin esperar sorteo.
+  // Detecta: caídas PPS súbitas, anomalías recientes, estrategias degradándose.
+  // Anti-spam: cooldown de DB sigue aplicando (6h por evento).
+  startProactiveTimer(): void {
+    if (this.proactiveTimer) return; // ya corriendo
+    logger.info({ interval_ms: this.PROACTIVE_INTERVAL_MS }, 'HelixSentinel: modo PROACTIVO iniciado');
+    this.proactiveTimer = setInterval(() => {
+      this.runProactiveCycle().catch(err =>
+        logger.warn({ error: String(err) }, 'HelixSentinel: ciclo proactivo falló (non-fatal)')
+      );
+    }, this.PROACTIVE_INTERVAL_MS);
+    // Primera corrida inmediata (no esperar 30min)
+    setImmediate(() => this.runProactiveCycle().catch(() => {}));
+  }
+
+  stopProactiveTimer(): void {
+    if (this.proactiveTimer) {
+      clearInterval(this.proactiveTimer);
+      this.proactiveTimer = null;
+      logger.info('HelixSentinel: modo PROACTIVO detenido');
+    }
+  }
+
+  private async runProactiveCycle(): Promise<void> {
+    const t0 = Date.now();
+    const combos: Array<{ game_type: GameType; draw_type: DrawType }> = [
+      { game_type: 'pick3', draw_type: 'midday'  },
+      { game_type: 'pick3', draw_type: 'evening' },
+      { game_type: 'pick4', draw_type: 'midday'  },
+      { game_type: 'pick4', draw_type: 'evening' },
+    ];
+
+    for (const c of combos) {
+      // En modo proactivo solo corremos los chequeos ligeros (no requieren AutoLearningResult)
+      await Promise.all([
+        this.checkCriticalSignals(c.game_type, c.draw_type),
+        this.checkAlgoDegradation(c.game_type, c.draw_type),
+      ]).catch(() => {});
+    }
+
+    logger.info({ duration_ms: Date.now() - t0 }, 'HelixSentinel: ciclo proactivo completado');
   }
 
   // ─── Punto de entrada: evaluar después de cada sorteo ────────────────────

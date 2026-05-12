@@ -82,7 +82,7 @@ export class HitdashAgent {
   private readonly notifier:           TelegramNotifier;
   private readonly ragService:         RAGService;
   private readonly pairBacktestEngine: PairBacktestEngine;
-  // ── SISTEMA NERVIOSO CENTRAL ──────────────────────────────────────────────
+  // ── CONTEXTO ADAPTATIVO ──────────────────────────────────────────────
   private readonly lifecycleManager:      StrategyLifecycleManager;
   private readonly autoLearning:          AutoLearningLoop;
   private readonly digitAnalyzer:         DigitAnalyzer;
@@ -101,7 +101,7 @@ export class HitdashAgent {
     this.notifier            = notifier ?? new TelegramNotifier();
     this.ragService          = ragService;
     this.pairBacktestEngine  = new PairBacktestEngine(agentPool);
-    // ── SISTEMA NERVIOSO CENTRAL ─────────────────────────────────────────
+    // ── CONTEXTO ADAPTATIVO ─────────────────────────────────────────
     this.lifecycleManager       = new StrategyLifecycleManager(agentPool);
     this.autoLearning           = new AutoLearningLoop(agentPool);
     this.digitAnalyzer          = new DigitAnalyzer(agentPool);
@@ -371,7 +371,7 @@ export class HitdashAgent {
     const query = `${game_type.toUpperCase()} ${draw_type} análisis predictivo ${draw_date}`;
     const queryVector = await this.ragService.embedText(query);
 
-    // ── SISTEMA NERVIOSO CENTRAL — cargar estado autónomo ─────────────────
+    // ── CONTEXTO ADAPTATIVO — cargar estado autónomo ─────────────────
     // Se ejecuta en paralelo para no añadir latencia al pipeline principal.
     const [activeStrategies, anomalyReport] = await Promise.all([
       this.lifecycleManager.getActiveStrategies(game_type, draw_type).catch(() => []),
@@ -414,7 +414,7 @@ export class HitdashAgent {
         ts: new Date().toISOString(),
       });
 
-      // ═══ MOTOR-Σ + SISTEMA NERVIOSO CENTRAL: reasoning enriquecido ═══
+      // ═══ MOTOR-Σ + CONTEXTO ADAPTATIVO: reasoning enriquecido ═══
       let llmReasoning = this.buildAutonomousReasoning(
         game_type, draw_type, activeStrategies, anomalyReport.signals, digitRec
       );
@@ -1182,7 +1182,7 @@ Responde con este JSON exacto:
     }
   }
 
-  // ── SISTEMA NERVIOSO CENTRAL: construir reasoning enriquecido ────────────
+  // ── CONTEXTO ADAPTATIVO: construir reasoning enriquecido ────────────
   // Genera el texto de razonamiento que va a Telegram, incorporando contexto
   // autónomo real: señales activas, estrategias dinámicas, análisis posicional.
   private buildAutonomousReasoning(

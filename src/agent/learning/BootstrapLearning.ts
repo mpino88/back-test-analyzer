@@ -74,7 +74,8 @@ export class BootstrapLearning {
   }
 
   // ─── Punto de entrada: bootstrap de todos los combos ─────────────
-  async runFullBootstrap(replayDraws: number = 90): Promise<BootstrapResult> {
+  // PATCH 2026-05-12: default 90→365 (replay anual real, no trimestral)
+  async runFullBootstrap(replayDraws: number = 365): Promise<BootstrapResult> {
     const t0 = Date.now();
     logger.info({ replayDraws }, 'BootstrapLearning: iniciando bootstrap completo');
 

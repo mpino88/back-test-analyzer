@@ -251,6 +251,19 @@ async function start(): Promise<void> {
     logger.warn({ error: err }, '⚠️  PostDrawProcessor no iniciado — Redis requerido');
   }
 
+  // ─── PATCH 2026-05-12: HelixSentinel modo PROACTIVO ──────────────
+  // Antes: solo corría tras cada sorteo (cada 12h aprox).
+  // Ahora: timer interno cada 30 min escaneando los 4 combos.
+  // Aún respeta cooldown DB de 6h por evento — no hay spam.
+  try {
+    const { HelixSentinel } = await import('../agent/core/HelixSentinel.js');
+    const helixSentinel = new HelixSentinel(agentPool, telegramNotifier);
+    helixSentinel.startProactiveTimer();
+    logger.info('✅ HelixSentinel PROACTIVO iniciado (escaneo cada 30 min)');
+  } catch (err) {
+    logger.warn({ error: String(err) }, '⚠️  HelixSentinel proactivo no iniciado (non-fatal)');
+  }
+
   app.listen(PORT, '0.0.0.0', async () => {
     logger.info(`🚀 Hitdash Server corriendo en puerto ${PORT}`);
     logger.info(`   Health: http://localhost:${PORT}/health`);
@@ -264,6 +277,38 @@ async function start(): Promise<void> {
       ballbotDb: true,            // idem
       redis: true,
     }).catch(() => {});           // fire-and-forget — nunca bloquea el boot
+
+    // ─── PATCH 2026-05-12: PPS Seed desde backtest histórico ──────────
+    // Antes: combos nuevos arrancaban con PPS=50 neutral por semanas.
+    // Ahora: si backtest_results_v2 tiene datos, se siembra PPS al boot.
+    // Idempotente: si ya hay sample_count≥3, no sobrescribe.
+    setImmediate(async () => {
+      try {
+        const { PPSService } = await import('../agent/services/PPSService.js');
+        const ppsService = new PPSService(agentPool);
+        const SEED_COMBOS = [
+          { game_type: 'pick3', draw_type: 'midday',  half: 'du' },
+          { game_type: 'pick3', draw_type: 'evening', half: 'du' },
+          { game_type: 'pick4', draw_type: 'midday',  half: 'ab' },
+          { game_type: 'pick4', draw_type: 'midday',  half: 'cd' },
+          { game_type: 'pick4', draw_type: 'evening', half: 'ab' },
+          { game_type: 'pick4', draw_type: 'evening', half: 'cd' },
+        ];
+        let totalSeeded = 0;
+        let totalReplayed = 0;
+        for (const c of SEED_COMBOS) {
+          // 1) Seed desde backtest_results_v2 (rápido, pesos calibrados)
+          const r = await ppsService.seedPPSFromBacktest(c.game_type, c.draw_type, c.half).catch(() => ({ seeded: 0, skipped: 0 }));
+          totalSeeded += r.seeded;
+          // 2) Seed via replay histórico (lento pero verdadero — solo si snapshots existen)
+          const rep = await ppsService.seedPPSFromReplay(c.game_type, c.draw_type, c.half, 60).catch(() => ({ replayed: 0, algos_updated: 0 }));
+          totalReplayed += rep.replayed;
+        }
+        logger.info({ total_seeded: totalSeeded, total_replayed: totalReplayed }, '✅ PPS Seed completado (backtest + replay)');
+      } catch (err) {
+        logger.warn({ error: String(err) }, '⚠️  PPS Seed falló (non-fatal)');
+      }
+    });
 
     // ─── CognitiveLearner — auto-aprendizaje histórico al boot ───────
     // Se dispara en background inmediatamente después del boot.

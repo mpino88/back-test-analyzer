@@ -717,21 +717,19 @@ export class AnalysisEngine {
     // Se persiste al final para que PostDrawProcessor pueda computar rank_of_winner.
     const algoScores = new Map<string, Record<string, number>>();
 
+    // ─── PASO 1: Normalizar scores por algoritmo (sin sumar todavía) ──
+    const normalizedPerAlgo = new Map<string, { weight: number; normalized: Record<string, number> }>();
     for (const [name, weight, result] of algResults) {
       if (result.status === 'fulfilled') {
         algorithms_succeeded.push(name);
         const scores = result.value;
         const maxScore = Math.max(...Object.values(scores), 1e-9);
-        // Scores normalizados para el consensus
         const normalized: Record<string, number> = {};
         for (const [key, score] of Object.entries(scores)) {
-          const ns = score / maxScore;
-          normalized[key]     = ns;
-          accumulated[key]    = (accumulated[key] ?? 0) + ns * weight;
+          normalized[key] = score / maxScore;
         }
-        totalWeight += weight;
-        // Guardar para snapshot solo si el algoritmo produjo diferenciación real.
-        // Un score uniforme (varianza ≈ 0) no aporta señal al PPS — lo excluimos.
+        normalizedPerAlgo.set(name, { weight, normalized });
+        // Guardar para snapshot solo si el algo produjo diferenciación real
         const vals = Object.values(normalized);
         const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
         const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
@@ -743,6 +741,46 @@ export class AnalysisEngine {
         });
         logger.warn({ algorithm: name, error: result.reason }, 'runPairs fallido — excluido del consensus');
       }
+    }
+
+    // ─── PASO 2: PENALTY de REDUNDANCIA (PATCH 2026-05-12) ────────────────
+    // Antes: 5 algoritmos midiendo "lo mismo" sumaban 5 votos como si fueran independientes.
+    // Ahora: si Jaccard(top15) > 0.65, ese cluster cuenta como 1 voto efectivo
+    //        (cada algo en cluster de tamaño K → weight ÷ K).
+    const diversityDivisors = new Map<string, number>();
+    try {
+      const { AlgorithmDiversityAnalyzer } = await import('../services/AlgorithmDiversityAnalyzer.js');
+      const algoScoreMap = new Map<string, Record<string, number>>();
+      for (const [n, v] of normalizedPerAlgo) algoScoreMap.set(n, v.normalized);
+      const diversity = new AlgorithmDiversityAnalyzer().analyze(algoScoreMap, 15);
+
+      for (const cluster of diversity.redundancy_clusters) {
+        const k = cluster.length;
+        for (const algoName of cluster) diversityDivisors.set(algoName, k);
+      }
+
+      logger.info(
+        {
+          game_type, draw_type, half,
+          diversity_score: diversity.diversity_score,
+          recommendation:  diversity.recommendation,
+          clusters:        diversity.redundancy_clusters,
+          penalty_applied: diversityDivisors.size,
+        },
+        '🛡️ Penalty de redundancia aplicado al consensus'
+      );
+    } catch (err) {
+      logger.debug({ error: String(err) }, 'Diversity penalty: skip (non-fatal)');
+    }
+
+    // ─── PASO 3: Acumular con penalty efectivo ────────────────────────────
+    for (const [name, { weight, normalized }] of normalizedPerAlgo) {
+      const divisor = diversityDivisors.get(name) ?? 1;
+      const effW = weight / divisor;
+      for (const [key, ns] of Object.entries(normalized)) {
+        accumulated[key] = (accumulated[key] ?? 0) + ns * effW;
+      }
+      totalWeight += effW;
     }
 
     // C2: Momentum overlay — blend short-term (30d) frequency + hot_cold into consensus

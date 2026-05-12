@@ -58,6 +58,13 @@ export class PairRecommender {
       watch: finalPairs.slice(mustCount + coverCount),
     };
 
+    // ─── Edge metric: predicción vs baseline aleatorio ───────────────
+    // baseline = N/100 (probabilidad si elegimos al azar)
+    // edge = predicted_effectiveness − baseline. >3pp = borde real medible.
+    const baseline_random = +(n / 100).toFixed(4);
+    const expected_edge   = +(analysis.predicted_effectiveness - baseline_random).toFixed(4);
+    const has_edge        = expected_edge >= 0.03;
+
     return {
       game_type:               analysis.game_type,
       half:                    analysis.half,
@@ -70,6 +77,9 @@ export class PairRecommender {
       optimal_n:               analysis.optimal_n,
       predicted_effectiveness: analysis.predicted_effectiveness,
       cognitive_basis:         analysis.cognitive_basis,
+      baseline_random,
+      expected_edge,
+      has_edge,
     };
   }
 
