@@ -88,6 +88,133 @@
       </div>
     </section>
 
+    <!-- ── Diagnóstico Forense ──────────────────────────────────── -->
+    <section class="section section--diag">
+      <div class="section-header">
+        <h2 class="section-title">🔬 Diagnóstico del sistema (ground truth)</h2>
+        <button class="btn-diag" :disabled="loadingDiag" @click="loadDiagnostics">
+          {{ loadingDiag ? '⟳ Midiendo...' : '🩺 Ejecutar diagnóstico' }}
+        </button>
+      </div>
+
+      <div v-if="diagData" class="diag-grid">
+        <!-- Verdicts -->
+        <div class="diag-card diag-card--verdict">
+          <div class="diag-card__title">Verdicts forenses</div>
+          <div class="verdict-list">
+            <div class="verdict-row">
+              <span class="verdict-label">F01 draw_date NULL</span>
+              <span class="verdict-val" :class="diagData.verdict.F01_draw_date_null.startsWith('CONFIRMED') ? 'v--red' : 'v--green'">
+                {{ diagData.verdict.F01_draw_date_null }}
+              </span>
+            </div>
+            <div class="verdict-row">
+              <span class="verdict-label">F02 feedback_loop</span>
+              <span class="verdict-val" :class="diagData.verdict.F02_feedback_loop_empty.startsWith('CONFIRMED') ? 'v--red' : 'v--green'">
+                {{ diagData.verdict.F02_feedback_loop_empty }}
+              </span>
+            </div>
+            <div class="verdict-row">
+              <span class="verdict-label">F04 backtest_points_v2</span>
+              <span class="verdict-val v--yellow">{{ diagData.verdict.F04_backtest_points_v2_gap }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ingested_results -->
+        <div class="diag-card">
+          <div class="diag-card__title">ingested_results</div>
+          <div class="diag-row">Total filas: <strong>{{ diagData.ingested_results.total?.toLocaleString() }}</strong></div>
+          <div class="diag-row" :class="diagData.ingested_results.null_draw_date > 0 ? 'diag-row--alert' : ''">
+            NULL draw_date: <strong>{{ diagData.ingested_results.null_draw_date }}</strong>
+          </div>
+          <div class="diag-row" :class="diagData.ingested_results.null_p1 > 0 ? 'diag-row--alert' : ''">
+            NULL p1: <strong>{{ diagData.ingested_results.null_p1 }}</strong>
+          </div>
+          <div class="diag-row" :class="diagData.ingested_results.null_game_type > 0 ? 'diag-row--alert' : ''">
+            NULL game_type: <strong>{{ diagData.ingested_results.null_game_type }}</strong>
+          </div>
+          <div class="diag-row" v-if="diagData.ingested_results.date_range">
+            Rango: <strong>{{ diagData.ingested_results.date_range.earliest }} → {{ diagData.ingested_results.date_range.latest }}</strong>
+          </div>
+          <div class="diag-subtitle">Por combo:</div>
+          <div v-for="c in diagData.ingested_results.by_game_draw" :key="`${c.game_type}-${c.draw_type}`" class="diag-row diag-row--sm">
+            {{ c.game_type }}/{{ c.draw_type }}: <strong>{{ c.cnt }}</strong> fechas
+          </div>
+        </div>
+
+        <!-- algo_prediction_snapshot -->
+        <div class="diag-card">
+          <div class="diag-card__title">algo_prediction_snapshot</div>
+          <div class="diag-row">Total filas: <strong>{{ diagData.algo_prediction_snapshot.total?.toLocaleString() }}</strong></div>
+          <div class="diag-row" v-if="diagData.algo_prediction_snapshot.summary">
+            Fechas: <strong>{{ diagData.algo_prediction_snapshot.summary.distinct_dates }}</strong>
+            · Algos: <strong>{{ diagData.algo_prediction_snapshot.summary.distinct_algos }}</strong>
+          </div>
+          <div class="diag-row" v-if="diagData.algo_prediction_snapshot.summary?.earliest">
+            Rango: <strong>{{ diagData.algo_prediction_snapshot.summary.earliest }} → {{ diagData.algo_prediction_snapshot.summary.latest }}</strong>
+          </div>
+        </div>
+
+        <!-- pair_recommendations -->
+        <div class="diag-card">
+          <div class="diag-card__title">pair_recommendations</div>
+          <div class="diag-row">Total: <strong>{{ diagData.pair_recommendations?.total }}</strong></div>
+          <div class="diag-row">Hits: <strong style="color:#4ade80">{{ diagData.pair_recommendations?.hits }}</strong></div>
+          <div class="diag-row">Misses: <strong style="color:#f87171">{{ diagData.pair_recommendations?.misses }}</strong></div>
+          <div class="diag-row">Pendientes: <strong style="color:#f59e0b">{{ diagData.pair_recommendations?.pending }}</strong></div>
+        </div>
+
+        <!-- proactive_alerts -->
+        <div class="diag-card">
+          <div class="diag-card__title">proactive_alerts (no acked)</div>
+          <div v-for="a in diagData.proactive_alerts" :key="a.alert_type" class="diag-row">
+            <strong>{{ a.alert_type }}</strong>: {{ a.cnt }}
+            <span class="diag-meta">({{ a.oldest?.slice(0,10) }} → {{ a.newest?.slice(0,10) }})</span>
+          </div>
+          <div v-if="diagData.proactive_alerts.length === 0" class="diag-row">Sin alertas pendientes</div>
+        </div>
+
+        <!-- backtest_points_v2 -->
+        <div class="diag-card">
+          <div class="diag-card__title">backtest_points_v2</div>
+          <div class="diag-row">Total: <strong>{{ diagData.backtest_points_v2?.total?.toLocaleString() }}</strong></div>
+          <div class="diag-row">Con hit: <strong>{{ diagData.backtest_points_v2?.with_hit }}</strong></div>
+          <div class="diag-row" v-if="diagData.backtest_points_v2?.earliest_eval">
+            Rango eval: <strong>{{ diagData.backtest_points_v2.earliest_eval }} → {{ diagData.backtest_points_v2.latest_eval }}</strong>
+          </div>
+        </div>
+
+        <!-- otras tablas -->
+        <div class="diag-card">
+          <div class="diag-card__title">Otras tablas</div>
+          <div class="diag-row" :class="diagData.feedback_loop_total === 0 ? 'diag-row--alert' : ''">
+            feedback_loop: <strong>{{ diagData.feedback_loop_total }}</strong>
+            <span class="diag-meta" v-if="diagData.feedback_loop_total === 0">(vacía — F02 confirmado)</span>
+          </div>
+          <div class="diag-row">public.draws: <strong>{{ diagData.public_draws_total?.toLocaleString() }}</strong></div>
+        </div>
+
+        <!-- pps_state top algos -->
+        <div class="diag-card diag-card--wide">
+          <div class="diag-card__title">PPS top algos (sample_count)</div>
+          <div class="pps-diag-grid">
+            <div v-for="p in diagData.pps_state_top_algos" :key="p.algo_name" class="pps-diag-row">
+              <span class="diag-algo">{{ p.algo_name }}</span>
+              <span>PPS: <strong>{{ p.avg_pps }}</strong></span>
+              <span>n: <strong>{{ p.max_samples }}</strong></span>
+              <span class="diag-meta">{{ p.combos }} combos</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <details v-if="diagData" class="diag-raw">
+        <summary>Ver JSON crudo</summary>
+        <pre>{{ JSON.stringify(diagData, null, 2) }}</pre>
+      </details>
+    </section>
+
     <!-- ── MOTOR-Σ PPS State ────────────────────────────────────── -->
     <section class="section">
       <div class="section-header">
@@ -393,6 +520,21 @@ async function fetchPPS() {
   }
 }
 
+// ── Diagnóstico Forense ──────────────────────────────────────
+const diagData    = ref(null);
+const loadingDiag = ref(false);
+
+async function loadDiagnostics() {
+  loadingDiag.value = true;
+  try {
+    diagData.value = await apiGet('/api/agent/diagnostics');
+  } catch (e) {
+    diagData.value = { error: e.message };
+  } finally {
+    loadingDiag.value = false;
+  }
+}
+
 // ── AlgorithmDiversityAnalyzer — consensus redundancy report ────
 const diversityData = ref(null);
 
@@ -598,6 +740,43 @@ onMounted(() => {
 .hs-badge--disabled { background: #1a0505; color: #f87171; border: 1px solid #7f1d1d44; }
 .hs-badge--degraded { background: #1c1100; color: #f59e0b; border: 1px solid #78350f44; }
 .hs-badge--ok       { background: #052e16; color: #4ade80; border: 1px solid #16653444; }
+
+/* ── Diagnóstico Forense ───────────────────────────────────── */
+.section--diag { border: 1px solid #78350f44; background: #0f0a05; padding: 1.25rem; border-radius: 12px; }
+.btn-diag {
+  background: #f59e0b; color: #1a1a1a; border: none; border-radius: 8px;
+  padding: 0.5rem 1rem; font-size: 0.85rem; font-weight: 700; cursor: pointer;
+}
+.btn-diag:hover:not(:disabled) { background: #fbbf24; }
+.btn-diag:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.diag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.75rem; margin-top: 0.5rem; }
+.diag-card { background: #0a0d14; border: 1px solid #1e2d40; border-radius: 8px; padding: 0.85rem; }
+.diag-card--verdict { border-color: #f59e0b44; background: #1a0f05; grid-column: span 2; }
+.diag-card--wide    { grid-column: span 2; }
+.diag-card__title   { font-size: 0.78rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid #1e2d40; }
+.diag-row { font-size: 0.82rem; color: #cbd5e1; padding: 0.2rem 0; }
+.diag-row--sm { font-size: 0.72rem; color: #94a3b8; }
+.diag-row--alert { color: #f87171; }
+.diag-row strong { color: #f1f5f9; }
+.diag-subtitle { margin-top: 0.4rem; font-size: 0.7rem; color: #64748b; }
+.diag-meta { color: #475569; font-size: 0.72rem; }
+
+.verdict-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.verdict-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.3rem 0; }
+.verdict-label { font-size: 0.75rem; color: #94a3b8; font-weight: 600; }
+.verdict-val { font-size: 0.72rem; font-weight: 700; padding: 0.2rem 0.5rem; border-radius: 4px; text-align: right; }
+.v--red    { background: #1a0505; color: #f87171; }
+.v--green  { background: #052e16; color: #4ade80; }
+.v--yellow { background: #1c1100; color: #f59e0b; }
+
+.pps-diag-grid { display: flex; flex-direction: column; gap: 0.3rem; }
+.pps-diag-row  { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 0.4rem; font-size: 0.72rem; font-family: monospace; padding: 0.2rem 0; border-bottom: 1px solid #0f1623; }
+.diag-algo     { color: #60a5fa; }
+
+.diag-raw { margin-top: 0.75rem; }
+.diag-raw summary { cursor: pointer; font-size: 0.72rem; color: #64748b; }
+.diag-raw pre     { background: #050810; padding: 0.75rem; border-radius: 6px; font-size: 0.65rem; color: #94a3b8; overflow-x: auto; max-height: 400px; margin-top: 0.5rem; }
 
 /* Diversity bar */
 .diversity-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.75rem; border-radius: 8px; background: #0a0d14; border: 1px solid #1e2d40; margin-bottom: 1rem; font-size: 0.78rem; }
