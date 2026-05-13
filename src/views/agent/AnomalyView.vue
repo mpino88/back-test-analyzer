@@ -285,6 +285,10 @@
                   </span>
                 </div>
                 <div class="hyp-basis">{{ hyp.confidence_basis }}</div>
+                <details v-if="hyp.condition_json" class="hyp-condition">
+                  <summary class="hyp-condition-toggle">Condición</summary>
+                  <pre class="hyp-condition-code">{{ JSON.stringify(hyp.condition_json, null, 2) }}</pre>
+                </details>
               </div>
             </div>
           </div>
@@ -331,14 +335,48 @@
                   <span v-if="strat.hits_in_prod + strat.misses_in_prod > 0">
                     HitRate: {{ ((strat.hits_in_prod / (strat.hits_in_prod + strat.misses_in_prod)) * 100).toFixed(1) }}%
                   </span>
+                  <span v-if="strat.activation_hit_rate != null" class="strat-stat-extra">
+                    Activ.HR: {{ (strat.activation_hit_rate * 100).toFixed(1) }}%
+                    <template v-if="strat.min_expected_hit_rate != null">
+                      / min {{ (strat.min_expected_hit_rate * 100).toFixed(1) }}%
+                    </template>
+                  </span>
+                  <span v-if="strat.contribution_count > 0" class="strat-stat-extra">
+                    Contribuciones: {{ strat.contribution_count }}
+                  </span>
                   <span v-if="strat.consecutive_misses > 0" class="warn-misses">
                     ⚠️ {{ strat.consecutive_misses }} misses consecutivos
                   </span>
                 </div>
                 <div v-if="strat.description" class="strat-desc">{{ strat.description }}</div>
+                <!-- Condición JSON que creó la estrategia -->
+                <details v-if="strat.condition_json" class="strat-condition">
+                  <summary class="strat-condition-toggle">Ver condición</summary>
+                  <pre class="strat-condition-code">{{ JSON.stringify(strat.condition_json, null, 2) }}</pre>
+                </details>
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- Autonomous Recommendations — previously fetched but never shown anywhere -->
+        <div class="panel panel-compact" v-if="autoRecs">
+          <div class="panel-header">
+            <h2 class="panel-title">🤖 Recomendaciones Autónomas</h2>
+            <span class="panel-meta">{{ autoRecs.game_type?.toUpperCase() }} {{ autoRecs.draw_type }}</span>
+          </div>
+          <div v-if="autoRecs.recommendations?.length === 0" class="empty-row">
+            Sin recomendaciones autónomas activas — sistema aprendiendo
+          </div>
+          <div v-else class="auto-recs-list">
+            <div v-for="r in (autoRecs.recommendations ?? []).slice(0, 6)" :key="r.pair ?? r.id ?? Math.random()" class="auto-rec-item">
+              <span class="ar-pair">{{ r.pair ?? r.target ?? '—' }}</span>
+              <span class="ar-source">{{ r.source ?? r.strategy_name ?? '' }}</span>
+              <span class="ar-score" v-if="r.score != null">{{ (r.score * 100).toFixed(0) }}pts</span>
+              <span class="ar-confidence" v-if="r.confidence != null">{{ (r.confidence * 100).toFixed(0) }}% conf</span>
+            </div>
+          </div>
+          <div v-if="autoRecs.reasoning" class="auto-recs-reasoning">{{ autoRecs.reasoning }}</div>
         </div>
 
         <!-- Scan Log -->
@@ -408,6 +446,7 @@ const hypotheses     = ref([]);
 const allStrategies  = ref([]);
 const digitAnalysis  = ref(null);
 const scanLog        = ref([]);
+const autoRecs       = ref(null);  // GET /api/agent/autonomous-recommendations
 
 const hypStatusFilter = ref('all');
 const showRetired     = ref(false);
@@ -425,6 +464,14 @@ function selectGame(g) {
   loadAll();
 }
 
+async function loadAutoRecs() {
+  try {
+    autoRecs.value = await apiGet(
+      `/api/agent/autonomous-recommendations?game_type=${selectedGame.value}&draw_type=${selectedDrawType.value}`
+    );
+  } catch { /* non-critical */ }
+}
+
 async function loadAll() {
   loading.value = true;
   await Promise.all([
@@ -433,6 +480,7 @@ async function loadAll() {
     loadStrategies(),
     loadDigitAnalysis(),
     loadScanLog(),
+    loadAutoRecs(),
   ]);
   loading.value = false;
 }
@@ -981,4 +1029,25 @@ onMounted(() => loadAll());
 .scan-date { color: #555; }
 .scan-stats { display: flex; gap: 0.5rem; color: #666; }
 .scan-duration { color: #444; margin-left: auto; }
+
+/* Strategy extra fields */
+.strat-stat-extra { color: #60a5fa; font-size: 0.72rem; }
+.strat-condition { margin-top: 0.4rem; }
+.strat-condition-toggle { font-size: 0.72rem; color: #475569; cursor: pointer; }
+.strat-condition-code { font-size: 0.68rem; color: #94a3b8; background: #070b12; padding: 0.5rem; border-radius: 6px; overflow-x: auto; margin: 0.3rem 0 0; }
+
+/* Hypothesis condition */
+.hyp-condition { margin-top: 0.3rem; }
+.hyp-condition-toggle { font-size: 0.7rem; color: #475569; cursor: pointer; }
+.hyp-condition-code { font-size: 0.65rem; color: #94a3b8; background: #070b12; padding: 0.4rem; border-radius: 6px; overflow-x: auto; margin: 0.25rem 0 0; }
+
+/* Autonomous recommendations */
+.auto-recs-list { display: flex; flex-direction: column; gap: 0.3rem; }
+.auto-rec-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem; background: #0a1018; border-radius: 6px; font-size: 0.8rem; }
+.ar-pair       { font-family: monospace; font-weight: 700; color: #f1f5f9; min-width: 28px; }
+.ar-source     { color: #64748b; font-size: 0.72rem; flex: 1; }
+.ar-score      { color: #60a5fa; font-weight: 600; }
+.ar-confidence { color: #94a3b8; font-size: 0.72rem; }
+.auto-recs-reasoning { margin-top: 0.5rem; font-size: 0.75rem; color: #64748b; border-top: 1px solid #1e2d40; padding-top: 0.4rem; }
+.panel-meta { font-size: 0.72rem; color: #475569; }
 </style>

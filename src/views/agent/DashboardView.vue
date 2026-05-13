@@ -93,20 +93,20 @@
       <div class="section-header">
         <h2 class="section-title">Motor-Σ — Estado de aprendizaje</h2>
         <div class="pps-controls">
-          <select v-model="ppsGame" class="input-select input-select--sm" @change="fetchPPS">
+          <select v-model="ppsGame" class="input-select input-select--sm" @change="refreshMotor">
             <option value="pick3">Pick 3</option>
             <option value="pick4">Pick 4</option>
           </select>
-          <select v-model="ppsDraw" class="input-select input-select--sm" @change="fetchPPS">
+          <select v-model="ppsDraw" class="input-select input-select--sm" @change="refreshMotor">
             <option value="midday">Midday</option>
             <option value="evening">Evening</option>
           </select>
-          <select v-model="ppsHalf" class="input-select input-select--sm" @change="fetchPPS">
+          <select v-model="ppsHalf" class="input-select input-select--sm" @change="refreshMotor">
             <option value="du">DU</option>
             <option v-if="ppsGame === 'pick4'" value="ab">AB</option>
             <option v-if="ppsGame === 'pick4'" value="cd">CD</option>
           </select>
-          <button class="btn-refresh-sm" @click="fetchPPS">↻</button>
+          <button class="btn-refresh-sm" @click="refreshMotor">↻</button>
         </div>
       </div>
 
@@ -160,6 +160,28 @@
         <div v-else-if="ppsData.health_summary && ppsData.health_summary.healthy_count > 0" class="health-summary-bar health-summary-bar--ok">
           <span class="hs-label">⚡ Salud algos:</span>
           <span class="hs-badge hs-badge--ok">🟢 Todos sanos ({{ ppsData.health_summary.healthy_count }})</span>
+        </div>
+
+        <!-- Diversity Report -->
+        <div v-if="diversityData" class="diversity-bar">
+          <span class="div-label">🧩 Diversidad consensus:</span>
+          <span
+            class="div-score"
+            :class="diversityData.diversity_score >= 0.7 ? 'div--healthy' : diversityData.diversity_score >= 0.4 ? 'div--redundant' : 'div--collapsed'"
+          >{{ (diversityData.diversity_score * 100).toFixed(0) }}%</span>
+          <span
+            class="div-rec"
+            :class="diversityData.recommendation === 'healthy' ? 'div--healthy' : diversityData.recommendation === 'redundant' ? 'div--redundant' : 'div--collapsed'"
+          >
+            {{ diversityData.recommendation === 'healthy' ? '🟢 sano' : diversityData.recommendation === 'redundant' ? '🟡 redundante' : '🔴 colapsado' }}
+          </span>
+          <span v-if="diversityData.redundancy_clusters?.length" class="div-clusters">
+            Clusters redundantes:
+            <span v-for="(c, i) in diversityData.redundancy_clusters" :key="i" class="div-cluster-tag">
+              [{{ c.join(' + ') }}]
+            </span>
+          </span>
+          <span v-if="diversityData.snapshot_date" class="div-snap">snapshot: {{ diversityData.snapshot_date }}</span>
         </div>
 
         <!-- Algorithm table -->
@@ -371,9 +393,25 @@ async function fetchPPS() {
   }
 }
 
+// ── AlgorithmDiversityAnalyzer — consensus redundancy report ────
+const diversityData = ref(null);
+
+async function fetchDiversity() {
+  try {
+    diversityData.value = await apiGet(
+      `/api/agent/algorithm-diversity?game_type=${ppsGame.value}&draw_type=${ppsDraw.value}&half=${ppsHalf.value}`
+    );
+  } catch { /* non-critical, silent */ }
+}
+
+async function refreshMotor() {
+  await Promise.all([fetchPPS(), fetchDiversity()]);
+}
+
+// Override pps-controls refresh button to also refresh diversity
 onMounted(() => {
   fetchLatestRecs();
-  fetchPPS();
+  refreshMotor();
 });
 </script>
 
@@ -560,6 +598,18 @@ onMounted(() => {
 .hs-badge--disabled { background: #1a0505; color: #f87171; border: 1px solid #7f1d1d44; }
 .hs-badge--degraded { background: #1c1100; color: #f59e0b; border: 1px solid #78350f44; }
 .hs-badge--ok       { background: #052e16; color: #4ade80; border: 1px solid #16653444; }
+
+/* Diversity bar */
+.diversity-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.75rem; border-radius: 8px; background: #0a0d14; border: 1px solid #1e2d40; margin-bottom: 1rem; font-size: 0.78rem; }
+.div-label  { color: #64748b; font-weight: 600; flex-shrink: 0; }
+.div-score  { font-size: 1.05rem; font-weight: 700; }
+.div-rec    { font-size: 0.75rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 5px; }
+.div--healthy  { color: #4ade80; background: #052e1615; border: 1px solid #16653433; }
+.div--redundant{ color: #f59e0b; background: #1c110015; border: 1px solid #78350f33; }
+.div--collapsed{ color: #f87171; background: #1a050515; border: 1px solid #7f1d1d33; }
+.div-clusters { color: #64748b; font-size: 0.72rem; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.div-cluster-tag { background: #1e2d40; color: #94a3b8; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.68rem; font-family: monospace; }
+.div-snap { color: #334155; font-size: 0.65rem; margin-left: auto; }
 
 @media (max-width: 768px) {
   .cards-grid { grid-template-columns: 1fr 1fr; }

@@ -120,7 +120,18 @@
 
     <!-- Patrones -->
     <section v-if="patterns" class="section">
-      <h2>🔬 Patrones Empíricos</h2>
+      <div class="patterns-meta-header">
+        <h2>🔬 Patrones Empíricos</h2>
+        <span class="patterns-meta">
+          {{ patterns.total_draws ?? '?' }} sorteos
+          <template v-if="patterns.date_range?.from">
+            · {{ patterns.date_range.from }} → {{ patterns.date_range.to }}
+          </template>
+          <template v-if="patterns.computed_at">
+            · calc. {{ formatDate(patterns.computed_at) }}
+          </template>
+        </span>
+      </div>
 
       <h3 class="subhead">📅 Sesgos por día de la semana</h3>
       <div v-if="patterns.dow_biases.every(b => !b.significant)" class="info-box">
@@ -325,4 +336,7 @@ loadAll();
 .due-pair strong { color: #fbbf24; }
 
 .retro-footer { margin-top: 1.5rem; text-align: center; color: #64748b; }
+.patterns-meta-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.patterns-meta-header h2 { margin: 0; }
+.patterns-meta { font-size: 0.75rem; color: #475569; font-family: monospace; }
 </style>

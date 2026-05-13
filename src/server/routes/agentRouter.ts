@@ -1895,6 +1895,68 @@ ${ragSummary}`;
     }
   });
 
+  // ─── GET /api/agent/algorithm-diversity ──────────────────────────────────────
+  // DiversityReport desde los snapshots más recientes: Jaccard pairwise,
+  // clusters de redundancia, diversity_score [0,1], recommendation.
+  // Usa la última draw_date disponible en algo_prediction_snapshot.
+  router.get('/algorithm-diversity', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as string) || 'pick3';
+      const draw_type = (req.query.draw_type as string) || 'evening';
+      const half      = (req.query.half as string) || (game_type === 'pick3' ? 'du' : 'ab');
+
+      // 1. Obtener la draw_date más reciente con snapshots
+      const { rows: latestRow } = await agentPool.query<{ draw_date: string }>(
+        `SELECT draw_date::text FROM hitdash.algo_prediction_snapshot
+         WHERE game_type = $1 AND draw_type = $2 AND half = $3
+         ORDER BY draw_date DESC LIMIT 1`,
+        [game_type, draw_type, half]
+      );
+
+      if (!latestRow.length) {
+        res.json({
+          game_type, draw_type, half,
+          snapshot_date: null,
+          total_algos: 0,
+          overlap_pairs: [],
+          redundancy_clusters: [],
+          diversity_score: 1.0,
+          recommendation: 'healthy',
+          note: 'Sin snapshots disponibles aún — el motor acumula datos sorteo a sorteo',
+        });
+        return;
+      }
+
+      const snapDate = latestRow[0]!.draw_date;
+
+      // 2. Cargar todos los snapshots de esa fecha
+      const { rows: snaps } = await agentPool.query<{
+        algo_name: string; pair_scores: Record<string, number>;
+      }>(
+        `SELECT algo_name, pair_scores FROM hitdash.algo_prediction_snapshot
+         WHERE game_type = $1 AND draw_type = $2 AND half = $3 AND draw_date = $4`,
+        [game_type, draw_type, half, snapDate]
+      );
+
+      // 3. Reconstruir algoScores Map y correr el analyzer
+      const { AlgorithmDiversityAnalyzer } = await import('../../agent/services/AlgorithmDiversityAnalyzer.js');
+      const analyzer   = new AlgorithmDiversityAnalyzer();
+      const algoScores = new Map<string, Record<string, number>>(
+        snaps.map(s => [s.algo_name, s.pair_scores])
+      );
+      const report = analyzer.analyze(algoScores);
+
+      res.json({
+        game_type, draw_type, half,
+        snapshot_date: snapDate,
+        ...report,
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'algorithm-diversity failed');
+      res.status(500).json({ error: 'Error en análisis de diversidad', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // GET /api/agent/algo-comparison/hit-rates?game_type=pick3&draw_type=evening&half=du&days=30
   router.get('/algo-comparison/hit-rates', async (req: Request, res: Response) => {
     try {
