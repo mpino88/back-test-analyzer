@@ -2157,5 +2157,152 @@ ${ragSummary}`;
     }
   });
 
+  // ─── GET /api/agent/diagnostics ──────────────────────────────────────────────
+  // GROUND TRUTH diagnostic — sin suposiciones, solo medir el estado real de la DB.
+  // Permite distinguir entre bugs confirmados e hipótesis no verificadas.
+  router.get('/diagnostics', async (_req: Request, res: Response) => {
+    const t0 = Date.now();
+    try {
+      const queries = await Promise.allSettled([
+        // ── ingested_results state ────────────────────────────────────────
+        agentPool.query<{ total: number }>(
+          `SELECT COUNT(*)::int AS total FROM hitdash.ingested_results`
+        ),
+        agentPool.query<{ null_draw_date: number }>(
+          `SELECT COUNT(*)::int AS null_draw_date FROM hitdash.ingested_results WHERE draw_date IS NULL`
+        ),
+        agentPool.query<{ null_p1: number }>(
+          `SELECT COUNT(*)::int AS null_p1 FROM hitdash.ingested_results WHERE p1 IS NULL`
+        ),
+        agentPool.query<{ null_game_type: number }>(
+          `SELECT COUNT(*)::int AS null_game_type FROM hitdash.ingested_results WHERE game_type IS NULL`
+        ),
+        agentPool.query<{ earliest: string; latest: string }>(
+          `SELECT MIN(draw_date)::text AS earliest, MAX(draw_date)::text AS latest
+           FROM hitdash.ingested_results WHERE draw_date IS NOT NULL`
+        ),
+        agentPool.query<{ game_type: string; draw_type: string; cnt: number }>(
+          `SELECT game_type, draw_type, COUNT(DISTINCT draw_date)::int AS cnt
+           FROM hitdash.ingested_results
+           WHERE game_type IS NOT NULL
+           GROUP BY game_type, draw_type ORDER BY game_type, draw_type`
+        ),
+        // Coverage gaps — dates with year buckets
+        agentPool.query<{ year: number; cnt: number }>(
+          `SELECT EXTRACT(YEAR FROM draw_date)::int AS year, COUNT(*)::int AS cnt
+           FROM hitdash.ingested_results WHERE draw_date IS NOT NULL
+           GROUP BY EXTRACT(YEAR FROM draw_date) ORDER BY year DESC LIMIT 10`
+        ),
+
+        // ── algo_prediction_snapshot state ────────────────────────────────
+        agentPool.query<{ total: number }>(
+          `SELECT COUNT(*)::int AS total FROM hitdash.algo_prediction_snapshot`
+        ),
+        agentPool.query<{ distinct_dates: number; distinct_algos: number; earliest: string; latest: string }>(
+          `SELECT COUNT(DISTINCT draw_date)::int AS distinct_dates,
+                  COUNT(DISTINCT algo_name)::int AS distinct_algos,
+                  MIN(draw_date)::text           AS earliest,
+                  MAX(draw_date)::text           AS latest
+           FROM hitdash.algo_prediction_snapshot`
+        ),
+
+        // ── pair_recommendations state ────────────────────────────────────
+        agentPool.query<{ total: number; pending: number; hits: number; misses: number }>(
+          `SELECT COUNT(*)::int                                       AS total,
+                  COUNT(*) FILTER (WHERE hit IS NULL)::int            AS pending,
+                  COUNT(*) FILTER (WHERE hit = true)::int             AS hits,
+                  COUNT(*) FILTER (WHERE hit = false)::int            AS misses
+           FROM hitdash.pair_recommendations`
+        ),
+
+        // ── proactive_alerts state ────────────────────────────────────────
+        agentPool.query<{ alert_type: string; cnt: number; oldest: string; newest: string }>(
+          `SELECT alert_type, COUNT(*)::int AS cnt,
+                  MIN(created_at)::text AS oldest, MAX(created_at)::text AS newest
+           FROM hitdash.proactive_alerts WHERE acknowledged = false
+           GROUP BY alert_type ORDER BY cnt DESC`
+        ),
+
+        // ── pps_state coverage ────────────────────────────────────────────
+        agentPool.query<{ algo_name: string; combos: number; avg_pps: number; max_samples: number }>(
+          `SELECT algo_name, COUNT(*)::int AS combos,
+                  ROUND(AVG(pps)::numeric, 1)::float AS avg_pps,
+                  MAX(sample_count)::int AS max_samples
+           FROM hitdash.pps_state
+           GROUP BY algo_name ORDER BY max_samples DESC LIMIT 10`
+        ),
+
+        // ── feedback_loop state (the empty table for F02) ────────────────
+        agentPool.query<{ total: number }>(
+          `SELECT COUNT(*)::int AS total FROM hitdash.feedback_loop`
+        ).catch(() => ({ rows: [{ total: -1 }] })),  // -1 si la tabla no existe
+
+        // ── backtest_points_v2 state (for F04 miss streak) ────────────────
+        agentPool.query<{ total: number; with_hit: number; null_eval_date: number; earliest_eval: string; latest_eval: string }>(
+          `SELECT COUNT(*)::int                              AS total,
+                  COUNT(*) FILTER (WHERE hit_pair)::int      AS with_hit,
+                  COUNT(*) FILTER (WHERE eval_date IS NULL)::int AS null_eval_date,
+                  MIN(eval_date)::text                       AS earliest_eval,
+                  MAX(eval_date)::text                       AS latest_eval
+           FROM hitdash.backtest_points_v2`
+        ),
+
+        // ── public.draws state (Ballbot DB) ───────────────────────────────
+        agentPool.query<{ total: number }>(
+          `SELECT COUNT(*)::int AS total FROM public.draws`
+        ).catch(() => ({ rows: [{ total: -1 }] })),
+      ]);
+
+      // Helper to safely extract rows
+      const r = (idx: number, fallback: unknown = null) => {
+        const q = queries[idx];
+        if (!q || q.status !== 'fulfilled') return fallback;
+        return q.value.rows;
+      };
+      const r0 = (idx: number, fallback: unknown = null) => {
+        const rows = r(idx);
+        return Array.isArray(rows) && rows.length > 0 ? rows[0] : fallback;
+      };
+
+      res.json({
+        duration_ms: Date.now() - t0,
+        timestamp: new Date().toISOString(),
+
+        ingested_results: {
+          total:                   (r0(0) as { total?: number } | null)?.total ?? null,
+          null_draw_date:          (r0(1) as { null_draw_date?: number } | null)?.null_draw_date ?? null,
+          null_p1:                 (r0(2) as { null_p1?: number } | null)?.null_p1 ?? null,
+          null_game_type:          (r0(3) as { null_game_type?: number } | null)?.null_game_type ?? null,
+          date_range:              r0(4) ?? null,
+          by_game_draw:            r(5) ?? [],
+          by_year_recent:          r(6) ?? [],
+        },
+        algo_prediction_snapshot: {
+          total:                   (r0(7) as { total?: number } | null)?.total ?? null,
+          summary:                 r0(8) ?? null,
+        },
+        pair_recommendations:      r0(9) ?? null,
+        proactive_alerts:          r(10) ?? [],
+        pps_state_top_algos:       r(11) ?? [],
+        feedback_loop_total:       (r0(12) as { total?: number } | null)?.total ?? null,
+        backtest_points_v2:        r0(13) ?? null,
+        public_draws_total:        (r0(14) as { total?: number } | null)?.total ?? null,
+
+        // Self-diagnosis
+        verdict: {
+          F01_draw_date_null:      ((r0(1) as { null_draw_date?: number } | null)?.null_draw_date ?? 0) > 100
+                                     ? 'CONFIRMED — many NULL draw_date rows'
+                                     : 'REFUTED — few/no NULL draw_date rows',
+          F02_feedback_loop_empty: ((r0(12) as { total?: number } | null)?.total ?? -1) === 0
+                                     ? 'CONFIRMED — table is empty'
+                                     : 'CHECK — table has data',
+          F04_backtest_points_v2_gap: 'See backtest_points_v2.latest_eval — if < today-7d, there is a gap',
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   return router;
 }
