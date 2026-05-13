@@ -1631,18 +1631,34 @@ ${ragSummary}`;
         ppsService.computeOptimalN(game_type, draw_type, half),
       ]);
 
+      // Cargar health status para enriquecer la respuesta
+      let healthSummary: { disabled: string[]; degraded: string[]; healthy_count: number } =
+        { disabled: [], degraded: [], healthy_count: 0 };
+      try {
+        const { AlgorithmHealthMonitor } = await import('../../agent/services/AlgorithmHealthMonitor.js');
+        const hm     = new AlgorithmHealthMonitor(agentPool);
+        const health = await hm.getHealth(game_type, draw_type, half);
+        for (const [algo, info] of health.entries()) {
+          if (info.status === 'disabled') healthSummary.disabled.push(algo);
+          else if (info.status === 'degraded') healthSummary.degraded.push(algo);
+          else healthSummary.healthy_count++;
+        }
+      } catch { /* ok — monitor puede no tener datos aún */ }
+
       res.json({
         game_type,
         draw_type,
         half,
-        generated_at: new Date().toISOString(),
-        optimal_n:       optimalN.optimal_n,
-        hit_rate:        optimalN.hit_rate,
-        expected_roi:    optimalN.expected_roi,
-        is_profitable:   optimalN.is_profitable,
-        sample_size:     optimalN.sample_size,
-        motor_basis:     optimalN.basis,
-        algorithms:      ranking,
+        generated_at:        new Date().toISOString(),
+        optimal_n:           optimalN.optimal_n,
+        hit_rate:            optimalN.hit_rate,
+        expected_roi:        optimalN.expected_roi,
+        is_profitable:       optimalN.is_profitable,
+        sample_size:         optimalN.sample_size,
+        motor_basis:         optimalN.basis,
+        algorithms:          ranking,
+        health_summary:      healthSummary,
+        no_edge_behavior:    process.env['HELIX_NO_EDGE_BEHAVIOR'] ?? 'warn',
       });
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo PPS ranking');

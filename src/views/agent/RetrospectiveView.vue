@@ -137,6 +137,22 @@
         </li>
       </ul>
 
+      <!-- month_biases: returned by PatternMiner but previously unredered -->
+      <h3 class="subhead">📆 Sesgos por mes</h3>
+      <div v-if="!patterns.month_biases || patterns.month_biases.every(b => !b.significant)" class="info-box">
+        Ningún sesgo mensual con χ² significativo en este combo.
+      </div>
+      <ul v-else class="bias-list">
+        <li v-for="b in patterns.month_biases.filter(x => x.significant)" :key="b.position">
+          <strong>{{ b.position.toUpperCase() }}</strong> — χ² = {{ b.chi_square.toFixed(2) }} (p &lt; {{ b.p_value_lt }})
+          <div class="bias-detail" v-if="b.hottest.length > 0">
+            Top combos: <span v-for="(c, i) in b.hottest.slice(0, 3)" :key="i" class="combo">
+              {{ c.month || c.day }} digit={{ c.digit }} ({{ (c.pct * 100).toFixed(1) }}%, lift {{ c.lift.toFixed(2) }}x)
+            </span>
+          </div>
+        </li>
+      </ul>
+
       <h3 class="subhead">🔁 Autocorrelaciones</h3>
       <table class="ptable">
         <thead>

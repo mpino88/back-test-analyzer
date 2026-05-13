@@ -58,8 +58,15 @@
 import { useAlerts } from '../../composables/agent/useAlerts.js';
 
 const ALERT_ICONS = {
-  anomaly: '🔍', streak: '📉', overdue: '⏰',
-  drift: '🌊', system: '⚙️', low_data: '📊',
+  anomaly:   '🔍',
+  streak:    '📉',
+  overdue:   '⏰',
+  drift:     '🌊',
+  system:    '⚙️',
+  low_data:  '📊',
+  pps_delta: '🧠',   // HelixSentinel: cambio brusco de PPS ≥15 puntos
+  accuracy:  '🎯',
+  edge_lost: '⚠️',
 };
 
 const { alerts, loading, error, showAcked, refresh, acknowledge } = useAlerts();

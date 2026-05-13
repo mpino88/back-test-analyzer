@@ -131,6 +131,35 @@
             <span class="pps-chip__label">Base</span>
             <span class="pps-chip__val pps-chip__val--sm">{{ ppsData.motor_basis }}</span>
           </div>
+          <!-- No-edge behavior indicator -->
+          <div
+            class="pps-chip"
+            :class="ppsData.no_edge_behavior === 'block' ? 'pps-chip--red' : ppsData.no_edge_behavior === 'tighten' ? 'pps-chip--yellow' : 'pps-chip--neutral'"
+            :title="ppsData.no_edge_behavior === 'block' ? 'Sin borde: predicciones bloqueadas' : ppsData.no_edge_behavior === 'tighten' ? 'Sin borde: modo defensivo N=5' : 'Sin borde: solo advertencia'"
+          >
+            <span class="pps-chip__label">Sin borde</span>
+            <span class="pps-chip__val pps-chip__val--sm">
+              {{ ppsData.no_edge_behavior === 'block' ? '🚫 block' : ppsData.no_edge_behavior === 'tighten' ? '🛡️ tighten' : '⚠️ warn' }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Algorithm Health Summary — disabled/degraded -->
+        <div
+          v-if="ppsData.health_summary && (ppsData.health_summary.disabled.length > 0 || ppsData.health_summary.degraded.length > 0)"
+          class="health-summary-bar"
+        >
+          <span class="hs-label">⚡ Salud algos:</span>
+          <span v-if="ppsData.health_summary.disabled.length > 0" class="hs-badge hs-badge--disabled">
+            🔴 {{ ppsData.health_summary.disabled.length }} desactivados: {{ ppsData.health_summary.disabled.join(', ') }}
+          </span>
+          <span v-if="ppsData.health_summary.degraded.length > 0" class="hs-badge hs-badge--degraded">
+            🟡 {{ ppsData.health_summary.degraded.length }} degradados: {{ ppsData.health_summary.degraded.join(', ') }}
+          </span>
+        </div>
+        <div v-else-if="ppsData.health_summary && ppsData.health_summary.healthy_count > 0" class="health-summary-bar health-summary-bar--ok">
+          <span class="hs-label">⚡ Salud algos:</span>
+          <span class="hs-badge hs-badge--ok">🟢 Todos sanos ({{ ppsData.health_summary.healthy_count }})</span>
         </div>
 
         <!-- Algorithm table -->
@@ -522,6 +551,15 @@ onMounted(() => {
 .dot--degraded { background: #f59e0b; }
 .dot--low      { background: #ef4444; }
 .pps-error { color: #f87171; font-size: 0.8rem; }
+
+/* Algorithm health summary bar */
+.health-summary-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.75rem; border-radius: 8px; background: #0f1623; border: 1px solid #1e2d40; margin-bottom: 1rem; font-size: 0.78rem; }
+.health-summary-bar--ok { border-color: #16653430; background: #052e1615; }
+.hs-label { color: #64748b; font-weight: 600; flex-shrink: 0; }
+.hs-badge { padding: 0.2rem 0.6rem; border-radius: 6px; font-size: 0.72rem; font-weight: 600; }
+.hs-badge--disabled { background: #1a0505; color: #f87171; border: 1px solid #7f1d1d44; }
+.hs-badge--degraded { background: #1c1100; color: #f59e0b; border: 1px solid #78350f44; }
+.hs-badge--ok       { background: #052e16; color: #4ade80; border: 1px solid #16653444; }
 
 @media (max-width: 768px) {
   .cards-grid { grid-template-columns: 1fr 1fr; }

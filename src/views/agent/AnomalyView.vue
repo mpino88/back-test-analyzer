@@ -195,7 +195,7 @@
 
             <!-- Digit heatmap for decena -->
             <div class="heatmap-section">
-              <div class="heatmap-label">Score por dígito</div>
+              <div class="heatmap-label">Score decena (P2)</div>
               <div class="heatmap-grid">
                 <div
                   v-for="row in (digitAnalysis.decena ?? [])"
@@ -203,7 +203,25 @@
                   class="heatmap-cell"
                   :style="{ opacity: 0.3 + row.score * 0.7 }"
                   :class="{ 'heatmap-top': (digitAnalysis.top_decenas ?? []).includes(row.digit), 'anomaly-bonus': row.anomaly_bonus }"
-                  :title="`d${row.digit}: score=${row.score.toFixed(3)} z=${row.z_score.toFixed(2)}`"
+                  :title="`P2-${row.digit}: score=${row.score.toFixed(3)} z=${row.z_score.toFixed(2)}`"
+                >
+                  <div class="hm-digit">{{ row.digit }}</div>
+                  <div class="hm-score">{{ (row.score * 100).toFixed(0) }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Digit heatmap for unidad — was fetched but never rendered -->
+            <div class="heatmap-section" v-if="(digitAnalysis.unidad ?? []).length > 0">
+              <div class="heatmap-label">Score unidad (P3)</div>
+              <div class="heatmap-grid">
+                <div
+                  v-for="row in (digitAnalysis.unidad ?? [])"
+                  :key="row.digit + '-u'"
+                  class="heatmap-cell"
+                  :style="{ opacity: 0.3 + row.score * 0.7 }"
+                  :class="{ 'heatmap-top': (digitAnalysis.top_unidades ?? []).includes(row.digit), 'anomaly-bonus': row.anomaly_bonus }"
+                  :title="`P3-${row.digit}: score=${row.score.toFixed(3)} z=${row.z_score.toFixed(2)}`"
                 >
                   <div class="hm-digit">{{ row.digit }}</div>
                   <div class="hm-score">{{ (row.score * 100).toFixed(0) }}</div>

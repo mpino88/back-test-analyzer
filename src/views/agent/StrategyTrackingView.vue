@@ -742,6 +742,15 @@
                     <span v-if="r.hit_rate >= 0.40" class="sig sig--strong">↑ FUERTE</span>
                     <span v-else-if="r.hit_rate >= 0.20" class="sig sig--neutral">→ BUENO</span>
                     <span v-else class="sig sig--weak">↓ DÉBIL</span>
+                    <!-- AlgorithmHealthMonitor killswitch badge -->
+                    <span
+                      v-if="algoHealthMap[r.algo_name]"
+                      class="sig"
+                      :class="algoHealthMap[r.algo_name] === 'disabled' ? 'sig--disabled' : 'sig--degraded'"
+                      :title="algoHealthMap[r.algo_name] === 'disabled' ? 'Killswitch activo: excluido del consensus' : 'Rendimiento degradado: peso ×0.5'"
+                    >
+                      {{ algoHealthMap[r.algo_name] === 'disabled' ? '🔴 DESACTIVADO' : '🟡 DEGRADADO' }}
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -1026,6 +1035,8 @@ const compLoading   = ref(false);
 const compRunning   = ref(false);
 const compRates     = ref([]);
 const compHistory   = ref([]);
+// AlgorithmHealthMonitor killswitch state — map algo_name → 'disabled'|'degraded'
+const algoHealthMap = ref({});
 
 const compHistoryByDate = computed(() => {
   const byDate = {};
@@ -1040,12 +1051,21 @@ async function loadComparativa() {
   compLoading.value = true;
   const half = compGame.value === 'pick3' ? 'du' : 'ab';
   try {
-    const [rates, history] = await Promise.all([
+    const [rates, history, health] = await Promise.all([
       apiGet(`/api/agent/algo-comparison/hit-rates?game_type=${compGame.value}&draw_type=${compDrawType.value}&half=${half}&days=${compDays.value}`),
       apiGet(`/api/agent/algo-comparison/history?game_type=${compGame.value}&draw_type=${compDrawType.value}&half=${half}&days=${compDays.value}`),
+      // AlgorithmHealthMonitor — killswitch real del motor
+      apiGet(`/api/agent/algorithm-health?game_type=${compGame.value}&draw_type=${compDrawType.value}&half=${half}`)
+        .catch(() => ({ algorithms: [] })),
     ]);
     compRates.value   = Array.isArray(rates)   ? rates   : [];
     compHistory.value = Array.isArray(history) ? history : [];
+    // Build map: algo_name → status (only non-healthy entries shown as badges)
+    const healthMap = {};
+    for (const a of (health?.algorithms ?? [])) {
+      if (a.status !== 'healthy') healthMap[a.algo_name] = a.status;
+    }
+    algoHealthMap.value = healthMap;
   } catch { compRates.value = []; compHistory.value = []; }
   finally { compLoading.value = false; }
 }
@@ -1602,9 +1622,11 @@ function kronosFmtDate(iso) {
 .kw-hit { font-weight: 700; font-size: 0.78rem; }
 .kw-signal { }
 .sig { font-size: 0.65rem; font-weight: 700; padding: 0.1rem 0.4rem; border-radius: 4px; }
-.sig--strong  { background: #052e1633; color: #22c55e; }
-.sig--neutral { background: #1e3a5f33; color: #60a5fa; }
-.sig--weak    { background: #450a0a33; color: #f87171; }
+.sig--strong    { background: #052e1633; color: #22c55e; }
+.sig--neutral   { background: #1e3a5f33; color: #60a5fa; }
+.sig--weak      { background: #450a0a33; color: #f87171; }
+.sig--disabled  { background: #1a000033; color: #f87171; border: 1px solid #7f1d1d; font-size: 0.65rem; }
+.sig--degraded  { background: #1c100033; color: #f59e0b; border: 1px solid #78350f; font-size: 0.65rem; }
 
 .empty-weights { padding: 1.5rem; color: #475569; font-size: 0.8rem; text-align: center; }
 
