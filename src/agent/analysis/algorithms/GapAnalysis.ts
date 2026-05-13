@@ -71,9 +71,9 @@ export class GapAnalysis {
           ? periodDays / appearances.length
           : periodDays;
 
-        const overdue_score = gap_promedio > 0
-          ? +(gap_actual / gap_promedio).toFixed(3)
-          : 0;
+        // Gambler's fallacy cap: >3× avgGap capped (autocorr≈0 → memoryless)
+        const rawOverdue = gap_promedio > 0 ? gap_actual / gap_promedio : 0;
+        const overdue_score = +(Math.min(rawOverdue, 3.0)).toFixed(3);
 
         entries.push({
           digit: d,
@@ -142,12 +142,24 @@ export class GapAnalysis {
       pairDates[key]!.push(new Date(row.draw_date));
     }
 
+    // ── Gambler's Fallacy Guard ─────────────────────────────────────────────
+    // Evidencia empírica: autocorr(Florida P3/P4) ≈ 0 en todos los lags.
+    // Un par con currentGap > 3× avgGap NO tiene mayor probabilidad de aparecer.
+    // La lotería es memoryless (proceso de Poisson puro).
+    // Sin este cap, pares con gap extremo (e.g. "92" = 602d) dominarían el ranking
+    // solo por ausencia prolongada — pura falacia del jugador.
+    //
+    // Cap: dueFactor > GAMBLER_CAP → capped. Todos los pares "muy vencidos" (>3×)
+    // reciben el mismo score máximo. No premiamos la ausencia extrema.
+    const GAMBLER_FALLACY_CAP = 3.0;
+
     const scores: Record<string, number> = {};
     for (let x = 0; x <= 9; x++) {
       for (let y = 0; y <= 9; y++) {
         const key = `${x}${y}`;
         const dates = pairDates[key];
-        if (!dates || dates.length < 3) { scores[key] = 0; continue; }
+        // Requiero mínimo 5 apariciones para un avgGap confiable (< 5 = score 0)
+        if (!dates || dates.length < 5) { scores[key] = 0; continue; }
 
         // Calendar-day gaps between consecutive appearances
         const calGaps: number[] = [];
@@ -157,8 +169,11 @@ export class GapAnalysis {
         const avgGap = calGaps.reduce((s, g) => s + g, 0) / calGaps.length;
         const currentGap = Math.floor((today.getTime() - dates.at(-1)!.getTime()) / 86_400_000);
 
-        // dueFactor: matches Ballbot exactly — >1 = overdue, >2 = súper due
-        const dueFactor = avgGap > 0 ? currentGap / avgGap : 0;
+        // dueFactor: >1 = overdue, >2 = muy overdue, >3 = gambler's fallacy territory
+        const rawDueFactor = avgGap > 0 ? currentGap / avgGap : 0;
+
+        // Aplicar cap: >3× avgGap → capped a GAMBLER_FALLACY_CAP (no premiar ausencia extrema)
+        const dueFactor = Math.min(rawDueFactor, GAMBLER_FALLACY_CAP);
         scores[key] = Math.max(0, dueFactor);
       }
     }

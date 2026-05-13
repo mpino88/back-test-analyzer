@@ -91,7 +91,7 @@ export class PPSService {
   // ════════════════════════════════════════════════════════════
   // SEED via REPLAY HISTÓRICO (PATCH 2026-05-12 — fix definitivo)
   // Caso de uso: combos nuevos sin backtest_results_v2.
-  // Lee snapshots históricos de hitdash.pps_pair_snapshots (si existen)
+  // Lee snapshots históricos de hitdash.algo_prediction_snapshot (si existen)
   // y aplica updateFromDraw() retroactivamente sobre los últimos N sorteos.
   // Si no hay snapshots → no hace nada (no inventa datos).
   // ════════════════════════════════════════════════════════════

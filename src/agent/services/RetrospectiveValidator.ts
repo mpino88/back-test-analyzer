@@ -4,8 +4,8 @@
 // Predicciones retrospectivas HONESTAS sobre el historial real.
 //
 // Para cada sorteo histórico D:
-//   1. Lee snapshot pre-sorteo de hitdash.pps_pair_snapshots
-//      (capturado en su momento por persistSnapshot)
+//   1. Lee snapshot pre-sorteo de hitdash.algo_prediction_snapshot
+//      (capturado en su momento por PPSService.persistSnapshot)
 //   2. Compara contra el ganador real
 //   3. Computa: hit_rate@N (N=1,3,5,10,15), edge sobre baseline,
 //              expected_rank, MRR, ROI esperado
@@ -112,7 +112,7 @@ export class RetrospectiveValidator {
       draw_date: string; algo_name: string; pair_scores: Record<string, number>;
     }>(
       `SELECT draw_date::text, algo_name, pair_scores
-       FROM hitdash.pps_pair_snapshots
+       FROM hitdash.algo_prediction_snapshot
        WHERE game_type = $1 AND draw_type = $2 AND half = $3
          AND draw_date BETWEEN $4 AND $5`,
       [game_type, draw_type, half, fromDate, toDate]

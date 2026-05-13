@@ -166,30 +166,52 @@ export interface MAResult extends AnalysisResult {
 }
 
 // ─── Pesos de algoritmos (weighted consensus) ────────────────────
+// ─── ALGORITHM_WEIGHTS v2 — rebalanceado por evidencia empírica 2026-05-12 ────
+//
+// Hallazgos de PatternMiner en producción (Florida Pick3/Pick4):
+//   • Autocorrelación ≈ 0 en TODAS las posiciones y lags (1,2,7,30)
+//     → los algoritmos que asumen "memoria" de la lotería están empíricamente refutados
+//   • DOW bias P1: χ²=18.47 (p<0.05), Vie×dígito=5 lift 1.21×
+//     → calendar_pattern y max_per_week_day tienen señal confirmada
+//   • Streak P(extend) ≈ aleatorio → streak reversal no tiene edge
+//   • Pair revisit: distribución consistente con proceso de Poisson puro
+//
+// Regla: pesos aquí son bootstrap. PPS aprende los pesos reales en vivo.
+// Reducir base weight de algos refutados evita que contaminen el consenso
+// en las primeras semanas de un combo nuevo.
+// ───────────────────────────────────────────────────────────────────────────────
 export const ALGORITHM_WEIGHTS: Record<string, number> = {
-  frequency:         1.0,
-  gap_analysis:      0.9,
-  hot_cold:          0.85,
-  position:          0.8,
-  pairs_correlation: 0.75,
-  moving_averages:   0.7,
-  streak:            0.65,
-  fibonacci_pisano:    0.5,  // FibonacciResonancePro (mismo ID para continuidad PPS)
-  est_individuales:    0.6,  // Ballbot est_individuales — maxHistorical gap proximity
-  // ─── Ballbot Clones (agentic strategies v2) ────────────────────
-  bayesian_score:    1.1,   // multi-señal 6 componentes — peso máximo
-  transition_follow: 0.85,  // Markov-1 secuencial sucesor
-  markov_order2:     0.80,  // Markov-2 estado compuesto (X→Y)→Z
-  calendar_pattern:  0.70,  // sesgo temporal DoW×mes diagonal
-  decade_family:     0.75,  // familias 00-09...90-99 momentum
-  max_per_week_day:  0.55,  // frecuencia por día de semana
-  // ─── Nuevos algoritmos predictivos avanzados ───────────────────
-  pair_return_cycle:    0.90,  // ciclo de retorno por par — mayor impacto
-  sum_pattern_filter:   0.80,  // filtro por suma de dígitos — eliminador de ruido
-  double_triple:        0.65,  // detector de régimen dobles/triples
-  cross_draw:           0.70,  // correlación midday↔evening mismo día
-  // ─── Ballbot canonical ──────────────────────────────────────────
-  trend_momentum:       1.05,  // fórmula exacta "Fuerza de Tendencia Pro" — peso elevado por efectividad demostrada
+  // ─── Señales puras de frecuencia (sin supuesto de memoria) ────────────────
+  frequency:         1.0,   // frecuencia cruda — válida (Poisson baseline)
+  hot_cold:          0.85,  // momentum de frecuencia reciente — sin supuesto de autocorr
+  position:          0.80,  // bias posicional estático — empíricamente estable
+  pairs_correlation: 0.75,  // co-ocurrencia de pares — sin supuesto temporal
+  moving_averages:   0.70,  // MA de frecuencia — sin autocorr supuesta
+
+  // ─── Gap/overdue — reducido: autocorr=0 => "vencimiento" es falacia ────────
+  gap_analysis:      0.55,  // ↓ de 0.9: útil como outlier detector pero NO predictor
+  est_individuales:  0.50,  // ↓ de 0.6: mismo supuesto que gap_analysis
+
+  // ─── Señal DOW confirmada (χ²=18.47, p<0.05) ─────────────────────────────
+  calendar_pattern:  1.00,  // ↑ de 0.70: única señal estadísticamente confirmada
+  max_per_week_day:  0.80,  // ↑ de 0.55: DOW frequency — misma base confirmada
+
+  // ─── Algoritmos con supuesto de memoria (autocorr≈0 los refuta) ──────────
+  markov_order2:     0.30,  // ↓ de 0.80: Markov asume P(X→Y)>random — autocorr=0 lo niega
+  transition_follow: 0.35,  // ↓ de 0.85: igual, Markov-1 — sin base empírica
+  cross_draw:        0.30,  // ↓ de 0.70: correlación midday↔evening — autocorr=0 lo refuta
+  fibonacci_pisano:  0.35,  // ↓ de 0.50: ciclos matemáticos — sin autocorr que los soporte
+  pair_return_cycle: 0.50,  // ↓ de 0.90: ciclo de retorno — Poisson implica memoryless
+
+  // ─── Streak (P(extend) ≈ random según datos) ─────────────────────────────
+  streak:            0.35,  // ↓ de 0.65: no hay inercia empírica
+
+  // ─── Algoritmos multi-señal o neutros (sin supuesto de memoria directo) ──
+  bayesian_score:    1.10,  // multi-señal 6 componentes — peso máximo (combina evidencias)
+  trend_momentum:    1.05,  // "Fuerza de Tendencia Pro" — fórmula Ballbot comprobada
+  decade_family:     0.75,  // familias 00-09...90-99 momentum — neutral frente a autocorr
+  sum_pattern_filter:0.80,  // filtro suma de dígitos — eliminador de ruido — neutral
+  double_triple:     0.65,  // detector de régimen — neutral (no asume autocorr)
 };
 
 // ─── Score por dígito/posición ───────────────────────────────────
