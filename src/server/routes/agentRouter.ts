@@ -165,20 +165,17 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
       '7d': '7 days', '30d': '30 days', '90d': '90 days', '365d': '365 days',
     };
     const interval = validRanges[range] ?? '30 days';
+    const days = interval.replace(' days', '');
 
     try {
-      // FORENSE F01 FIX: pair_recommendations tiene los hits reales de predicciones vivas.
-      // feedback_loop solo se popula para cartones legacy (con digits en JSONB), que están vacíos.
-      // La accuracy real del motor se mide en pair_recommendations.hit.
+      // ── Query 1: evaluated predictions (hit IS NOT NULL) ─────────────────
       const result = await agentPool.query(
         `SELECT
            date_trunc('day', pr.created_at)::text       AS day,
            COUNT(*)::int                                 AS total_cartones,
            ROUND(AVG(CASE WHEN pr.hit THEN 1.0 ELSE 0.0 END)::numeric, 4)::float AS avg_accuracy,
            COUNT(*) FILTER (WHERE pr.hit = true)::int   AS total_hits_exact,
-           COUNT(*) FILTER (WHERE pr.hit = false)::int  AS total_hits_partial,
-           COUNT(*) FILTER (WHERE pr.hit IS NULL)::int  AS total_pending,
-           -- detalles adicionales
+           COUNT(*) FILTER (WHERE pr.hit = false)::int  AS total_misses,
            ROUND(AVG(pr.optimal_n)::numeric, 1)::float  AS avg_optimal_n,
            MIN(pr.half)                                  AS half
          FROM hitdash.pair_recommendations pr
@@ -186,7 +183,29 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
            AND pr.hit IS NOT NULL
          GROUP BY date_trunc('day', pr.created_at)
          ORDER BY day ASC`,
-        [interval.replace(' days', '')]
+        [days]
+      );
+
+      // ── Query 2: pending predictions (hit IS NULL) — diagnostic state ────
+      const pendingResult = await agentPool.query<{
+        total_pending: number; oldest_pending: string | null; newest_pending: string | null;
+      }>(
+        `SELECT
+           COUNT(*)::int                        AS total_pending,
+           MIN(draw_date::text)                 AS oldest_pending,
+           MAX(draw_date::text)                 AS newest_pending
+         FROM hitdash.pair_recommendations
+         WHERE created_at >= now() - ($1 || ' days')::interval
+           AND hit IS NULL`,
+        [days]
+      );
+
+      // ── Query 3: total rows in range (resolved + pending) ────────────────
+      const totalResult = await agentPool.query<{ total: number }>(
+        `SELECT COUNT(*)::int AS total
+         FROM hitdash.pair_recommendations
+         WHERE created_at >= now() - ($1 || ' days')::interval`,
+        [days]
       );
 
       // Summary stats
@@ -197,14 +216,38 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
         : 15;
       const baselineHit  = +((avgN / 100).toFixed(4));
 
+      const pending = pendingResult.rows[0] ?? { total_pending: 0, oldest_pending: null, newest_pending: null };
+      const totalInRange = totalResult.rows[0]?.total ?? 0;
+
+      // ── State diagnosis ───────────────────────────────────────────────────
+      // 'no_predictions'  → table completely empty in range
+      // 'all_pending'     → predictions exist but none resolved yet
+      // 'partial'         → some resolved, some pending
+      // 'complete'        → all resolved
+      let state: string;
+      if (totalInRange === 0) {
+        state = 'no_predictions';
+      } else if (totalEval === 0 && pending.total_pending > 0) {
+        state = 'all_pending';
+      } else if (pending.total_pending > 0) {
+        state = 'partial';
+      } else {
+        state = 'complete';
+      }
+
       res.json({
         range,
-        baseline_random: baselineHit,  // hit@N baseline = N/100
-        total_evaluated: totalEval,
-        total_hits:      totalHits,
-        avg_accuracy:    totalEval > 0 ? +(totalHits / totalEval).toFixed(4) : 0,
+        baseline_random:  baselineHit,
+        total_evaluated:  totalEval,
+        total_hits:       totalHits,
+        total_pending:    pending.total_pending,
+        total_in_range:   totalInRange,
+        oldest_pending:   pending.oldest_pending,
+        newest_pending:   pending.newest_pending,
+        avg_accuracy:     totalEval > 0 ? +(totalHits / totalEval).toFixed(4) : 0,
+        state,            // explicit state — "all_pending" explains why accuracy shows 0
         data: result.rows,
-        source: 'pair_recommendations',  // documentar la fuente real
+        source: 'pair_recommendations',
       });
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo accuracy');

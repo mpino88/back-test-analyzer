@@ -15,27 +15,50 @@
     <div v-else-if="error" class="error">{{ error }}</div>
     <template v-else-if="data">
 
+      <!-- State banner — explains 0% when predictions are pending -->
+      <div v-if="data.state === 'all_pending'" class="state-banner state-banner--pending">
+        <span class="state-banner__icon">⏳</span>
+        <div>
+          <strong>{{ data.total_pending }} predicciones pendientes de resolución</strong>
+          <span>El agente predijo pares pero aún no se han resuelto contra sorteos reales.
+          El feedback loop resolverá los hits automáticamente tras cada sorteo.
+          Draws pendientes: {{ data.oldest_pending }} → {{ data.newest_pending }}</span>
+        </div>
+      </div>
+      <div v-else-if="data.state === 'no_predictions'" class="state-banner state-banner--empty">
+        <span class="state-banner__icon">📭</span>
+        <div>
+          <strong>Sin predicciones en este período</strong>
+          <span>El agente no ha generado predicciones en el rango {{ range }}.
+          Verifica que el AgentScheduler esté activo.</span>
+        </div>
+      </div>
+      <div v-else-if="data.state === 'partial'" class="state-banner state-banner--info">
+        <span class="state-banner__icon">🔄</span>
+        <span>{{ data.total_evaluated }} evaluadas · {{ data.total_pending }} pendientes de resolución</span>
+      </div>
+
       <!-- Summary cards -->
       <div class="summary-grid">
         <div class="stat-card">
           <div class="stat-card__label">Avg Accuracy</div>
-          <div class="stat-card__value">{{ (avgAccuracy * 100).toFixed(2) }}%</div>
-          <div class="stat-card__sub">vs baseline 10%</div>
+          <div class="stat-card__value" :class="accuracyClass">{{ (avgAccuracy * 100).toFixed(2) }}%</div>
+          <div class="stat-card__sub">baseline {{ (data.baseline_random * 100).toFixed(1) }}%</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card__label">Total Hits Exactos</div>
-          <div class="stat-card__value">{{ totalExact }}</div>
-          <div class="stat-card__sub">coincidencias perfectas</div>
+          <div class="stat-card__label">Hits Confirmados</div>
+          <div class="stat-card__value text-green">{{ totalExact }}</div>
+          <div class="stat-card__sub">par ganador en lista top-N</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card__label">Hits Parciales</div>
-          <div class="stat-card__value">{{ totalPartial }}</div>
-          <div class="stat-card__sub">≥2 dígitos correctos</div>
+          <div class="stat-card__label">Evaluadas</div>
+          <div class="stat-card__value">{{ data.total_evaluated }}</div>
+          <div class="stat-card__sub">{{ data.total_pending }} pendientes</div>
         </div>
         <div class="stat-card">
-          <div class="stat-card__label">Total cartones</div>
-          <div class="stat-card__value">{{ totalCartones }}</div>
-          <div class="stat-card__sub">evaluados en el período</div>
+          <div class="stat-card__label">Total en Período</div>
+          <div class="stat-card__value">{{ data.total_in_range }}</div>
+          <div class="stat-card__sub">predicciones generadas</div>
         </div>
       </div>
 
@@ -50,11 +73,11 @@
           <thead>
             <tr>
               <th>Día</th>
-              <th>Cartones</th>
-              <th>Avg Accuracy</th>
-              <th>Hits Exactos</th>
-              <th>Hits Parciales</th>
-              <th>Trend</th>
+              <th>Predicciones</th>
+              <th>Accuracy</th>
+              <th>Hits ✓</th>
+              <th>Misses ✗</th>
+              <th>Trend vs baseline</th>
             </tr>
           </thead>
           <tbody>
@@ -63,7 +86,7 @@
               <td>{{ row.total_cartones }}</td>
               <td>{{ (row.avg_accuracy * 100).toFixed(2) }}%</td>
               <td class="text-green">{{ row.total_hits_exact }}</td>
-              <td class="text-orange">{{ row.total_hits_partial }}</td>
+              <td class="text-orange">{{ row.total_misses }}</td>
               <td>
                 <span class="trend-bar">
                   <span class="trend-bar__fill" :style="`width: ${Math.min(row.avg_accuracy * 1000, 100)}%`"></span>
@@ -97,11 +120,19 @@ const { data, loading, error, range } = useAccuracy();
 const canvasRef = ref(null);
 let chartInstance = null;
 
-const avgAccuracy  = computed(() => data.value?.data.length
-  ? data.value.data.reduce((s, r) => s + r.avg_accuracy, 0) / data.value.data.length : 0);
-const totalExact   = computed(() => data.value?.data.reduce((s, r) => s + r.total_hits_exact, 0) ?? 0);
-const totalPartial = computed(() => data.value?.data.reduce((s, r) => s + r.total_hits_partial, 0) ?? 0);
-const totalCartones= computed(() => data.value?.data.reduce((s, r) => s + r.total_cartones, 0) ?? 0);
+const avgAccuracy  = computed(() => data.value?.avg_accuracy ?? 0);
+const totalExact   = computed(() => data.value?.total_hits ?? 0);
+const totalPartial = computed(() => 0); // legacy field kept for compat
+const totalCartones= computed(() => data.value?.total_evaluated ?? 0);
+
+// Visual feedback on accuracy vs baseline
+const accuracyClass = computed(() => {
+  if (!data.value || data.value.state === 'all_pending' || data.value.state === 'no_predictions') return '';
+  const edge = avgAccuracy.value - (data.value.baseline_random ?? 0);
+  if (edge >= 0.03)  return 'text-green';
+  if (edge >= 0)     return 'text-orange';
+  return 'text-red';
+});
 
 function renderChart() {
   if (!canvasRef.value || !data.value?.data?.length) return;
@@ -189,8 +220,27 @@ onMounted(async () => { await nextTick(); renderChart(); });
 
 .text-green  { color: #4ade80; }
 .text-orange { color: #fb923c; }
+.text-red    { color: #f87171; }
 .loading, .empty { color: #64748b; font-size: 0.9rem; padding: 2rem 0; }
 .error { color: #f87171; font-size: 0.9rem; padding: 1rem 0; }
+
+.state-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: 1rem 1.25rem;
+  border-radius: 10px;
+  margin-bottom: 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.state-banner div { display: flex; flex-direction: column; gap: 0.2rem; }
+.state-banner strong { font-weight: 600; }
+.state-banner span { color: #94a3b8; }
+.state-banner__icon { font-size: 1.4rem; flex-shrink: 0; }
+.state-banner--pending { background: #1a2744; border: 1px solid #3b5998; color: #93c5fd; }
+.state-banner--empty   { background: #1a1f2e; border: 1px solid #2d3748; color: #64748b; }
+.state-banner--info    { background: #162030; border: 1px solid #2d4a6a; color: #94a3b8; align-items: center; }
 
 @media (max-width: 768px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
 </style>
