@@ -31,6 +31,9 @@
         <RouterLink to="/agent/retrospective"     class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔬</span> Validación
         </RouterLink>
+        <RouterLink to="/agent/accuracy"          class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">📉</span> Accuracy
+        </RouterLink>
         <RouterLink to="/agent/alerts"            class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔔</span>
           Alertas

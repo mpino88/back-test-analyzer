@@ -88,6 +88,97 @@
       </div>
     </section>
 
+    <!-- ── MOTOR-Σ PPS State ────────────────────────────────────── -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">Motor-Σ — Estado de aprendizaje</h2>
+        <div class="pps-controls">
+          <select v-model="ppsGame" class="input-select input-select--sm" @change="fetchPPS">
+            <option value="pick3">Pick 3</option>
+            <option value="pick4">Pick 4</option>
+          </select>
+          <select v-model="ppsDraw" class="input-select input-select--sm" @change="fetchPPS">
+            <option value="midday">Midday</option>
+            <option value="evening">Evening</option>
+          </select>
+          <select v-model="ppsHalf" class="input-select input-select--sm" @change="fetchPPS">
+            <option value="du">DU</option>
+            <option v-if="ppsGame === 'pick4'" value="ab">AB</option>
+            <option v-if="ppsGame === 'pick4'" value="cd">CD</option>
+          </select>
+          <button class="btn-refresh-sm" @click="fetchPPS">↻</button>
+        </div>
+      </div>
+
+      <div v-if="loadingPPS" class="empty">Cargando estado del motor...</div>
+      <div v-else-if="ppsError" class="empty pps-error">{{ ppsError }}</div>
+      <template v-else-if="ppsData">
+        <!-- Summary chips -->
+        <div class="pps-summary">
+          <div class="pps-chip" :class="ppsData.is_profitable ? 'pps-chip--green' : 'pps-chip--red'">
+            <span class="pps-chip__label">N óptimo</span>
+            <span class="pps-chip__val">{{ ppsData.optimal_n }}</span>
+          </div>
+          <div class="pps-chip" :class="ppsData.is_profitable ? 'pps-chip--green' : 'pps-chip--yellow'">
+            <span class="pps-chip__label">Hit@N</span>
+            <span class="pps-chip__val">{{ ((ppsData.hit_rate ?? 0) * 100).toFixed(1) }}%</span>
+          </div>
+          <div class="pps-chip" :class="ppsData.is_profitable ? 'pps-chip--green' : 'pps-chip--red'">
+            <span class="pps-chip__label">Borde</span>
+            <span class="pps-chip__val">{{ ppsData.is_profitable ? '✓ Sí' : '✗ No' }}</span>
+          </div>
+          <div class="pps-chip pps-chip--neutral">
+            <span class="pps-chip__label">Base</span>
+            <span class="pps-chip__val pps-chip__val--sm">{{ ppsData.motor_basis }}</span>
+          </div>
+        </div>
+
+        <!-- Algorithm table -->
+        <div class="pps-table-wrap" v-if="ppsData.algorithms?.length">
+          <div class="pps-row pps-row--header">
+            <span>Algoritmo</span>
+            <span>PPS</span>
+            <span>Muestras</span>
+            <span>Estado</span>
+          </div>
+          <div
+            v-for="algo in ppsData.algorithms"
+            :key="algo.algo_name"
+            class="pps-row"
+          >
+            <span class="pps-algo-name">{{ algo.algo_name }}</span>
+            <span class="pps-bar-cell">
+              <span class="pps-bar-track">
+                <span
+                  class="pps-bar-fill"
+                  :style="{ width: algo.pps + '%' }"
+                  :class="algo.pps >= 65 ? 'bar--high' : algo.pps >= 45 ? 'bar--mid' : 'bar--low'"
+                ></span>
+              </span>
+              <span class="pps-num" :class="algo.pps >= 65 ? 'num--high' : algo.pps >= 45 ? 'num--mid' : 'num--low'">
+                {{ algo.pps?.toFixed(1) }}
+              </span>
+            </span>
+            <span class="pps-samples">
+              {{ algo.sample_count }}
+              <span class="warmup-badge" v-if="algo.sample_count < 30">warmup</span>
+            </span>
+            <span>
+              <span
+                class="health-dot"
+                :class="algo.pps >= 65 ? 'dot--healthy' : algo.pps >= 40 ? 'dot--degraded' : 'dot--low'"
+                :title="algo.pps >= 65 ? 'Señal fuerte' : algo.pps >= 40 ? 'Señal débil' : 'Penalizado'"
+              ></span>
+            </span>
+          </div>
+        </div>
+        <div v-else class="empty">
+          Sin datos PPS aún — el motor acumula datos sorteo a sorteo
+        </div>
+      </template>
+      <div v-else class="empty">Selecciona un combo para ver el estado del motor</div>
+    </section>
+
     <!-- Ingesta reciente -->
     <section class="section">
       <h2 class="section-title">Ingesta de datos</h2>
@@ -196,8 +287,6 @@ async function fetchLatestRecs() {
   finally { loadingRecs.value = false; }
 }
 
-onMounted(fetchLatestRecs);
-
 const triggerGame  = ref('pick3');
 const triggerDraw  = ref('midday');
 const triggerDate  = ref(new Date().toISOString().split('T')[0]);
@@ -230,6 +319,33 @@ function formatDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('es-PR', { dateStyle: 'short', timeStyle: 'short' });
 }
+
+// ── MOTOR-Σ PPS State ────────────────────────────────────────────
+const ppsGame    = ref('pick3');
+const ppsDraw    = ref('evening');
+const ppsHalf    = ref('du');
+const ppsData    = ref(null);
+const loadingPPS = ref(false);
+const ppsError   = ref('');
+
+async function fetchPPS() {
+  loadingPPS.value = true;
+  ppsError.value   = '';
+  try {
+    ppsData.value = await apiGet(
+      `/api/agent/pps?game_type=${ppsGame.value}&draw_type=${ppsDraw.value}&half=${ppsHalf.value}`
+    );
+  } catch (e) {
+    ppsError.value = `Error cargando PPS: ${e.message}`;
+  } finally {
+    loadingPPS.value = false;
+  }
+}
+
+onMounted(() => {
+  fetchLatestRecs();
+  fetchPPS();
+});
 </script>
 
 <style scoped>
@@ -367,5 +483,48 @@ function formatDate(iso) {
 
 .rec-meta { font-size: 0.65rem; color: #334155; margin-top: 0.2rem; }
 
-@media (max-width: 768px) { .cards-grid { grid-template-columns: 1fr 1fr; } }
+/* ── MOTOR-Σ PPS Panel ─────────────────────────────────────────── */
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem; }
+.pps-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.input-select--sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+.btn-refresh-sm { background: #1e2d40; color: #64748b; border: 1px solid #2d4a6b; border-radius: 6px; padding: 0.3rem 0.6rem; font-size: 0.85rem; cursor: pointer; }
+.btn-refresh-sm:hover { color: #e2e8f0; background: #2d4a6b; }
+
+.pps-summary { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+.pps-chip { background: #0f1623; border: 1px solid #1e2d40; border-radius: 10px; padding: 0.6rem 1rem; display: flex; flex-direction: column; gap: 0.2rem; min-width: 90px; }
+.pps-chip--green  { border-color: #16653444; background: #052e16; }
+.pps-chip--red    { border-color: #7f1d1d44; background: #1a0505; }
+.pps-chip--yellow { border-color: #78350f44; background: #1c1100; }
+.pps-chip--neutral { border-color: #1e2d40; }
+.pps-chip__label { font-size: 0.65rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }
+.pps-chip__val { font-size: 1.15rem; font-weight: 700; color: #e2e8f0; }
+.pps-chip__val--sm { font-size: 0.72rem; font-weight: 500; color: #94a3b8; word-break: break-all; }
+
+.pps-table-wrap { background: #0a0d14; border: 1px solid #1e2d40; border-radius: 10px; overflow: hidden; }
+.pps-row { display: grid; grid-template-columns: 1fr 2fr 80px 40px; gap: 0.5rem; align-items: center; padding: 0.5rem 1rem; font-size: 0.8rem; border-bottom: 1px solid #0f1a2a; }
+.pps-row:last-child { border-bottom: none; }
+.pps-row--header { background: #0f1623; font-size: 0.68rem; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; }
+.pps-algo-name { font-family: monospace; font-size: 0.75rem; color: #94a3b8; }
+.pps-bar-cell { display: flex; align-items: center; gap: 0.5rem; }
+.pps-bar-track { flex: 1; height: 6px; background: #1e2d40; border-radius: 3px; overflow: hidden; }
+.pps-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+.bar--high { background: linear-gradient(90deg, #16a34a, #22c55e); }
+.bar--mid  { background: linear-gradient(90deg, #854d0e, #f59e0b); }
+.bar--low  { background: linear-gradient(90deg, #7f1d1d, #ef4444); }
+.pps-num { font-size: 0.75rem; font-weight: 700; min-width: 30px; text-align: right; }
+.num--high { color: #4ade80; }
+.num--mid  { color: #f59e0b; }
+.num--low  { color: #f87171; }
+.pps-samples { font-size: 0.72rem; color: #64748b; display: flex; align-items: center; gap: 0.3rem; }
+.warmup-badge { background: #1e3a5f; color: #60a5fa; font-size: 0.6rem; font-weight: 600; padding: 0.1rem 0.4rem; border-radius: 4px; }
+.health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot--healthy  { background: #22c55e; box-shadow: 0 0 5px #22c55e66; }
+.dot--degraded { background: #f59e0b; }
+.dot--low      { background: #ef4444; }
+.pps-error { color: #f87171; font-size: 0.8rem; }
+
+@media (max-width: 768px) {
+  .cards-grid { grid-template-columns: 1fr 1fr; }
+  .pps-row { grid-template-columns: 1fr 1.5fr 60px 30px; font-size: 0.72rem; }
+}
 </style>
