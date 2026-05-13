@@ -92,9 +92,46 @@
     <section class="section section--diag">
       <div class="section-header">
         <h2 class="section-title">🔬 Diagnóstico del sistema (ground truth)</h2>
-        <button class="btn-diag" :disabled="loadingDiag" @click="loadDiagnostics">
-          {{ loadingDiag ? '⟳ Midiendo...' : '🩺 Ejecutar diagnóstico' }}
-        </button>
+        <div class="diag-header-right">
+          <span v-if="diagData" class="diag-age">{{ diagAge }}</span>
+          <button class="btn-diag" :disabled="loadingDiag" @click="loadDiagnostics">
+            {{ loadingDiag ? '⟳ Midiendo...' : '🩺 Ejecutar diagnóstico' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Feedback lag banner (shown even without full diagnostics) -->
+      <div v-if="diagData?.feedback_lag" class="feedback-lag-card"
+           :class="feedbackLagClass">
+        <div class="fl-label">⏱ Feedback Lag</div>
+        <div class="fl-value">
+          {{ diagData.feedback_lag.feedback_lag_hours != null
+             ? diagData.feedback_lag.feedback_lag_hours + 'h'
+             : '—' }}
+        </div>
+        <div class="fl-detail">
+          {{ diagData.feedback_lag.total_pending }} predicciones pendientes ·
+          Última resolución: {{ diagData.feedback_lag.last_resolved_at ?? 'nunca' }}
+        </div>
+        <div class="fl-verdict">{{ diagData.verdict?.FEEDBACK_LAG_STATUS }}</div>
+      </div>
+
+      <!-- Prediction history 7d mini-table -->
+      <div v-if="diagData?.prediction_history_7d?.length" class="pred-history">
+        <div class="pred-history__title">📅 Predicciones últimos 7 días</div>
+        <div class="pred-history__rows">
+          <div v-for="row in diagData.prediction_history_7d" :key="row.day" class="pred-history__row">
+            <span class="ph-day">{{ row.day }}</span>
+            <span class="ph-predicted">{{ row.predicted }} pred.</span>
+            <span class="ph-resolved" :class="row.resolved < row.predicted ? 'text-orange' : 'text-green'">
+              {{ row.resolved }} resueltas
+            </span>
+            <span class="ph-hits text-green">{{ row.hits }} hits</span>
+            <div class="ph-bar">
+              <div class="ph-bar__hit" :style="`width: ${row.predicted > 0 ? (row.hits / row.predicted * 100).toFixed(0) : 0}%`"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div v-if="diagData" class="diag-grid">
@@ -117,6 +154,13 @@
             <div class="verdict-row">
               <span class="verdict-label">F04 backtest_points_v2</span>
               <span class="verdict-val v--yellow">{{ diagData.verdict.F04_backtest_points_v2_gap }}</span>
+            </div>
+            <div class="verdict-row">
+              <span class="verdict-label">Feedback lag</span>
+              <span class="verdict-val"
+                :class="diagData.verdict.FEEDBACK_LAG_STATUS?.startsWith('WARNING') ? 'v--red' : diagData.verdict.FEEDBACK_LAG_STATUS?.startsWith('WATCH') ? 'v--yellow' : 'v--green'">
+                {{ diagData.verdict.FEEDBACK_LAG_STATUS }}
+              </span>
             </div>
           </div>
         </div>
@@ -445,7 +489,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
 
@@ -521,13 +565,33 @@ async function fetchPPS() {
 }
 
 // ── Diagnóstico Forense ──────────────────────────────────────
-const diagData    = ref(null);
-const loadingDiag = ref(false);
+const diagData     = ref(null);
+const loadingDiag  = ref(false);
+const diagLoadedAt = ref(null);
+let   diagTimer    = null;
+
+// Age display for diagnostics panel ("hace 2m")
+const diagAge = computed(() => {
+  if (!diagLoadedAt.value) return '';
+  const diff = Math.round((Date.now() - diagLoadedAt.value) / 1000);
+  if (diff < 60) return `hace ${diff}s`;
+  return `hace ${Math.round(diff / 60)}m`;
+});
+
+// Feedback lag color class
+const feedbackLagClass = computed(() => {
+  const lag = diagData.value?.feedback_lag;
+  if (!lag || !lag.feedback_lag_hours) return 'fl--ok';
+  if (lag.feedback_lag_hours > 24) return 'fl--critical';
+  if (lag.feedback_lag_hours > 6)  return 'fl--warn';
+  return 'fl--ok';
+});
 
 async function loadDiagnostics() {
   loadingDiag.value = true;
   try {
-    diagData.value = await apiGet('/api/agent/diagnostics');
+    diagData.value    = await apiGet('/api/agent/diagnostics');
+    diagLoadedAt.value = Date.now();
   } catch (e) {
     diagData.value = { error: e.message };
   } finally {
@@ -554,6 +618,14 @@ async function refreshMotor() {
 onMounted(() => {
   fetchLatestRecs();
   refreshMotor();
+  // Auto-refresh diagnostics every 60s (feedback lag & prediction history)
+  diagTimer = setInterval(() => {
+    if (diagData.value) loadDiagnostics(); // only auto-refresh if user already opened it
+  }, 60_000);
+});
+
+onUnmounted(() => {
+  if (diagTimer) clearInterval(diagTimer);
 });
 </script>
 
@@ -769,6 +841,35 @@ onMounted(() => {
 .v--red    { background: #1a0505; color: #f87171; }
 .v--green  { background: #052e16; color: #4ade80; }
 .v--yellow { background: #1c1100; color: #f59e0b; }
+
+/* Diagnostics header with age */
+.diag-header-right { display: flex; align-items: center; gap: 0.6rem; }
+.diag-age { font-size: 0.72rem; color: #475569; font-style: italic; }
+
+/* Feedback lag card */
+.feedback-lag-card { display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 0.75rem 1.25rem; padding: 0.85rem 1.1rem; border-radius: 10px; margin-bottom: 1rem; font-size: 0.82rem; border: 1px solid; }
+.fl--ok       { background: #041510; border-color: #16653488; }
+.fl--warn     { background: #1a1000; border-color: #78350f88; }
+.fl--critical { background: #200a0a; border-color: #991b1b88; }
+.fl-label     { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+.fl-value     { font-size: 1.5rem; font-weight: 700; }
+.fl--ok .fl-value     { color: #4ade80; }
+.fl--warn .fl-value   { color: #f59e0b; }
+.fl--critical .fl-value { color: #f87171; }
+.fl-detail    { font-size: 0.75rem; color: #64748b; }
+.fl-verdict   { font-size: 0.72rem; font-weight: 600; padding: 0.2rem 0.6rem; border-radius: 5px; background: #0f1623; color: #94a3b8; }
+
+/* Prediction history 7d */
+.pred-history { margin-bottom: 1rem; }
+.pred-history__title { font-size: 0.78rem; color: #64748b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+.pred-history__rows  { display: flex; flex-direction: column; gap: 0.25rem; }
+.pred-history__row   { display: grid; grid-template-columns: 1fr auto auto auto 80px; align-items: center; gap: 0.75rem; font-size: 0.78rem; padding: 0.3rem 0.6rem; background: #0a0d14; border-radius: 6px; }
+.ph-day      { color: #94a3b8; font-family: monospace; }
+.ph-predicted{ color: #64748b; }
+.ph-resolved { font-weight: 600; }
+.ph-hits     { font-weight: 700; }
+.ph-bar      { height: 5px; background: #1e2d40; border-radius: 3px; overflow: hidden; }
+.ph-bar__hit { height: 100%; background: #4ade80; border-radius: 3px; transition: width 0.4s; }
 
 .pps-diag-grid { display: flex; flex-direction: column; gap: 0.3rem; }
 .pps-diag-row  { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 0.4rem; font-size: 0.72rem; font-family: monospace; padding: 0.2rem 0; border-bottom: 1px solid #0f1623; }

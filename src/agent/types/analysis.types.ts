@@ -200,7 +200,6 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   markov_order2:     0.30,  // ↓ de 0.80: Markov asume P(X→Y)>random — autocorr=0 lo niega
   transition_follow: 0.35,  // ↓ de 0.85: igual, Markov-1 — sin base empírica
   cross_draw:        0.30,  // ↓ de 0.70: correlación midday↔evening — autocorr=0 lo refuta
-  fibonacci_pisano:  0.35,  // ↓ de 0.50: ciclos matemáticos — sin autocorr que los soporte
   pair_return_cycle: 0.50,  // ↓ de 0.90: ciclo de retorno — Poisson implica memoryless
 
   // ─── Streak (P(extend) ≈ random según datos) ─────────────────────────────
@@ -212,10 +211,12 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   decade_family:     0.75,  // familias 00-09...90-99 momentum — neutral frente a autocorr
   sum_pattern_filter:0.80,  // filtro suma de dígitos — eliminador de ruido — neutral
   double_triple:     0.65,  // detector de régimen — neutral (no asume autocorr)
-  // ─── Ballbot absorption v6 (cycle/terminal/mirror) ───────────────────────
-  cycle_detector:    0.25,  // ciclos inter-arrival: autocorr≈0 refuta supuesto principal; bajo peso inicial
+  // ─── Ballbot absorption v6 — solo terminal_analysis conservado ───────────
   terminal_analysis: 0.50,  // terminal (last digit) grouping: momentum válido, due factor tiene cap interno
-  mirror_complement: 0.55,  // probabilidad condicional empírica: P(mirror|source) — PPS aprenderá si hay señal
+  // ELIMINADOS (2026-05-13 — sin base empírica, auditoría Senior):
+  // fibonacci_pisano  — numerología en RNG certificado (Pisano period != predictor)
+  // cycle_detector    — "ciclos" son artefactos en series memoryless (Poisson)
+  // mirror_complement — simetría de complementarios sin mecanismo generativo
 };
 
 // ─── Score por dígito/posición ───────────────────────────────────

@@ -153,9 +153,12 @@ export class PostDrawProcessor {
     // y actualizar su PPS(EMA). Esto ES el aprendizaje real del motor.
     await this.updatePPSPostDraw(game_type, draw_type, draw_date, actual_digits);
 
-    // ─── FASE C: Adaptive top_n + weights (legacy — mientras PPS madura) ─────
-    await this.updateLiveAdaptiveTopN(game_type, draw_type);
-    await this.updateLiveAdaptiveWeights(game_type, draw_type);
+    // ─── FASE C: DESACTIVADA (v2.4 — PPS + CognitiveLearner reemplazan completamente) ──
+    // adaptive_weights y adaptive_top_n son tablas legacy mantenidas solo para
+    // compatibilidad de lectura. Con PPS live + cognitive_algo_weights el motor
+    // ya tiene aprendizaje superior sin necesidad de estos writes.
+    // await this.updateLiveAdaptiveTopN(game_type, draw_type);
+    // await this.updateLiveAdaptiveWeights(game_type, draw_type);
 
     // ─── FASE D: Comparación de cartones legacy (solo cartones con digits) ────
     // Pair-mode cartones tienen numbers=[{value:"37"}] sin campo digits.

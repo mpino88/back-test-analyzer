@@ -2294,6 +2294,38 @@ ${ragSummary}`;
         agentPool.query<{ total: number }>(
           `SELECT COUNT(*)::int AS total FROM public.draws`
         ).catch(() => ({ rows: [{ total: -1 }] })),
+
+        // ── FEEDBACK LAG DIAGNOSIS (NEW — v2.4) ───────────────────────────
+        // Mide cuánto tiempo llevan las predicciones sin resolverse.
+        // Si feedback_lag_hours > 6 → PostDrawProcessor tiene delay o bugs.
+        agentPool.query<{
+          total_pending:       number;
+          oldest_pending_date: string | null;
+          newest_pending_date: string | null;
+          feedback_lag_hours:  number | null;
+          last_resolved_at:    string | null;
+        }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE hit IS NULL)::int AS total_pending,
+             MIN(draw_date::text) FILTER (WHERE hit IS NULL) AS oldest_pending_date,
+             MAX(draw_date::text) FILTER (WHERE hit IS NULL) AS newest_pending_date,
+             ROUND(EXTRACT(EPOCH FROM (now() - MIN(created_at) FILTER (WHERE hit IS NULL))) / 3600, 1)::float
+               AS feedback_lag_hours,
+             MAX(updated_at)::text FILTER (WHERE hit IS NOT NULL) AS last_resolved_at
+           FROM hitdash.pair_recommendations`
+        ).catch(() => ({ rows: [{ total_pending: 0, oldest_pending_date: null, newest_pending_date: null, feedback_lag_hours: null, last_resolved_at: null }] })),
+
+        // ── Recent prediction history (last 7 days) ────────────────────────
+        agentPool.query<{ day: string; predicted: number; resolved: number; hits: number }>(
+          `SELECT
+             draw_date::text AS day,
+             COUNT(*)::int   AS predicted,
+             COUNT(*) FILTER (WHERE hit IS NOT NULL)::int AS resolved,
+             COUNT(*) FILTER (WHERE hit = true)::int AS hits
+           FROM hitdash.pair_recommendations
+           WHERE created_at >= now() - interval '7 days'
+           GROUP BY draw_date ORDER BY draw_date DESC`
+        ).catch(() => ({ rows: [] as Array<{ day: string; predicted: number; resolved: number; hits: number }> })),
       ]);
 
       // Helper to safely extract rows
@@ -2330,16 +2362,29 @@ ${ragSummary}`;
         feedback_loop_total:       (r0(12) as { total?: number } | null)?.total ?? null,
         backtest_points_v2:        r0(13) ?? null,
         public_draws_total:        (r0(14) as { total?: number } | null)?.total ?? null,
+        // NEW v2.4: Feedback lag diagnosis
+        feedback_lag:              r0(15) ?? null,
+        prediction_history_7d:     r(16) ?? [],
 
         // Self-diagnosis
         verdict: {
           F01_draw_date_null:      ((r0(1) as { null_draw_date?: number } | null)?.null_draw_date ?? 0) > 100
                                      ? 'CONFIRMED — many NULL draw_date rows'
                                      : 'REFUTED — few/no NULL draw_date rows',
-          F02_feedback_loop_empty: ((r0(12) as { total?: number } | null)?.total ?? -1) === 0
-                                     ? 'CONFIRMED — table is empty'
-                                     : 'CHECK — table has data',
+          F02_feedback_loop_empty: (r0(12) as { total?: number } | null)?.total === -1
+                                     ? 'DROPPED — feedback_loop table removed in v2.4 migration 019'
+                                     : (r0(12) as { total?: number } | null)?.total === 0
+                                       ? 'CONFIRMED — table was empty'
+                                       : 'CHECK — table has data',
           F04_backtest_points_v2_gap: 'See backtest_points_v2.latest_eval — if < today-7d, there is a gap',
+          FEEDBACK_LAG_STATUS: (() => {
+            const lag = r0(15) as { feedback_lag_hours?: number | null; total_pending?: number } | null;
+            if (!lag || lag.total_pending === 0) return 'OK — no pending predictions';
+            if (lag.feedback_lag_hours == null) return 'UNKNOWN — no lag data';
+            if (lag.feedback_lag_hours > 24) return `WARNING — ${lag.feedback_lag_hours}h lag (${lag.total_pending} pending)`;
+            if (lag.feedback_lag_hours > 6) return `WATCH — ${lag.feedback_lag_hours}h lag (${lag.total_pending} pending)`;
+            return `OK — ${lag.feedback_lag_hours}h lag (${lag.total_pending} pending)`;
+          })(),
         },
       });
     } catch (err) {

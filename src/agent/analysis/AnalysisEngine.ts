@@ -1,14 +1,17 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — AnalysisEngine v2.3.0  (MOTOR-Σ)
-// Orquestador de los 23 algoritmos con consensus ponderado por PPS.
+// HITDASH — AnalysisEngine v2.4.0  (MOTOR-Σ)
+// Orquestador de los 20 algoritmos con consensus ponderado por PPS.
 //
-// Cambios v2:
-//   • Pesos efectivos = base_weight × PPS(algo) / 100
-//     (PPS aprendido sorteo a sorteo, reemplaza adaptive_weights estáticos)
-//   • Snapshot por algo persistido para post-draw learning
-//   • optimal_n viene de PPSService.computeOptimalN()
-//     FUNCIÓN OBJETIVO: min N < 70 donde hit_rate(N)×$50/N ≥ 1%
-//     Si is_profitable=false → N reportado pero agente sabe que no hay borde
+// v2.4 (2026-05-13): Eliminados 3 algoritmos sin base empírica:
+//   • fibonacci_pisano  — numerología en RNG certificado
+//   • cycle_detector    — artefacto estadístico en series memoryless
+//   • mirror_complement — simetría sin mecanismo generativo
+//   23 → 20 algoritmos. Consensus más limpio, menos ruido espurio.
+//
+// Capas de peso (jerarquía):
+//   1. PPS live (EMA sorteo a sorteo — aprendizaje real)
+//   2. cognitive_algo_weights (CognitiveLearner — historial completo)
+//   3. ALGORITHM_WEIGHTS (estático — fallback base)
 // ═══════════════════════════════════════════════════════════════
 
 import type { Pool } from 'pg';
@@ -19,7 +22,6 @@ import { FrequencyAnalysis }  from './algorithms/FrequencyAnalysis.js';
 import { GapAnalysis }        from './algorithms/GapAnalysis.js';
 import { HotColdClassifier }  from './algorithms/HotColdClassifier.js';
 import { PairCorrelation }    from './algorithms/PairCorrelation.js';
-import { FibonacciResonancePro } from './algorithms/FibonacciResonancePro.js';
 import { StreakDetection }    from './algorithms/StreakDetection.js';
 import { PositionAnalysis }   from './algorithms/PositionAnalysis.js';
 import { MovingAverages }     from './algorithms/MovingAverages.js';
@@ -39,10 +41,9 @@ import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
 import { TrendMomentum }         from './algorithms/TrendMomentum.js';
 // ─── Ballbot absorption (v5 — est_individuales) ─────────────────────────────
 import { EstIndividuales }       from './algorithms/EstIndividuales.js';
-// ─── Ballbot absorption (v6 — cycle/terminal/mirror) ─────────────────────────
-import { CycleDetector }         from './algorithms/CycleDetector.js';
+// ─── Ballbot absorption (v6 — solo terminal_analysis conservado) ─────────────
+// ELIMINADOS (v2.4): fibonacci_pisano, cycle_detector, mirror_complement
 import { TerminalAnalysis }      from './algorithms/TerminalAnalysis.js';
-import { MirrorComplement }      from './algorithms/MirrorComplement.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
 import type { DynamicStrategy }             from '../services/StrategyLifecycleManager.js';
@@ -56,7 +57,6 @@ import type {
   GapResult,
   HotColdResult,
   PairResult,
-  FibonacciResult,
   StreakResult,
   PositionResult,
   MAResult,
@@ -76,7 +76,7 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   gap_analysis:      'gap_overdue_focus',
   hot_cold:          'hot_cold_weighted',
   pairs_correlation: 'pair_correlation',
-  fibonacci_pisano:  'fibonacci_pisano',
+  // fibonacci_pisano removed (v2.4)
   streak:            'streak_reversal',
   position:          'position_bias',
   // MovingAverages.runPairs() computa (sma7-sma14)+ema → blend de moving_avg_signal + momentum_ema
@@ -104,7 +104,6 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   gap_overdue_focus: 12,
   hot_cold_weighted: 15,
   pair_correlation:  20,
-  fibonacci_pisano:  25,
   streak_reversal:   10,
   position_bias:     22,
   moving_avg_signal: 15,
@@ -204,7 +203,6 @@ export class AnalysisEngine {
   private readonly gap:   GapAnalysis;
   private readonly hc:    HotColdClassifier;
   private readonly pairs: PairCorrelation;
-  private readonly fib:   FibonacciResonancePro;
   private readonly streak: StreakDetection;
   private readonly pos:   PositionAnalysis;
   private readonly ma:    MovingAverages;
@@ -223,10 +221,8 @@ export class AnalysisEngine {
   // ─── Ballbot canonical (v4) ───────────────────────────────────
   private readonly trendMomentum:   TrendMomentum;
   private readonly estIndividuales: EstIndividuales;
-  // ─── Ballbot absorption (v6 — cycle/terminal/mirror) ─────────
-  private readonly cycleDetector:   CycleDetector;
+  // ─── Ballbot absorption (v6 — terminal only) ─────────────────
   private readonly terminalAnalysis: TerminalAnalysis;
-  private readonly mirrorComplement: MirrorComplement;
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
   private readonly ppsService:  PPSService;
 
@@ -243,7 +239,6 @@ export class AnalysisEngine {
     this.gap    = new GapAnalysis(analysisPool);
     this.hc     = new HotColdClassifier(analysisPool);
     this.pairs  = new PairCorrelation(analysisPool);
-    this.fib    = new FibonacciResonancePro(analysisPool);
     this.streak = new StreakDetection(analysisPool);
     this.pos    = new PositionAnalysis(analysisPool);
     this.ma     = new MovingAverages(analysisPool);
@@ -261,10 +256,8 @@ export class AnalysisEngine {
     this.crossDraw     = new CrossDrawCorrelation(agentPool);
     this.trendMomentum    = new TrendMomentum(agentPool);
     this.estIndividuales  = new EstIndividuales(agentPool);
-    // ─── Ballbot absorption (v6) — cycle/terminal/mirror ─────────
-    this.cycleDetector    = new CycleDetector(agentPool);
+    // ─── Ballbot absorption (v6 — terminal solo) ─────────────────
     this.terminalAnalysis = new TerminalAnalysis(agentPool);
-    this.mirrorComplement = new MirrorComplement(agentPool);
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
     this.ppsService = new PPSService(agentPool);
   }
@@ -279,13 +272,13 @@ export class AnalysisEngine {
 
     logger.info({ game_type, draw_type, period }, 'AnalysisEngine: iniciando análisis completo');
 
-    // ─── Ejecutar los 8 algoritmos en paralelo ──────────────────
-    const [rFreq, rGap, rHC, rPairs, rFib, rStreak, rPos, rMA] = await Promise.allSettled([
+    // ─── Ejecutar los 7 algoritmos de análisis por posición en paralelo ──
+    // (fibonacci_pisano eliminado en v2.4 — sin base empírica en RNG certificado)
+    const [rFreq, rGap, rHC, rPairs, rStreak, rPos, rMA] = await Promise.allSettled([
       this.freq.run(game_type, draw_type, period),
       this.gap.run(game_type, draw_type, period),
       this.hc.run(game_type, draw_type, period),
       this.pairs.run(game_type, draw_type, period),
-      this.fib.run(game_type, draw_type, 365),   // Pisano needs more history
       this.streak.run(game_type, draw_type, period),
       this.pos.run(game_type, draw_type, 365),   // Chi-square needs more history
       this.ma.run(game_type, draw_type, period),
@@ -308,7 +301,6 @@ export class AnalysisEngine {
     const gapResult    = unwrap(rGap,    'gap_analysis');
     const hcResult     = unwrap(rHC,     'hot_cold');
     const pairsResult  = unwrap(rPairs,  'pairs_correlation');
-    const fibResult    = unwrap(rFib,    'fibonacci_pisano');
     const streakResult = unwrap(rStreak, 'streak');
     const posResult    = unwrap(rPos,    'position');
     const maResult     = unwrap(rMA,     'moving_averages');
@@ -405,24 +397,7 @@ export class AnalysisEngine {
       }
     }
 
-    // 5. Fibonacci signals — score = alignment_score / 2.0
-    if (fibResult) {
-      const data = (fibResult as FibonacciResult).output_data;
-      for (const pos of positions) {
-        for (const entry of data.by_position[pos] ?? []) {
-          if (entry.alignment_score > 0) {
-            addSignal(pos, entry.digit, {
-              digit: entry.digit,
-              algorithm: 'fibonacci_pisano',
-              score: clamp01(entry.alignment_score / 2.0),
-              reason: `pisano_idx=${entry.current_pisano_index} align=${entry.alignment_score}`,
-            });
-          }
-        }
-      }
-    }
-
-    // 6. Streak signals — absence streaks nearing anomaly = buy signal
+    // 5. Streak signals — absence streaks nearing anomaly = buy signal
     if (streakResult) {
       const data = (streakResult as StreakResult).output_data;
       for (const entry of data.active_streaks) {
@@ -564,18 +539,18 @@ export class AnalysisEngine {
     // short-term (30d) frequency + hot_cold for momentum detection.
     // Blend: primary consensus + 25% momentum overlay captures both stability and trend.
     const SHORT_PERIOD: AnalysisPeriod = 30;
-    const [rFreq, rGap, rHC, rPairs, rFib, rStreak, rPos, rMA,
+    // v2.4: 20 algoritmos (eliminados fibonacci_pisano, cycle_detector, mirror_complement)
+    const [rFreq, rGap, rHC, rPairs, rStreak, rPos, rMA,
            rFreqShort, rHCShort,
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
            rPairReturn, rSumPattern, rDoubleTriple, rCrossDraw,
            rTrendMomentum, rEstIndividuales,
-           rCycleDetector, rTerminalAnalysis, rMirrorComplement,
+           rTerminalAnalysis,
     ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
       this.hc.runPairs(game_type, draw_type, half, period),
       this.pairs.runPairs(game_type, draw_type, half, period),
-      this.fib.runPairs(game_type, draw_type, half, 365),
       this.streak.runPairs(game_type, draw_type, half, period),
       this.pos.runPairs(game_type, draw_type, half, 365),
       this.ma.runPairs(game_type, draw_type, half, period),
@@ -602,10 +577,8 @@ export class AnalysisEngine {
       this.trendMomentum.runPairs(game_type, draw_type, half, period),
       // ─── Ballbot absorption (v5) — hottest-due individual numbers ────────
       this.estIndividuales.runPairs(game_type, draw_type, half, 365),
-      // ─── Ballbot absorption (v6) — cycle/terminal/mirror ─────────────────
-      this.cycleDetector.runPairs(game_type, draw_type, half, period),
+      // ─── Ballbot absorption (v6 — terminal solo) ─────────────────────────
       this.terminalAnalysis.runPairs(game_type, draw_type, half, period),
-      this.mirrorComplement.runPairs(game_type, draw_type, half, period),
     ]);
 
     const algorithms_succeeded: string[] = [];
@@ -703,7 +676,6 @@ export class AnalysisEngine {
       ['gap_analysis',      effectiveWeight('gap_analysis'),      rGap],
       ['hot_cold',          effectiveWeight('hot_cold'),          rHC],
       ['pairs_correlation', effectiveWeight('pairs_correlation'), rPairs],
-      ['fibonacci_pisano',  effectiveWeight('fibonacci_pisano'),  rFib],
       ['streak',            effectiveWeight('streak'),            rStreak],
       ['position',          effectiveWeight('position'),          rPos],
       // moving_averages recibe su propio peso + el factor de momentum_ema (blend)
@@ -723,10 +695,9 @@ export class AnalysisEngine {
       // ─── Ballbot canonical (v4) — misma fórmula que "Fuerza de Tendencia Pro" ──
       ['trend_momentum',     effectiveWeight('trend_momentum'),     rTrendMomentum],
       ['est_individuales',   effectiveWeight('est_individuales'),   rEstIndividuales],
-      // ─── Ballbot absorption (v6) — cycle/terminal/mirror ────────────────
-      ['cycle_detector',    effectiveWeight('cycle_detector'),    rCycleDetector],
+      // ─── Ballbot absorption (v6 — terminal solo) ─────────────────────────
+      // Eliminados (v2.4): fibonacci_pisano, cycle_detector, mirror_complement
       ['terminal_analysis', effectiveWeight('terminal_analysis'), rTerminalAnalysis],
-      ['mirror_complement', effectiveWeight('mirror_complement'), rMirrorComplement],
     ];
 
     // Accumulate weighted scores per pair "00"-"99"
