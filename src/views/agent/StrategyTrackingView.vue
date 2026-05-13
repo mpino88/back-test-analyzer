@@ -407,9 +407,13 @@
                     <div class="sa-val" style="color:#22c55e">{{ s.streakStats.longestHit }}</div>
                     <div class="sa-lbl">Racha hit máx.</div>
                   </div>
-                  <div class="sa-card">
+                  <div class="sa-card" :class="s.streakStats.longestMiss >= 30 ? 'sa-card--warn' : ''">
                     <div class="sa-val" style="color:#f87171">{{ s.streakStats.longestMiss }}</div>
                     <div class="sa-lbl">Racha miss máx.</div>
+                    <!-- FORENSE F04: streak=60 indica backtest_points_v2 sin datos live -->
+                    <div v-if="s.streakStats.longestMiss >= 30" class="sa-warn-note">
+                      ⚠️ Re-ejecutar backtest para sincronizar datos recientes
+                    </div>
                   </div>
                   <div class="sa-card">
                     <div class="sa-val" :style="{ color: rateColor(s.streakStats.recentHitRate) }">{{ pct(s.streakStats.recentHitRate) }}</div>
@@ -1453,6 +1457,8 @@ function kronosFmtDate(iso) {
 }
 .sa-card--hit  { border-color: #052e1655; }
 .sa-card--miss { border-color: #450a0a55; }
+.sa-card--warn { border-color: #78350f88; background: #1c100a; }
+.sa-warn-note  { font-size: 0.6rem; color: #f59e0b; margin-top: 0.2rem; line-height: 1.3; }
 .sa-val    { font-size: 1.1rem; font-weight: 800; color: #e2e8f0; }
 .sa-val--sm { font-size: 0.75rem; }
 .sa-lbl    { font-size: 0.6rem; color: #475569; text-transform: uppercase; }

@@ -32,6 +32,7 @@ const MIGRATIONS = [
   '015_autonomous_agent.sql',  // Agente autónomo: hypotheses, dynamic_strategies, anomaly_scan_log
   '016_sentinel_cooldowns.sql',       // HelixSentinel: anti-spam cooldowns table
   '017_algorithm_candidate_history.sql', // Comparativa algoritmo vs resultado real
+  '018_backfill_ingested_results.sql',   // FORENSE F01: backfill draw_date/digits + bulk-ingest desde public.draws
 ];
 
 async function migrate(): Promise<void> {

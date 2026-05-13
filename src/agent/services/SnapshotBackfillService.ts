@@ -92,7 +92,7 @@ async function scoreFrequency(
      WHERE game_type = $1 AND draw_type = $2
        AND draw_date >= $3::date - ($4 || ' days')::interval
        AND draw_date <  $3::date
-     GROUP BY pair`,
+     GROUP BY (${a}::text || ${b}::text)`,
     [game_type, draw_type, as_of_date, period]
   );
   const scores = zeroPairs();
@@ -115,7 +115,7 @@ async function scoreHotCold(
      WHERE game_type = $1 AND draw_type = $2
        AND draw_date >= $3::date - ($4 || ' days')::interval
        AND draw_date <  $3::date
-     GROUP BY pair`,
+     GROUP BY (${a}::text || ${b}::text)`,
     [game_type, draw_type, as_of_date, period, shortPeriod]
   );
   const scores = zeroPairs();
@@ -147,7 +147,7 @@ async function scoreGapAnalysis(
      WHERE game_type = $1 AND draw_type = $2
        AND draw_date >= $3::date - ($4 || ' days')::interval
        AND draw_date <  $3::date
-     GROUP BY pair`,
+     GROUP BY (${a}::text || ${b}::text)`,
     [game_type, draw_type, as_of_date, period]
   );
   const scores = zeroPairs();
@@ -178,7 +178,7 @@ async function scoreCalendarPattern(
      WHERE game_type = $1 AND draw_type = $2
        AND draw_date >= $3::date - ($4 || ' days')::interval
        AND draw_date <  $3::date
-     GROUP BY pair`,
+     GROUP BY (${a}::text || ${b}::text)`,
     [game_type, draw_type, as_of_date, period, targetDow]
   );
   const scores = zeroPairs();
@@ -323,7 +323,7 @@ async function scoreMaxPerWeekDay(
        AND draw_date >= $3::date - ($4 || ' days')::interval
        AND draw_date <  $3::date
        AND EXTRACT(DOW FROM draw_date) = $5
-     GROUP BY pair`,
+     GROUP BY (${a}::text || ${b}::text)`,
     [game_type, draw_type, as_of_date, period, targetDow]
   );
   const scores = zeroPairs();

@@ -216,17 +216,28 @@ export class PostDrawProcessor {
     const driftReport = await this.drift.detect(game_type, draw_type);
 
     if (driftReport.detected) {
-      // Persistir alerta de drift en DB
-      await this.agentPool.query(
-        `INSERT INTO hitdash.proactive_alerts
-           (alert_type, priority, game_type, message, data)
-         VALUES ('drift', 'high', $1, $2, $3)`,
-        [
-          game_type,
-          `Drift detectado en ${driftReport.drifted_positions.join(', ')} (${game_type} ${draw_type})`,
-          JSON.stringify({ drifted_positions: driftReport.drifted_positions, details: driftReport.details }),
-        ]
-      );
+      // FORENSE F06 FIX: Cooldown guard — evita 97+ alertas de drift duplicadas.
+      // Una alerta de drift por combo por cada 6 horas máximo.
+      const { rows: recentDrift } = await this.agentPool.query<{ cnt: number }>(
+        `SELECT COUNT(*)::int AS cnt FROM hitdash.proactive_alerts
+         WHERE alert_type = 'drift' AND game_type = $1
+           AND acknowledged = false
+           AND created_at > now() - interval '6 hours'`,
+        [game_type]
+      ).catch(() => ({ rows: [{ cnt: 0 }] }));
+
+      if ((recentDrift[0]?.cnt ?? 0) === 0) {
+        await this.agentPool.query(
+          `INSERT INTO hitdash.proactive_alerts
+             (alert_type, priority, game_type, message, data)
+           VALUES ('drift', 'high', $1, $2, $3)`,
+          [
+            game_type,
+            `Drift detectado en ${driftReport.drifted_positions.join(', ')} (${game_type} ${draw_type})`,
+            JSON.stringify({ drifted_positions: driftReport.drifted_positions, details: driftReport.details }),
+          ]
+        );
+      }
 
       // ═══ ANO-04 FIX: Verificar notifier disponible antes de llamar
       if (this.notifier) {

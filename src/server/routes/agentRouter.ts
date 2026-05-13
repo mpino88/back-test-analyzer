@@ -167,23 +167,44 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
     const interval = validRanges[range] ?? '30 days';
 
     try {
+      // FORENSE F01 FIX: pair_recommendations tiene los hits reales de predicciones vivas.
+      // feedback_loop solo se popula para cartones legacy (con digits en JSONB), que están vacíos.
+      // La accuracy real del motor se mide en pair_recommendations.hit.
       const result = await agentPool.query(
         `SELECT
-           date_trunc('day', fl.learned_at)::text AS day,
-           COUNT(*)::int AS total_cartones,
-           ROUND(AVG(fl.accuracy_score)::numeric, 4)::float AS avg_accuracy,
-           SUM(fl.hits_exact)::int AS total_hits_exact,
-           SUM(fl.hits_partial)::int AS total_hits_partial
-         FROM hitdash.feedback_loop fl
-         WHERE fl.learned_at >= now() - ($1 || ' days')::interval
-         GROUP BY date_trunc('day', fl.learned_at)
+           date_trunc('day', pr.created_at)::text       AS day,
+           COUNT(*)::int                                 AS total_cartones,
+           ROUND(AVG(CASE WHEN pr.hit THEN 1.0 ELSE 0.0 END)::numeric, 4)::float AS avg_accuracy,
+           COUNT(*) FILTER (WHERE pr.hit = true)::int   AS total_hits_exact,
+           COUNT(*) FILTER (WHERE pr.hit = false)::int  AS total_hits_partial,
+           COUNT(*) FILTER (WHERE pr.hit IS NULL)::int  AS total_pending,
+           -- detalles adicionales
+           ROUND(AVG(pr.optimal_n)::numeric, 1)::float  AS avg_optimal_n,
+           MIN(pr.half)                                  AS half
+         FROM hitdash.pair_recommendations pr
+         WHERE pr.created_at >= now() - ($1 || ' days')::interval
+           AND pr.hit IS NOT NULL
+         GROUP BY date_trunc('day', pr.created_at)
          ORDER BY day ASC`,
         [interval.replace(' days', '')]
       );
+
+      // Summary stats
+      const totalHits    = result.rows.reduce((s, r) => s + (r.total_hits_exact  as number), 0);
+      const totalEval    = result.rows.reduce((s, r) => s + (r.total_cartones    as number), 0);
+      const avgN         = result.rows.length > 0
+        ? result.rows.reduce((s, r) => s + Number(r.avg_optimal_n || 15), 0) / result.rows.length
+        : 15;
+      const baselineHit  = +((avgN / 100).toFixed(4));
+
       res.json({
         range,
-        baseline_random: 0.1,
+        baseline_random: baselineHit,  // hit@N baseline = N/100
+        total_evaluated: totalEval,
+        total_hits:      totalHits,
+        avg_accuracy:    totalEval > 0 ? +(totalHits / totalEval).toFixed(4) : 0,
         data: result.rows,
+        source: 'pair_recommendations',  // documentar la fuente real
       });
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error obteniendo accuracy');
