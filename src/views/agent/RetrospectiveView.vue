@@ -33,11 +33,68 @@
 
     <div v-if="error" class="error-box">⚠️ {{ error }}</div>
 
+    <!-- ── Snapshot Backfill Panel ─────────────────────────────── -->
+    <section class="section section--backfill">
+      <div class="backfill-header">
+        <div>
+          <h2 class="backfill-title">⚡ Backfill Histórico</h2>
+          <p class="backfill-sub">
+            Genera snapshots point-in-time desde <code>ingested_results</code> para todas las fechas sin cobertura.
+            Solo usa datos disponibles en cada fecha (sin data leakage).
+          </p>
+        </div>
+        <div class="backfill-actions">
+          <select v-model="backfillDays" class="ctl ctl--sm">
+            <option :value="90">90 días</option>
+            <option :value="180">180 días</option>
+            <option :value="365">365 días</option>
+            <option :value="730">2 años</option>
+          </select>
+          <button class="btn-backfill" :disabled="backfilling" @click="startBackfill">
+            {{ backfilling ? `⟳ ${backfillProgress.pct}% (${backfillProgress.date})` : '🚀 Generar snapshots' }}
+          </button>
+          <button class="btn-status" @click="loadBackfillStatus">📊 Estado</button>
+        </div>
+      </div>
+
+      <!-- Coverage status -->
+      <div v-if="backfillStatus" class="coverage-bar-wrap">
+        <div class="coverage-label">
+          Cobertura: <strong>{{ backfillStatus.coverage_pct }}%</strong>
+          ({{ backfillStatus.snapshots.total_dates }} fechas con snapshots /
+           {{ backfillStatus.ingested_results_total }} sorteos totales)
+        </div>
+        <div class="coverage-track">
+          <div
+            class="coverage-fill"
+            :style="{ width: backfillStatus.coverage_pct + '%' }"
+            :class="backfillStatus.coverage_pct >= 80 ? 'fill--ok' : backfillStatus.coverage_pct >= 40 ? 'fill--mid' : 'fill--low'"
+          ></div>
+        </div>
+        <div class="coverage-meta" v-if="backfillStatus.snapshots.total_dates > 0">
+          {{ backfillStatus.snapshots.earliest }} → {{ backfillStatus.snapshots.latest }}
+          · {{ backfillStatus.snapshots.algos?.length ?? 0 }} algoritmos cubiertos
+        </div>
+      </div>
+
+      <!-- Backfill progress -->
+      <div v-if="backfillResult" class="backfill-result" :class="backfillResult.error ? 'result--error' : 'result--ok'">
+        <template v-if="backfillResult.error">⚠️ {{ backfillResult.error }}</template>
+        <template v-else>
+          ✅ Completado — {{ backfillResult.dates_processed }} fechas procesadas,
+          {{ backfillResult.dates_skipped }} ya existían,
+          {{ backfillResult.total_snapshots }} snapshots generados
+          en {{ (backfillResult.duration_ms / 1000).toFixed(1) }}s.
+          <button class="btn-primary btn-sm" @click="loadAll" style="margin-left:1rem">🔄 Validar ahora</button>
+        </template>
+      </div>
+    </section>
+
     <!-- Validación retrospectiva -->
     <section v-if="metrics" class="section">
       <h2>📊 Performance del Consensus (snapshots reales)</h2>
       <div v-if="metrics.total_draws_evaluated === 0" class="empty">
-        Sin snapshots históricos disponibles para este período.
+        Sin snapshots históricos disponibles para este período. Ejecuta el backfill ↑
         <br/>
         <small>
           Los snapshots se acumulan automáticamente con cada predicción del agente.
@@ -254,6 +311,64 @@ const error     = ref('');
 const metrics   = ref(null);
 const patterns  = ref(null);
 
+// ── Snapshot Backfill ──────────────────────────────────────────
+const backfillDays     = ref(365);
+const backfilling      = ref(false);
+const backfillProgress = ref({ pct: 0, date: '' });
+const backfillResult   = ref(null);
+const backfillStatus   = ref(null);
+
+async function loadBackfillStatus() {
+  try {
+    backfillStatus.value = await apiGet(
+      `/api/agent/snapshot-backfill/status?game_type=${game_type.value}&draw_type=${draw_type.value}&half=${half.value}`
+    );
+  } catch { /* silent */ }
+}
+
+async function startBackfill() {
+  backfilling.value    = true;
+  backfillResult.value = null;
+  backfillProgress.value = { pct: 0, date: '' };
+
+  try {
+    const res = await fetch('/api/agent/snapshot-backfill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: JSON.stringify({
+        game_type: game_type.value,
+        draw_type: draw_type.value,
+        half:      half.value,
+        days_back: backfillDays.value,
+        period:    backfillDays.value,
+      }),
+    });
+
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder();
+    if (!reader) throw new Error('No SSE stream');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value);
+      for (const line of text.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const evt = JSON.parse(line.slice(5).trim());
+          if (evt.type === 'progress') backfillProgress.value = { pct: evt.pct, date: evt.date };
+          if (evt.type === 'complete') { backfillResult.value = evt; await loadBackfillStatus(); }
+          if (evt.type === 'error')    { backfillResult.value = { error: evt.message }; }
+        } catch { /* json parse error */ }
+      }
+    }
+  } catch (e) {
+    backfillResult.value = { error: e.message };
+  } finally {
+    backfilling.value = false;
+  }
+}
+
 async function loadAll() {
   loading.value = true;
   error.value   = '';
@@ -277,6 +392,7 @@ function formatDate(iso) {
 }
 
 loadAll();
+loadBackfillStatus();
 </script>
 
 <style scoped>
@@ -339,4 +455,35 @@ loadAll();
 .patterns-meta-header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
 .patterns-meta-header h2 { margin: 0; }
 .patterns-meta { font-size: 0.75rem; color: #475569; font-family: monospace; }
+
+/* ── Backfill Panel ─────────────────────────────────────────── */
+.section--backfill { border-color: #1d4ed844; background: #040d1a; }
+.backfill-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+.backfill-title { margin: 0 0 0.25rem; font-size: 1.05rem; color: #60a5fa; }
+.backfill-sub   { margin: 0; font-size: 0.78rem; color: #475569; }
+.backfill-sub code { background: #0f1623; padding: 0.1rem 0.3rem; border-radius: 4px; color: #94a3b8; }
+.backfill-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.ctl--sm { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+.btn-backfill {
+  background: #1d4ed8; color: #fff; border: none; border-radius: 8px;
+  padding: 0.5rem 1.25rem; font-size: 0.875rem; font-weight: 600; cursor: pointer;
+}
+.btn-backfill:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-backfill:hover:not(:disabled) { background: #2563eb; }
+.btn-status { background: #1e2d40; color: #94a3b8; border: 1px solid #2d4a6b; border-radius: 8px; padding: 0.4rem 0.75rem; font-size: 0.8rem; cursor: pointer; }
+.btn-status:hover { background: #2d4a6b; color: #e2e8f0; }
+.btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+
+.coverage-bar-wrap { margin-bottom: 0.75rem; }
+.coverage-label { font-size: 0.8rem; color: #94a3b8; margin-bottom: 0.4rem; }
+.coverage-track { height: 8px; background: #1e2d40; border-radius: 4px; overflow: hidden; margin-bottom: 0.25rem; }
+.coverage-fill  { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+.fill--ok  { background: linear-gradient(90deg, #16a34a, #22c55e); }
+.fill--mid { background: linear-gradient(90deg, #854d0e, #f59e0b); }
+.fill--low { background: linear-gradient(90deg, #7f1d1d, #ef4444); }
+.coverage-meta { font-size: 0.72rem; color: #475569; font-family: monospace; }
+
+.backfill-result { margin-top: 0.75rem; padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.82rem; }
+.result--ok    { background: #052e1620; color: #4ade80; border: 1px solid #16653444; }
+.result--error { background: #1a050520; color: #f87171; border: 1px solid #7f1d1d44; }
 </style>

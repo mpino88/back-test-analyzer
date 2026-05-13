@@ -2027,5 +2027,114 @@ ${ragSummary}`;
     }
   });
 
+  // ─── POST /api/agent/snapshot-backfill ──────────────────────────────────────
+  // Genera snapshots históricos point-in-time para RetrospectiveValidator y PPS.
+  // Usa hitdash.ingested_results como única fuente de verdad.
+  // ON CONFLICT DO NOTHING — nunca sobreescribe snapshots de producción.
+  // Acepta SSE (text/event-stream) para progreso en tiempo real.
+  //
+  // Body: { game_type, draw_type, half, days_back?, period? }
+  router.post('/snapshot-backfill', async (req: Request, res: Response) => {
+    const {
+      game_type  = 'pick3',
+      draw_type  = 'evening',
+      half       = (req.body?.game_type === 'pick4' ? 'ab' : 'du'),
+      days_back  = 365,
+      period     = 365,
+    } = req.body ?? {};
+
+    const validGames  = ['pick3', 'pick4'];
+    const validDraws  = ['midday', 'evening'];
+    const validHalves = ['du', 'ab', 'cd'];
+    if (!validGames.includes(game_type) || !validDraws.includes(draw_type) || !validHalves.includes(half)) {
+      res.status(400).json({ error: 'Parámetros inválidos' });
+      return;
+    }
+
+    const safeDaysBack = Math.min(Number(days_back), 730);   // máx 2 años
+    const safePeriod   = Math.min(Number(period),   730);
+
+    // ── SSE mode (si cliente acepta event-stream) ─────────────────────────────
+    const wantsSSE = req.headers['accept']?.includes('text/event-stream');
+    if (wantsSSE) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+    }
+
+    const sendEvent = (data: object) => {
+      if (wantsSSE) {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      }
+    };
+
+    try {
+      const { SnapshotBackfillService } = await import('../../agent/services/SnapshotBackfillService.js');
+      const svc = new SnapshotBackfillService(agentPool);
+
+      sendEvent({ type: 'start', game_type, draw_type, half, days_back: safeDaysBack });
+
+      const summary = await svc.backfillRange(
+        game_type, draw_type, half, safeDaysBack, safePeriod,
+        (done, total, date) => sendEvent({ type: 'progress', done, total, date, pct: +(done / total * 100).toFixed(1) })
+      );
+
+      sendEvent({ type: 'complete', ...summary });
+      if (wantsSSE) { res.write('data: {"type":"done"}\n\n'); res.end(); }
+      else res.json(summary);
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ error: msg }, 'snapshot-backfill error');
+      sendEvent({ type: 'error', message: msg });
+      if (wantsSSE) { res.end(); } else res.status(500).json({ error: msg });
+    }
+  });
+
+  // ─── GET /api/agent/snapshot-backfill/status ─────────────────────────────────
+  // Cuántos snapshots existen por fecha para este combo — diagnóstico rápido.
+  router.get('/snapshot-backfill/status', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query.game_type as string) || 'pick3';
+      const draw_type = (req.query.draw_type as string) || 'evening';
+      const half      = (req.query.half      as string) || 'du';
+
+      const { rows } = await agentPool.query<{
+        total_dates: number; total_snapshots: number;
+        earliest: string; latest: string; algos: string[];
+      }>(
+        `SELECT
+           COUNT(DISTINCT draw_date)::int     AS total_dates,
+           COUNT(*)::int                      AS total_snapshots,
+           MIN(draw_date)::text               AS earliest,
+           MAX(draw_date)::text               AS latest,
+           array_agg(DISTINCT algo_name ORDER BY algo_name) AS algos
+         FROM hitdash.algo_prediction_snapshot
+         WHERE game_type = $1 AND draw_type = $2 AND half = $3`,
+        [game_type, draw_type, half]
+      );
+
+      // Cuántos sorteos reales hay en ingested_results
+      const { rows: drawCount } = await agentPool.query<{ total: number }>(
+        `SELECT COUNT(DISTINCT draw_date)::int AS total
+         FROM hitdash.ingested_results
+         WHERE game_type = $1 AND draw_type = $2`,
+        [game_type, draw_type]
+      );
+
+      res.json({
+        game_type, draw_type, half,
+        snapshots: rows[0] ?? { total_dates: 0, total_snapshots: 0, earliest: null, latest: null, algos: [] },
+        ingested_results_total: drawCount[0]?.total ?? 0,
+        coverage_pct: rows[0] && drawCount[0]
+          ? +((rows[0].total_dates / (drawCount[0].total || 1)) * 100).toFixed(1)
+          : 0,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   return router;
 }
