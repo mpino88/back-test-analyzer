@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — AnalysisEngine v2.0.0  (MOTOR-Σ)
-// Orquestador de los 14 algoritmos con consensus ponderado por PPS.
+// HITDASH — AnalysisEngine v2.3.0  (MOTOR-Σ)
+// Orquestador de los 23 algoritmos con consensus ponderado por PPS.
 //
 // Cambios v2:
 //   • Pesos efectivos = base_weight × PPS(algo) / 100
@@ -39,6 +39,10 @@ import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
 import { TrendMomentum }         from './algorithms/TrendMomentum.js';
 // ─── Ballbot absorption (v5 — est_individuales) ─────────────────────────────
 import { EstIndividuales }       from './algorithms/EstIndividuales.js';
+// ─── Ballbot absorption (v6 — cycle/terminal/mirror) ─────────────────────────
+import { CycleDetector }         from './algorithms/CycleDetector.js';
+import { TerminalAnalysis }      from './algorithms/TerminalAnalysis.js';
+import { MirrorComplement }      from './algorithms/MirrorComplement.js';
 
 import type { GameType, DrawType }           from '../types/agent.types.js';
 import type { DynamicStrategy }             from '../services/StrategyLifecycleManager.js';
@@ -219,6 +223,10 @@ export class AnalysisEngine {
   // ─── Ballbot canonical (v4) ───────────────────────────────────
   private readonly trendMomentum:   TrendMomentum;
   private readonly estIndividuales: EstIndividuales;
+  // ─── Ballbot absorption (v6 — cycle/terminal/mirror) ─────────
+  private readonly cycleDetector:   CycleDetector;
+  private readonly terminalAnalysis: TerminalAnalysis;
+  private readonly mirrorComplement: MirrorComplement;
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
   private readonly ppsService:  PPSService;
 
@@ -253,6 +261,10 @@ export class AnalysisEngine {
     this.crossDraw     = new CrossDrawCorrelation(agentPool);
     this.trendMomentum    = new TrendMomentum(agentPool);
     this.estIndividuales  = new EstIndividuales(agentPool);
+    // ─── Ballbot absorption (v6) — cycle/terminal/mirror ─────────
+    this.cycleDetector    = new CycleDetector(agentPool);
+    this.terminalAnalysis = new TerminalAnalysis(agentPool);
+    this.mirrorComplement = new MirrorComplement(agentPool);
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
     this.ppsService = new PPSService(agentPool);
   }
@@ -557,6 +569,7 @@ export class AnalysisEngine {
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
            rPairReturn, rSumPattern, rDoubleTriple, rCrossDraw,
            rTrendMomentum, rEstIndividuales,
+           rCycleDetector, rTerminalAnalysis, rMirrorComplement,
     ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
       this.gap.runPairs(game_type, draw_type, half, period),
@@ -589,6 +602,10 @@ export class AnalysisEngine {
       this.trendMomentum.runPairs(game_type, draw_type, half, period),
       // ─── Ballbot absorption (v5) — hottest-due individual numbers ────────
       this.estIndividuales.runPairs(game_type, draw_type, half, 365),
+      // ─── Ballbot absorption (v6) — cycle/terminal/mirror ─────────────────
+      this.cycleDetector.runPairs(game_type, draw_type, half, period),
+      this.terminalAnalysis.runPairs(game_type, draw_type, half, period),
+      this.mirrorComplement.runPairs(game_type, draw_type, half, period),
     ]);
 
     const algorithms_succeeded: string[] = [];
@@ -706,6 +723,10 @@ export class AnalysisEngine {
       // ─── Ballbot canonical (v4) — misma fórmula que "Fuerza de Tendencia Pro" ──
       ['trend_momentum',     effectiveWeight('trend_momentum'),     rTrendMomentum],
       ['est_individuales',   effectiveWeight('est_individuales'),   rEstIndividuales],
+      // ─── Ballbot absorption (v6) — cycle/terminal/mirror ────────────────
+      ['cycle_detector',    effectiveWeight('cycle_detector'),    rCycleDetector],
+      ['terminal_analysis', effectiveWeight('terminal_analysis'), rTerminalAnalysis],
+      ['mirror_complement', effectiveWeight('mirror_complement'), rMirrorComplement],
     ];
 
     // Accumulate weighted scores per pair "00"-"99"

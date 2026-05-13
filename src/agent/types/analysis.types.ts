@@ -212,6 +212,10 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   decade_family:     0.75,  // familias 00-09...90-99 momentum — neutral frente a autocorr
   sum_pattern_filter:0.80,  // filtro suma de dígitos — eliminador de ruido — neutral
   double_triple:     0.65,  // detector de régimen — neutral (no asume autocorr)
+  // ─── Ballbot absorption v6 (cycle/terminal/mirror) ───────────────────────
+  cycle_detector:    0.25,  // ciclos inter-arrival: autocorr≈0 refuta supuesto principal; bajo peso inicial
+  terminal_analysis: 0.50,  // terminal (last digit) grouping: momentum válido, due factor tiene cap interno
+  mirror_complement: 0.55,  // probabilidad condicional empírica: P(mirror|source) — PPS aprenderá si hay señal
 };
 
 // ─── Score por dígito/posición ───────────────────────────────────
