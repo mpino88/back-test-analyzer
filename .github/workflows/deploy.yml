@@ -88,16 +88,40 @@ jobs:
             # ── PASO 4: Ejecutar migraciones SQL con imagen nueva ─────
             # Ejecuta el migrate.js ya compilado en Stage 2 del Dockerfile.
             # Migrate v2.0: auto-descubre archivos + verifica integridad post-run.
-            # Si el bloque JSON final tiene in_sync=false → exit 1 (deploy aborta).
+            #
+            # IMPORTANTE — patrón de captura SIN suprimir output:
+            #   `set +e` antes / `set -e` después para no abortar prematuramente.
+            #   tee a /tmp/migrate-output.log → stream live + archivo grep-able.
+            #   PIPESTATUS[0] captura exit code real del docker (no del tee).
             echo "🔄 Ejecutando migraciones de schema..."
-            MIGRATE_OUTPUT=$(docker compose run --rm \
+            set +e
+            docker compose run --rm \
               -e AGENT_DATABASE_URL="postgresql://hitdash:${{ secrets.POSTGRES_PASSWORD }}@hitdash-postgres:5432/hitdash" \
               hitdash-server \
-              node dist-server/agent/db/migrate.js 2>&1)
-            echo "$MIGRATE_OUTPUT"
+              node dist-server/agent/db/migrate.js 2>&1 | tee /tmp/migrate-output.log
+            MIGRATE_EXIT=${PIPESTATUS[0]}
+            set -e
+
+            if [ "$MIGRATE_EXIT" -ne 0 ]; then
+              echo ""
+              echo "════════════════════════════════════════════════════════════════"
+              echo "❌ MIGRACIÓN FALLÓ con exit code $MIGRATE_EXIT"
+              echo "════════════════════════════════════════════════════════════════"
+              echo "Últimas 100 líneas del log de migración:"
+              tail -100 /tmp/migrate-output.log || true
+              echo "════════════════════════════════════════════════════════════════"
+              echo "Estado actual de hitdash.schema_migrations en BD:"
+              docker compose exec -T hitdash-postgres psql -U hitdash -d hitdash -c \
+                "SELECT filename, applied_at FROM hitdash.schema_migrations ORDER BY filename;" 2>&1 | tail -30 || \
+                echo "(no se pudo conectar a BD para inspeccionar)"
+              echo "════════════════════════════════════════════════════════════════"
+              exit 1
+            fi
+
             # Verificación de integridad: el reporte JSON al final debe tener in_sync=true
-            if ! echo "$MIGRATE_OUTPUT" | grep -q '"in_sync":true'; then
+            if ! grep -q '"in_sync":true' /tmp/migrate-output.log; then
               echo "❌ Migraciones NO están en sync con filesystem. Abortando deploy."
+              tail -30 /tmp/migrate-output.log
               exit 1
             fi
             echo "✅ Migraciones completadas e in-sync verificado"
