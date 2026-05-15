@@ -333,6 +333,81 @@
           <span class="hs-badge hs-badge--ok">🟢 Todos sanos ({{ ppsData.health_summary.healthy_count }})</span>
         </div>
 
+        <!-- ── Genesis Bootstrap (v3.1) — Big Bang Cognitivo ──────────── -->
+        <div class="genesis-card">
+          <div class="genesis-header">
+            <div>
+              <div class="genesis-title">🌱 Genesis Bootstrap · Big Bang Cognitivo</div>
+              <div class="genesis-sub">
+                Detona PPS + CognitiveLearner + Champion sobre {{ genesisLookback }} días de historia.
+                Idempotente. Re-ejecutable.
+              </div>
+            </div>
+            <div class="genesis-controls">
+              <select v-model.number="genesisLookback" :disabled="genesisRunning" class="genesis-select">
+                <option :value="30">30 días</option>
+                <option :value="90">90 días</option>
+                <option :value="180">180 días</option>
+                <option :value="365">1 año</option>
+                <option :value="730">2 años</option>
+                <option :value="1825">5 años</option>
+              </select>
+              <button class="genesis-btn" :disabled="genesisRunning" @click="runGenesis">
+                {{ genesisRunning ? '⟳ Ejecutando...' : '🚀 Detonar' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Live progress per combo -->
+          <div v-if="genesisRunning || genesisProgress.length" class="genesis-progress">
+            <div v-for="(p, i) in genesisProgress" :key="i" class="gp-row"
+                 :class="`gp-row--${p.status}`">
+              <span class="gp-stage">S{{ p.stage }}</span>
+              <span class="gp-combo">{{ p.combo }}</span>
+              <span class="gp-name">{{ p.stage_name }}</span>
+              <span class="gp-details">{{ p.details ?? '' }}</span>
+              <span class="gp-status">
+                {{ p.status === 'done' ? '✅' : p.status === 'error' ? '❌' : p.status === 'running' ? '⟳' : '·' }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Final report -->
+          <div v-if="genesisReport" class="genesis-report">
+            <div class="gr-row">
+              <strong>{{ genesisReport.global_summary.total_snapshots }}</strong>
+              <span>snapshots</span>
+            </div>
+            <div class="gr-row">
+              <strong>{{ genesisReport.global_summary.total_ranks_replayed }}</strong>
+              <span>sorteos replay</span>
+            </div>
+            <div class="gr-row">
+              <strong>{{ genesisReport.global_summary.total_cognitive_runs }}</strong>
+              <span>combos optimizados</span>
+            </div>
+            <div class="gr-row" :class="genesisReport.global_summary.total_champions > 0 ? 'gr-row--win' : ''">
+              <strong>{{ genesisReport.global_summary.total_champions }}</strong>
+              <span>champions detectados</span>
+            </div>
+            <div class="gr-row">
+              <strong>{{ (genesisReport.total_duration_ms / 1000).toFixed(1) }}s</strong>
+              <span>duración total</span>
+            </div>
+          </div>
+
+          <!-- Champions discovered -->
+          <div v-if="genesisReport?.champions_detected?.length" class="genesis-champions">
+            <div class="gc-title">🏆 Champions identificados:</div>
+            <div v-for="(c, i) in genesisReport.champions_detected" :key="i" class="gc-row">
+              <span class="gc-combo">{{ c.combo }}</span>
+              <span class="gc-arrow">→</span>
+              <span class="gc-name">{{ c.champion }}</span>
+              <span class="gc-rate">@ {{ (c.rate * 100).toFixed(1) }}%</span>
+            </div>
+          </div>
+        </div>
+
         <!-- ── Bucket Analysis (v3.0) — verificación empírica del Sweet Spot ── -->
         <div v-if="bucketData" class="bucket-analysis-card">
           <div class="bucket-header">
@@ -706,6 +781,79 @@ async function fetchChampion() {
   } catch { /* non-critical, silent */ }
 }
 
+// ── Genesis Bootstrap (v3.1) — Big Bang Cognitivo ─────────────────
+const genesisLookback = ref(365);
+const genesisRunning  = ref(false);
+const genesisProgress = ref([]);
+const genesisReport   = ref(null);
+
+async function runGenesis() {
+  if (genesisRunning.value) return;
+  genesisRunning.value = true;
+  genesisProgress.value = [];
+  genesisReport.value = null;
+
+  try {
+    // SSE for live progress
+    const apiKey = import.meta.env.VITE_AGENT_API_KEY ?? '';
+    const url = `/api/agent/genesis-bootstrap?sse=true`;
+
+    // POST with SSE: we need fetch with streaming reader
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
+      body: JSON.stringify({ lookback_days: genesisLookback.value }),
+    });
+
+    if (!resp.ok || !resp.body) {
+      throw new Error(`Genesis HTTP ${resp.status}`);
+    }
+
+    const reader  = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE format: event:... \n data:{json}\n\n
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const lines = chunk.split('\n');
+        let eventName = 'message';
+        let data = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventName = line.slice(7).trim();
+          else if (line.startsWith('data: ')) data = line.slice(6);
+        }
+        if (!data) continue;
+        const parsed = JSON.parse(data);
+        if (eventName === 'progress') {
+          genesisProgress.value = [...genesisProgress.value, parsed].slice(-30);  // last 30 events
+        } else if (eventName === 'done') {
+          genesisReport.value = parsed;
+        } else if (eventName === 'error') {
+          console.error('Genesis error:', parsed);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Genesis failed:', e);
+    alert(`Genesis falló: ${e.message}`);
+  } finally {
+    genesisRunning.value = false;
+    // After genesis, refresh all dashboard panels
+    await refreshMotor();
+  }
+}
+
 // ── Bucket Analysis (v3.0) — verificación empírica del Sweet Spot ─
 const bucketData    = ref(null);
 const loadingBucket = ref(false);
@@ -1010,6 +1158,43 @@ onUnmounted(() => {
 .diag-raw pre     { background: #050810; padding: 0.75rem; border-radius: 6px; font-size: 0.65rem; color: #94a3b8; overflow-x: auto; max-height: 400px; margin-top: 0.5rem; }
 
 /* Diversity bar */
+/* Genesis Bootstrap card */
+.genesis-card { background: linear-gradient(135deg, #0a1428 0%, #050810 100%); border: 1px solid #1e3a5f; border-radius: 12px; padding: 1.1rem 1.25rem; margin-bottom: 1rem; box-shadow: 0 0 24px #1e3a5f22; }
+.genesis-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.genesis-title { color: #fbbf24; font-weight: 700; font-size: 0.95rem; }
+.genesis-sub   { color: #64748b; font-size: 0.75rem; margin-top: 0.25rem; max-width: 520px; }
+.genesis-controls { display: flex; gap: 0.5rem; align-items: center; }
+.genesis-select { background: #0a0d14; border: 1px solid #1e2d40; color: #f1f5f9; padding: 0.4rem 0.7rem; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
+.genesis-btn { background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); color: #0a0d14; border: none; padding: 0.5rem 1.1rem; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 0.85rem; }
+.genesis-btn:hover:not(:disabled) { background: linear-gradient(135deg, #fcd34d 0%, #fbbf24 100%); }
+.genesis-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.genesis-progress { max-height: 240px; overflow-y: auto; background: #050810; border: 1px solid #1e2d40; border-radius: 8px; padding: 0.5rem; margin-top: 0.6rem; }
+.gp-row { display: grid; grid-template-columns: 40px 1.5fr 1.4fr 2fr 30px; gap: 0.5rem; align-items: center; padding: 0.2rem 0.45rem; font-size: 0.72rem; font-family: monospace; border-radius: 4px; }
+.gp-row--starting { color: #64748b; }
+.gp-row--running  { background: #1a2744; color: #94a3b8; }
+.gp-row--done     { color: #4ade80; }
+.gp-row--error    { background: #1a0505; color: #f87171; }
+.gp-stage   { font-weight: 700; color: #fbbf24; }
+.gp-combo   { color: #60a5fa; }
+.gp-name    { color: #94a3b8; }
+.gp-details { color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-status  { text-align: center; }
+
+.genesis-report { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.6rem; margin-top: 0.8rem; padding: 0.7rem; background: #050810; border-radius: 8px; border: 1px solid #1e2d40; }
+.gr-row { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; font-size: 0.72rem; color: #64748b; }
+.gr-row strong { font-size: 1.3rem; font-weight: 700; color: #f1f5f9; }
+.gr-row--win   { color: #4ade80; }
+.gr-row--win strong { color: #4ade80; }
+
+.genesis-champions { margin-top: 0.7rem; padding: 0.6rem 0.8rem; background: #052e1622; border: 1px solid #16653488; border-radius: 8px; }
+.gc-title { color: #4ade80; font-weight: 700; font-size: 0.82rem; margin-bottom: 0.4rem; }
+.gc-row { display: flex; gap: 0.5rem; align-items: center; font-size: 0.78rem; padding: 0.2rem 0; }
+.gc-combo { color: #60a5fa; font-family: monospace; }
+.gc-arrow { color: #64748b; }
+.gc-name  { color: #4ade80; font-weight: 600; font-family: monospace; padding: 0.1rem 0.4rem; background: #052e1644; border-radius: 4px; }
+.gc-rate  { color: #fbbf24; font-weight: 700; }
+
 /* Bucket Analysis card */
 .bucket-analysis-card { background: #0a0d14; border: 1px solid #1e2d40; border-radius: 10px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
 .bucket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.7rem; }

@@ -1,5 +1,85 @@
-# HELIX — Arquitectura Completa v1.0
-> Auditoría Senior Level | back-test-analyser | 2026-05-13
+# HELIX — Arquitectura Completa v2.0
+> Auditoría Senior Level | back-test-analyser | 2026-05-15
+
+---
+
+## 🧠 HELIX vs AGENT — Cerebro vs Conciencia
+
+```
+                  ┌─────────────────────────────────────────┐
+                  │           HITDASH AGENT                 │
+                  │       (La Conciencia / The Will)        │
+                  │                                         │
+                  │   • Decide CUÁNDO pensar (AgentScheduler│
+                  │     cron, manual triggers, webhooks)    │
+                  │   • Decide QUÉ HACER con el output      │
+                  │     (Telegram, DB, cartones, alerts)    │
+                  │   • Meta-cognición (am I performing?)   │
+                  │   • Autonomía (HelixSentinel proactivo) │
+                  │   • Bootstrap (BootstrapLearning,       │
+                  │     GenesisBootstrap, AutoLearningLoop) │
+                  │                                         │
+                  │   USA Y CONSULTA ↓                      │
+                  └─────────────────┬───────────────────────┘
+                                    │
+                                    ▼
+                  ┌─────────────────────────────────────────┐
+                  │              HELIX                      │
+                  │       (El Cerebro / The Brain)          │
+                  │                                         │
+                  │   • AnalysisEngine: 20 algoritmos       │
+                  │   • PPSService: aprendizaje EMA live    │
+                  │   • CognitiveLearner: pesos óptimos     │
+                  │   • DiversityAnalyzer: redundancia      │
+                  │   • HealthMonitor: killswitch           │
+                  │   • Champion Mode: dominancia auto      │
+                  │   • MomentumBucketAnalyzer: empirismo   │
+                  │                                         │
+                  │   No actúa. Solo computa, ranquea,      │
+                  │   aprende y se auto-modula.             │
+                  └─────────────────────────────────────────┘
+```
+
+**La asociación:**
+- HELIX **no hace nada** sin que el Agent lo invoque. Es puramente analítico.
+- El Agent **no piensa** — orquesta tiempo, decide acciones, gestiona comunicación.
+- Es la separación clásica `policy ↔ mechanism`. HELIX es el mecanismo. El Agent es la política.
+
+**Bucle de aprendizaje completo (autónomo):**
+```
+1. Agent: AgentScheduler cron dispara → HitdashAgent.run()
+2. Agent ↓ pide a HELIX: AnalysisEngine.analyzePairs(combo)
+3. HELIX: 20 algos en paralelo → consensus ponderado → ranked_pairs
+4. HELIX: PPSService.persistSnapshot() — guarda evidencia para aprender después
+5. Agent: PairRecommender → genera ticket final → DB + Telegram
+                              ⋮
+                       [sorteo ocurre]
+                              ⋮
+6. Agent: IngestionWorker detecta sorteo → enqueue PostDrawProcessor
+7. PostDrawProcessor:
+   ├─ FASE A: marca pair_recommendations.hit
+   ├─ FASE B: PPSService.processPostDraw() → HELIX aprende rank de ganador
+   ├─ FASE E: DriftDetector → si cambió la distribución, recalibrar pesos
+   ├─ FASE G: AutoLearningLoop → genera hipótesis exploratorias
+   └─ FASE H: HelixSentinel → alertas proactivas Telegram
+8. Próximo ciclo: HELIX usa el nuevo PPS para ponderar mejor el consensus
+```
+
+**Genesis Bootstrap (v3.1) — el "Big Bang Cognitivo":**
+
+Permite saltarse las semanas de espera para acumular data nueva. Replica retroactivamente el ciclo de aprendizaje sobre los 39,764 sorteos ya en BD:
+
+```
+GENESIS = BACKFILL(snapshots) + REPLAY(PPS) + LEARN(cognitive) + DETECT(champion)
+            ↓                    ↓             ↓                 ↓
+         8 algos SQL          rank history   cognitive_weights  pps_state mature
+```
+
+Después de Genesis, el sistema arranca CON memoria operacional, NO desde cero.
+
+---
+
+
 
 ---
 

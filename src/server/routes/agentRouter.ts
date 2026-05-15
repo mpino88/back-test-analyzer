@@ -1675,6 +1675,65 @@ ${ragSummary}`;
   // ─── GET /api/agent/pps ─────────────────────────────────────────
   // MOTOR-Σ: Ranking de algoritmos por Predictive Power Score (PPS).
   // ?game_type=pick3&draw_type=evening&half=du
+  // ─── POST /api/agent/genesis-bootstrap ────────────────────────────
+  // 🌱 BIG BANG COGNITIVO — bootstrap completo desde historial existente.
+  //
+  // Detona en cadena:
+  //   1. SnapshotBackfillService (algo_prediction_snapshot)
+  //   2. PPSService.seedPPSFromReplay (algo_rank_history + pps_state)
+  //   3. CognitiveLearner.learnFromHistory (cognitive_algo_weights)
+  //   4. PPSService.detectChampion (Champion Mode immediate detection)
+  //
+  // SSE streaming: cada etapa emite progreso live para el dashboard.
+  // Idempotente: re-ejecutable sin daño (ON CONFLICT DO NOTHING en snapshots).
+  //
+  // Body params:
+  //   - lookback_days (default 365, max 1825 = 5 años)
+  //   - combos (opcional: array de {game_type, draw_type, half} — default todos)
+  router.post('/genesis-bootstrap', async (req: Request, res: Response) => {
+    const lookback_days = Math.min(1825, Math.max(7, parseInt(req.body?.lookback_days ?? '365', 10)));
+    const sse           = req.query['sse'] === 'true';
+
+    try {
+      const { GenesisBootstrap } = await import('../../agent/services/GenesisBootstrap.js');
+      const genesis = new GenesisBootstrap(agentPool);
+
+      if (sse) {
+        // ── SSE streaming ───────────────────────────────────────────
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders();
+
+        const send = (event: string, data: unknown) => {
+          res.write(`event: ${event}\n`);
+          res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+
+        send('start', { lookback_days, started_at: new Date().toISOString() });
+
+        try {
+          const report = await genesis.run(lookback_days, undefined, (progress) => {
+            send('progress', progress);
+          });
+          send('done', report);
+        } catch (err) {
+          send('error', { message: err instanceof Error ? err.message : String(err) });
+        } finally {
+          res.end();
+        }
+        return;
+      }
+
+      // ── Modo síncrono (sin SSE) ──────────────────────────────────
+      const report = await genesis.run(lookback_days);
+      res.json(report);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Genesis Bootstrap error');
+      res.status(500).json({ error: 'Error en Genesis Bootstrap', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // ─── GET /api/agent/momentum-bucket-analysis ─────────────────────
   // Walk-forward backtest del top-15 de Fuerza de Tendencia Pro por bucket
   // de count_recent (0, 1, 2, 3+). Verifica empíricamente la hipótesis del
