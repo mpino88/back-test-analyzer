@@ -333,6 +333,29 @@
           <span class="hs-badge hs-badge--ok">🟢 Todos sanos ({{ ppsData.health_summary.healthy_count }})</span>
         </div>
 
+        <!-- ── Champion Mode (v2.5) — algoritmo dominante reciente ── -->
+        <div v-if="championData" class="champion-bar"
+             :class="championData.active ? 'champion-bar--active' : 'champion-bar--idle'">
+          <span class="champion-icon">{{ championData.active ? '🏆' : '⚖️' }}</span>
+          <span class="champion-label">Champion Mode:</span>
+          <template v-if="championData.active && championData.champion">
+            <span class="champion-name">{{ championData.champion.algo_name }}</span>
+            <span class="champion-rate">
+              {{ (championData.champion.rate * 100).toFixed(1) }}% hit rate
+              <small>({{ championData.champion.hits }}/{{ championData.champion.total }})</small>
+            </span>
+            <span class="champion-edge">+{{ (championData.champion.edge * 100).toFixed(1) }}pp edge</span>
+            <span class="champion-status">🟢 DOMINANDO consenso (60%)</span>
+          </template>
+          <template v-else>
+            <span class="champion-status">Ningún algoritmo ≥ {{ (championData.threshold_rate * 100) }}% (consenso normal)</span>
+            <span v-if="championData.ranking?.[0]" class="champion-best">
+              Mejor: {{ championData.ranking[0].algo }} @ {{ (championData.ranking[0].rate * 100).toFixed(1) }}%
+              ({{ championData.ranking[0].hits }}/{{ championData.ranking[0].total }})
+            </span>
+          </template>
+        </div>
+
         <!-- Diversity Report -->
         <div v-if="diversityData" class="diversity-bar">
           <span class="div-label">🧩 Diversidad consensus:</span>
@@ -610,8 +633,19 @@ async function fetchDiversity() {
   } catch { /* non-critical, silent */ }
 }
 
+// ── Champion Mode (v2.5) — algoritmo dominante reciente ─────────
+const championData = ref(null);
+
+async function fetchChampion() {
+  try {
+    championData.value = await apiGet(
+      `/api/agent/champion-status?game_type=${ppsGame.value}&draw_type=${ppsDraw.value}&half=${ppsHalf.value}`
+    );
+  } catch { /* non-critical, silent */ }
+}
+
 async function refreshMotor() {
-  await Promise.all([fetchPPS(), fetchDiversity()]);
+  await Promise.all([fetchPPS(), fetchDiversity(), fetchChampion()]);
 }
 
 // Override pps-controls refresh button to also refresh diversity
@@ -880,6 +914,20 @@ onUnmounted(() => {
 .diag-raw pre     { background: #050810; padding: 0.75rem; border-radius: 6px; font-size: 0.65rem; color: #94a3b8; overflow-x: auto; max-height: 400px; margin-top: 0.5rem; }
 
 /* Diversity bar */
+/* Champion Mode bar */
+.champion-bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding: 0.7rem 1rem; border-radius: 10px; margin-bottom: 0.75rem; font-size: 0.85rem; border: 1px solid; }
+.champion-bar--active { background: linear-gradient(135deg, #0f2a1a 0%, #0a1410 100%); border-color: #4ade8088; box-shadow: 0 0 18px #4ade8022; }
+.champion-bar--idle   { background: #0a0d14; border-color: #1e2d40; opacity: 0.85; }
+.champion-icon  { font-size: 1.3rem; }
+.champion-label { color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; }
+.champion-name  { color: #4ade80; font-weight: 700; font-family: monospace; padding: 0.15rem 0.5rem; background: #052e1644; border-radius: 5px; }
+.champion-rate  { color: #f1f5f9; font-weight: 600; }
+.champion-rate small { color: #64748b; font-weight: 400; }
+.champion-edge  { color: #fbbf24; font-weight: 700; padding: 0.15rem 0.45rem; background: #1c110044; border-radius: 4px; font-size: 0.78rem; }
+.champion-status{ color: #94a3b8; font-style: italic; font-size: 0.78rem; }
+.champion-bar--active .champion-status { color: #4ade80; font-style: normal; font-weight: 600; }
+.champion-best  { color: #64748b; font-size: 0.75rem; }
+
 .diversity-bar { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.5rem 0.75rem; border-radius: 8px; background: #0a0d14; border: 1px solid #1e2d40; margin-bottom: 1rem; font-size: 0.78rem; }
 .div-label  { color: #64748b; font-weight: 600; flex-shrink: 0; }
 .div-score  { font-size: 1.05rem; font-weight: 700; }

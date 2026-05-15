@@ -334,6 +334,13 @@ export interface PairAnalysis {
   algorithms_succeeded: string[];
   algorithms_failed:    Array<{ name: string; error: string }>;
   total_execution_ms:   number;
+  // ── Champion Mode (v2.5) — algoritmo dominante si superó 2× baseline ──
+  champion?:            {
+    algo_name: string;
+    hit_rate:  number;     // [0,1] últimos 30 sorteos
+    edge:      number;     // hit_rate - 0.15 (baseline)
+    samples:   number;     // sorteos evaluados en la ventana
+  } | null;
 }
 
 // ─── Algoritmos Ballbot Clonados (agentic v2) ───────────────────

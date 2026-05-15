@@ -87,13 +87,20 @@ jobs:
 
             # ── PASO 4: Ejecutar migraciones SQL con imagen nueva ─────
             # Ejecuta el migrate.js ya compilado en Stage 2 del Dockerfile.
-            # Las migraciones son idempotentes (IF NOT EXISTS / ON CONFLICT DO NOTHING).
+            # Migrate v2.0: auto-descubre archivos + verifica integridad post-run.
+            # Si el bloque JSON final tiene in_sync=false → exit 1 (deploy aborta).
             echo "🔄 Ejecutando migraciones de schema..."
-            docker compose run --rm \
+            MIGRATE_OUTPUT=$(docker compose run --rm \
               -e AGENT_DATABASE_URL="postgresql://hitdash:${{ secrets.POSTGRES_PASSWORD }}@hitdash-postgres:5432/hitdash" \
               hitdash-server \
-              node dist-server/agent/db/migrate.js
-            echo "✅ Migraciones completadas"
+              node dist-server/agent/db/migrate.js 2>&1)
+            echo "$MIGRATE_OUTPUT"
+            # Verificación de integridad: el reporte JSON al final debe tener in_sync=true
+            if ! echo "$MIGRATE_OUTPUT" | grep -q '"in_sync":true'; then
+              echo "❌ Migraciones NO están en sync con filesystem. Abortando deploy."
+              exit 1
+            fi
+            echo "✅ Migraciones completadas e in-sync verificado"
 
             # ── PASO 5: Desplegar el servidor (zero-downtime) ─────────
             # Hitdash expone el puerto 3005 del host (→ 3001 interno).
@@ -113,8 +120,9 @@ jobs:
             # ── PASO 6.5: Genesis Backtest — poblar Accuracy + Rendimiento ─
             # Fire-and-forget: el job corre async en el server, no bloqueamos el pipeline.
             # Garantiza que los gráficos muestren datos reales en el primer login.
+            # NOTA v2.4: fibonacci_pisano REMOVIDO (sin base empírica, eliminado del motor).
             echo "📊 Disparando Genesis Backtest (pick3 + pick4, 90 días)..."
-            ALL_STRATS='["frequency_rank","momentum_ema","gap_overdue_focus","hot_cold_weighted","streak_reversal","fibonacci_pisano","pair_correlation","position_bias","moving_avg_signal","consensus_top","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","apex_adaptive"]'
+            ALL_STRATS='["frequency_rank","momentum_ema","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","consensus_top","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","apex_adaptive"]'
             curl -sf -X POST "http://localhost:3005/api/backtest-control/run" \
               -H "Content-Type: application/json" \
               -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \

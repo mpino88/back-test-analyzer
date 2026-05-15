@@ -1675,6 +1675,40 @@ ${ragSummary}`;
   // ─── GET /api/agent/pps ─────────────────────────────────────────
   // MOTOR-Σ: Ranking de algoritmos por Predictive Power Score (PPS).
   // ?game_type=pick3&draw_type=evening&half=du
+  // ─── GET /api/agent/champion-status ──────────────────────────────
+  // Champion Mode (v2.5): retorna el algoritmo dominante por combo si existe.
+  // Si rate >= 0.30 AND samples >= 20 → algo es champion (60% del consenso).
+  router.get('/champion-status', async (req: Request, res: Response) => {
+    const game_type = (req.query['game_type'] as string) ?? 'pick3';
+    const draw_type = (req.query['draw_type'] as string) ?? 'evening';
+    const half      = (req.query['half']      as string) ?? (game_type === 'pick3' ? 'du' : 'ab');
+    const window    = parseInt((req.query['window'] as string) ?? '30', 10);
+
+    try {
+      const champion  = await ppsService.detectChampion(game_type, draw_type, half, window);
+      const allRates  = await ppsService.computeRecentHitRates(game_type, draw_type, half, window, 15);
+
+      // Top 5 candidates by rate (champions OR contenders)
+      const ranking = Array.from(allRates.entries())
+        .map(([algo, m]) => ({ algo, hits: m.hits, total: m.total, rate: +m.rate.toFixed(4) }))
+        .sort((a, b) => b.rate - a.rate)
+        .slice(0, 8);
+
+      res.json({
+        game_type, draw_type, half, window,
+        baseline: 0.15,
+        threshold_rate: 0.30,
+        threshold_samples: 20,
+        champion,
+        active: champion !== null,
+        ranking,
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Champion status error');
+      res.status(500).json({ error: 'Error obteniendo estado de Champion Mode' });
+    }
+  });
+
   router.get('/pps', async (req: Request, res: Response) => {
     const game_type = (req.query['game_type'] as string) ?? 'pick3';
     const draw_type = (req.query['draw_type'] as string) ?? 'evening';

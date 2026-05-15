@@ -800,6 +800,51 @@ export class AnalysisEngine {
       logger.debug({ error: String(err) }, 'Diversity penalty: skip (non-fatal)');
     }
 
+    // ─── PASO 2.5: CHAMPION MODE (v2.5 — 2026-05-14) ─────────────────────
+    // Si un algoritmo demostró hit_rate ≥ 2× baseline en últimos 30 sorteos,
+    // su peso se eleva al 60% del peso total → DOMINA el consenso.
+    //
+    // Por qué: el consenso democrático con muchos algoritmos sin edge DILUYE
+    // la señal de los pocos que sí predicen bien. El usuario reportó que
+    // "Fuerza de Tendencia Pro" standalone (30% hits @ N=15) supera al
+    // consenso de HELIX. Champion Mode resuelve ese problema empíricamente.
+    //
+    // Criterio: rate ≥ 0.30, total ≥ 20 sorteos, único campeón (el de mayor rate).
+    // Reversible automáticamente cuando el rate vuelve a bajar.
+    let champion: { algo_name: string; rate: number; edge: number; total: number; hits: number } | null = null;
+    try {
+      champion = await this.ppsService.detectChampion(game_type, draw_type, half, 30);
+      if (champion && normalizedPerAlgo.has(champion.algo_name)) {
+        // Recalcular: peso total de los NO-champions
+        let otherTotal = 0;
+        for (const [name, entry] of normalizedPerAlgo) {
+          if (name !== champion.algo_name) {
+            const divisor = diversityDivisors.get(name) ?? 1;
+            otherTotal += entry.weight / divisor;
+          }
+        }
+        // Champion se lleva 60% → peso = otherTotal × (0.60 / 0.40) = ×1.5
+        const champEntry = normalizedPerAlgo.get(champion.algo_name)!;
+        champEntry.weight = otherTotal * 1.5;
+        // Ignorar divisor de diversity para el champion (su señal pesa solo)
+        diversityDivisors.delete(champion.algo_name);
+
+        logger.warn(
+          {
+            champion: champion.algo_name,
+            hit_rate: champion.rate,
+            edge: champion.edge,
+            samples: champion.total,
+            mode: 'CHAMPION_DOMINANT',
+            game_type, draw_type, half,
+          },
+          `🏆 Champion Mode ACTIVADO — ${champion.algo_name} domina consenso (${(champion.rate * 100).toFixed(1)}% hit rate)`
+        );
+      }
+    } catch (err) {
+      logger.debug({ error: String(err) }, 'Champion detection: skip (non-fatal)');
+    }
+
     // ─── PASO 3: Acumular con penalty efectivo ────────────────────────────
     for (const [name, { weight, normalized }] of normalizedPerAlgo) {
       const divisor = diversityDivisors.get(name) ?? 1;
@@ -1034,6 +1079,12 @@ export class AnalysisEngine {
       algorithms_succeeded,
       algorithms_failed,
       total_execution_ms: totalMs,
+      champion: champion ? {
+        algo_name: champion.algo_name,
+        hit_rate:  champion.rate,
+        edge:      champion.edge,
+        samples:   champion.total,
+      } : null,
     };
   }
 }

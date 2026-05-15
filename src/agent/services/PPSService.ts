@@ -538,6 +538,120 @@ export class PPSService {
   }
 
   // ════════════════════════════════════════════════════════════
+  // CHAMPION MODE: hit_rate reciente por algoritmo (ventana corta)
+  //
+  // Por qué existe: PPS usa toda la historia (α=0.15 sobre miles de samples)
+  // → cambios de régimen recientes tardan en reflejarse.
+  // Este método mira solo los últimos N sorteos para detectar algos
+  // que están performando *AHORA* mejor que su promedio histórico.
+  //
+  // Devuelve: Map<algo_name, { hits, total, rate }>
+  // - hits  = sorteos donde rank_of_winner ≤ 15
+  // - total = sorteos evaluados en la ventana
+  // - rate  = hits / total
+  //
+  // El algoritmo con rate ≥ 2× baseline (0.30) y total ≥ 20
+  // se considera "champion" y domina el consenso.
+  // ════════════════════════════════════════════════════════════
+  async computeRecentHitRates(
+    game_type:   string,
+    draw_type:   string,
+    half:        string,
+    windowDraws: number = 30,
+    topNCutoff:  number = 15
+  ): Promise<Map<string, { hits: number; total: number; rate: number }>> {
+    const map = new Map<string, { hits: number; total: number; rate: number }>();
+
+    try {
+      // Tomar últimos N sorteos por algoritmo y contar cuántas veces rank ≤ topNCutoff
+      const { rows } = await this.pool.query<{
+        algo_name: string;
+        hits:      number;
+        total:     number;
+      }>(
+        `WITH recent AS (
+           SELECT algo_name, rank_of_winner,
+                  ROW_NUMBER() OVER (PARTITION BY algo_name ORDER BY draw_date DESC) AS rn
+           FROM hitdash.algo_rank_history
+           WHERE game_type = $1 AND draw_type = $2 AND half = $3
+         )
+         SELECT algo_name,
+                COUNT(*) FILTER (WHERE rank_of_winner <= $5)::int AS hits,
+                COUNT(*)::int AS total
+         FROM recent
+         WHERE rn <= $4
+         GROUP BY algo_name`,
+        [game_type, draw_type, half, windowDraws, topNCutoff]
+      );
+
+      for (const r of rows) {
+        const total = Number(r.total);
+        const hits  = Number(r.hits);
+        const rate  = total > 0 ? hits / total : 0;
+        map.set(r.algo_name, { hits, total, rate });
+      }
+    } catch (err) {
+      logger.debug(
+        { error: err instanceof Error ? err.message : String(err) },
+        'PPSService.computeRecentHitRates: tabla no disponible aún'
+      );
+    }
+
+    return map;
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // CHAMPION MODE: detectar algoritmo dominante (si existe)
+  //
+  // Criterios (todos deben cumplirse):
+  //   1. total ≥ 20 sorteos en la ventana (sample size mínimo)
+  //   2. rate ≥ 0.30 (2× baseline aleatorio @ N=15)
+  //   3. rate es el más alto entre todos los algoritmos
+  //
+  // Si nadie cumple → returns null (consenso normal opera)
+  // Si hay champion → el consenso le da ~60% del peso total
+  // ════════════════════════════════════════════════════════════
+  async detectChampion(
+    game_type:   string,
+    draw_type:   string,
+    half:        string,
+    windowDraws: number = 30
+  ): Promise<{ algo_name: string; hits: number; total: number; rate: number; edge: number } | null> {
+    const BASELINE       = 0.15;       // baseline aleatorio @ N=15
+    const CHAMPION_RATE  = 0.30;       // 2× baseline (1.5pp de edge mínimo)
+    const MIN_SAMPLES    = 20;         // sample size mínimo para evidencia
+
+    const hitRates = await this.computeRecentHitRates(game_type, draw_type, half, windowDraws, 15);
+    if (hitRates.size === 0) return null;
+
+    let bestAlgo: string | null = null;
+    let bestRate = 0;
+    let bestHits = 0;
+    let bestTotal = 0;
+
+    for (const [algo, m] of hitRates) {
+      if (m.total < MIN_SAMPLES) continue;
+      if (m.rate < CHAMPION_RATE) continue;
+      if (m.rate > bestRate) {
+        bestRate  = m.rate;
+        bestAlgo  = algo;
+        bestHits  = m.hits;
+        bestTotal = m.total;
+      }
+    }
+
+    if (!bestAlgo) return null;
+
+    return {
+      algo_name: bestAlgo,
+      hits:      bestHits,
+      total:     bestTotal,
+      rate:      +bestRate.toFixed(4),
+      edge:      +(bestRate - BASELINE).toFixed(4),
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════
   // DASHBOARD: Obtener ranking de algoritmos por PPS
   // ════════════════════════════════════════════════════════════
   async getPPSRanking(
