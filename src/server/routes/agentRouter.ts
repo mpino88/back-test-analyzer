@@ -1675,6 +1675,35 @@ ${ragSummary}`;
   // ─── GET /api/agent/pps ─────────────────────────────────────────
   // MOTOR-Σ: Ranking de algoritmos por Predictive Power Score (PPS).
   // ?game_type=pick3&draw_type=evening&half=du
+  // ─── GET /api/agent/regime-status ─────────────────────────────────
+  // RegimeMonitor: detecta cambios de régimen comparando hit_rate reciente
+  // (últimos 7d) vs global (últimos 30d). No actúa — solo reporta.
+  // Regímenes: stable, hot, cold, critical, insufficient_data
+  router.get('/regime-status', async (req: Request, res: Response) => {
+    const all = req.query['all'] === 'true';
+
+    try {
+      const { RegimeMonitor } = await import('../../agent/services/RegimeMonitor.js');
+      const monitor = new RegimeMonitor(agentPool);
+
+      if (all) {
+        const summary = await monitor.analyzeAll();
+        return res.json(summary);
+      }
+
+      const game_type = (req.query['game_type'] as string) ?? 'pick3';
+      const draw_type = (req.query['draw_type'] as string) ?? 'evening';
+      if (!['pick3', 'pick4'].includes(game_type) || !['midday', 'evening'].includes(draw_type)) {
+        return res.status(400).json({ error: 'invalid game_type or draw_type' });
+      }
+      const report = await monitor.analyze(game_type as 'pick3' | 'pick4', draw_type as 'midday' | 'evening');
+      res.json(report);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Regime monitor error');
+      res.status(500).json({ error: 'Error en RegimeMonitor' });
+    }
+  });
+
   // ─── POST /api/agent/genesis-bootstrap ────────────────────────────
   // 🌱 BIG BANG COGNITIVO — bootstrap completo desde historial existente.
   //

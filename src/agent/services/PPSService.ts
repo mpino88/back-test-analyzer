@@ -99,17 +99,25 @@ export class PPSService {
     game_type: string,
     draw_type: string,
     half:      string,
-    lookbackDraws: number = 60
+    lookbackDraws: number = 60,
+    force:     boolean = false   // ★ v2.5 (2026-05-15): bypass del guard maduro
   ): Promise<{ replayed: number; algos_updated: number }> {
-    // Verificar si ya hay sample_count alto — si sí, skip
-    const { rows: existing } = await this.pool.query<{ max_sc: number }>(
-      `SELECT COALESCE(MAX(sample_count), 0)::int AS max_sc FROM hitdash.pps_state
-       WHERE game_type=$1 AND draw_type=$2 AND half=$3`,
-      [game_type, draw_type, half]
-    ).catch(() => ({ rows: [{ max_sc: 0 }] }));
-    if ((existing[0]?.max_sc ?? 0) >= 10) {
-      logger.info({ game_type, draw_type, half }, 'PPSService.seedReplay: PPS ya maduro, skip');
-      return { replayed: 0, algos_updated: 0 };
+    // ── Guard de madurez (skip si PPS ya tiene historia) ──
+    // Por defecto NO re-replaya para no contaminar pps_state estable.
+    // GenesisBootstrap pasa force=true para forzar replay completo del
+    // periodo solicitado (populating algo_rank_history para Champion Mode).
+    if (!force) {
+      const { rows: existing } = await this.pool.query<{ max_sc: number }>(
+        `SELECT COALESCE(MAX(sample_count), 0)::int AS max_sc FROM hitdash.pps_state
+         WHERE game_type=$1 AND draw_type=$2 AND half=$3`,
+        [game_type, draw_type, half]
+      ).catch(() => ({ rows: [{ max_sc: 0 }] }));
+      if ((existing[0]?.max_sc ?? 0) >= 10) {
+        logger.info({ game_type, draw_type, half }, 'PPSService.seedReplay: PPS ya maduro, skip (use force=true para override)');
+        return { replayed: 0, algos_updated: 0 };
+      }
+    } else {
+      logger.warn({ game_type, draw_type, half }, '⚡ PPSService.seedReplay: FORCE mode — ignorando guard de madurez');
     }
 
     // Cargar snapshots históricos + resultados ganadores

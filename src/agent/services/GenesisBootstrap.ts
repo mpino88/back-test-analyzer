@@ -164,7 +164,10 @@ export class GenesisBootstrap {
         onProgress?.({ stage: 2, stage_name: 'PPS Replay', combo: comboLabel, status: 'starting' });
         // Calcular lookbackDraws desde lookbackDays (asumiendo 1 sorteo/día por turno)
         const lookbackDraws = lookbackDays;
-        const replay = await this.pps.seedPPSFromReplay(combo.game_type, combo.draw_type, combo.half, lookbackDraws);
+        // force=true: Genesis explícitamente quiere repoblar algo_rank_history
+        // aunque pps_state ya tenga sample_count alto. Sin esto, el guard
+        // bloquea Stage 2 y Champion Mode queda sin data reciente.
+        const replay = await this.pps.seedPPSFromReplay(combo.game_type, combo.draw_type, combo.half, lookbackDraws, true);
         report.ranks_replayed = replay.replayed;
         report.algos_updated  = replay.algos_updated;
         onProgress?.({ stage: 2, stage_name: 'PPS Replay', combo: comboLabel, status: 'done', details: `${replay.replayed} sorteos × ${replay.algos_updated} algos` });
