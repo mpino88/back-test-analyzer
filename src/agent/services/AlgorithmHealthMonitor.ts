@@ -54,22 +54,27 @@ export class AlgorithmHealthMonitor {
     const result = new Map<string, AlgoHealth>();
 
     try {
+      // FIX 2026-05-15: query anterior usaba LIMIT global sin particionar por algo_name.
+      // Con Genesis 5 años en BD (1825+ filas por algo), LIMIT 900 tomaba ~112 filas de
+      // los algos más recientes mezclados → distribución aleatoria, no ventana per-algo.
+      // FIX: CTE con ROW_NUMBER() PARTITION BY algo_name, igual que computeRecentHitRates().
       const { rows } = await this.pool.query<{
         algo_name: string;
         samples:   number;
         hits_at_15: number;
       }>(
-        `SELECT
-           algo_name,
-           COUNT(*)::int                                          AS samples,
-           SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS hits_at_15
-         FROM (
-           SELECT algo_name, rank_of_winner
+        `WITH recent AS (
+           SELECT algo_name, rank_of_winner,
+                  ROW_NUMBER() OVER (PARTITION BY algo_name ORDER BY draw_date DESC) AS rn
            FROM hitdash.algo_rank_history
            WHERE game_type = $1 AND draw_type = $2 AND half = $3
-           ORDER BY draw_date DESC
-           LIMIT $4 * 30  -- buffer para múltiples algos (~30 algos × window)
-         ) recent
+         )
+         SELECT
+           algo_name,
+           COUNT(*)::int                                               AS samples,
+           SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS hits_at_15
+         FROM recent
+         WHERE rn <= $4
          GROUP BY algo_name`,
         [game_type, draw_type, half, ROLLING_WINDOW]
       );

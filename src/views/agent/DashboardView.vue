@@ -493,6 +493,79 @@
           </template>
         </div>
 
+        <!-- ── RegimeMonitor (v1.0) — estado hot/cold/critical por combo ── -->
+        <div v-if="regimeData" class="regime-monitor-card">
+          <div class="regime-header">
+            <span class="regime-title">🌡️ Régimen del Sistema</span>
+            <span
+              class="regime-overall"
+              :class="`regime-overall--${regimeData.overall_regime}`"
+            >{{ regimeData.overall_regime.toUpperCase() }}</span>
+            <button class="bucket-refresh" :disabled="loadingRegime" @click="fetchRegime">
+              {{ loadingRegime ? '⟳' : '🔄' }}
+            </button>
+          </div>
+
+          <!-- Overall critical/cold alerts -->
+          <div v-if="regimeData.critical_combos?.length" class="regime-alert regime-alert--critical">
+            🚨 CRÍTICO: {{ regimeData.critical_combos.join(', ') }}
+          </div>
+          <div v-if="regimeData.cold_combos?.length" class="regime-alert regime-alert--cold">
+            ❄️ FRÍO: {{ regimeData.cold_combos.join(', ') }}
+          </div>
+          <div v-if="regimeData.hot_combos?.length" class="regime-alert regime-alert--hot">
+            🔥 CALIENTE: {{ regimeData.hot_combos.join(', ') }}
+          </div>
+
+          <!-- Per-combo table -->
+          <div class="regime-table">
+            <div class="regime-row regime-row--header">
+              <span>Combo</span>
+              <span>Régimen</span>
+              <span>Recent</span>
+              <span>Global</span>
+              <span>Ratio</span>
+              <span>Misses</span>
+              <span>Tendencia</span>
+            </div>
+            <div
+              v-for="r in regimeData.reports"
+              :key="`${r.game_type}-${r.draw_type}`"
+              class="regime-row"
+              :class="`regime-row--${r.regime}`"
+            >
+              <span class="regime-combo">{{ r.game_type }}/{{ r.draw_type }}</span>
+              <span class="regime-badge" :class="`regime-badge--${r.regime}`">
+                {{ r.regime === 'critical' ? '🚨' : r.regime === 'cold' ? '❄️' : r.regime === 'hot' ? '🔥' : r.regime === 'insufficient_data' ? '⏳' : '✅' }}
+                {{ r.regime }}
+              </span>
+              <span>{{ (r.recent_hit_rate * 100).toFixed(1) }}%</span>
+              <span>{{ (r.global_hit_rate * 100).toFixed(1) }}%</span>
+              <span :class="r.ratio < 0.7 ? 'text-red' : r.ratio > 1.3 ? 'text-green' : ''">
+                {{ r.ratio.toFixed(2) }}
+              </span>
+              <span :class="r.consecutive_misses >= 5 ? 'text-red' : r.consecutive_misses >= 3 ? 'text-orange' : ''">
+                {{ r.consecutive_misses }}
+              </span>
+              <span :class="r.trend === 'improving' ? 'text-green' : r.trend === 'declining' ? 'text-red' : ''">
+                {{ r.trend === 'improving' ? '↑' : r.trend === 'declining' ? '↓' : '→' }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Recommendations -->
+          <div v-if="showRegimeDetails" class="regime-recs">
+            <div v-for="r in regimeData.reports" :key="`rec-${r.game_type}-${r.draw_type}`"
+                 class="regime-rec-row">
+              <span class="regime-combo">{{ r.game_type }}/{{ r.draw_type }}</span>
+              <span class="regime-rec-text">{{ r.recommendation }}</span>
+            </div>
+          </div>
+          <button class="regime-details-btn" @click="showRegimeDetails = !showRegimeDetails">
+            {{ showRegimeDetails ? '▲ Ocultar detalles' : '▼ Ver recomendaciones' }}
+          </button>
+        </div>
+
         <!-- Diversity Report -->
         <div v-if="diversityData" class="diversity-bar">
           <span class="div-label">🧩 Diversidad consensus:</span>
@@ -854,6 +927,22 @@ async function runGenesis() {
   }
 }
 
+// ── RegimeMonitor (v1.0) — estado hot/cold/critical del sistema ─────
+const regimeData        = ref(null);
+const loadingRegime     = ref(false);
+const showRegimeDetails = ref(false);
+
+async function fetchRegime() {
+  loadingRegime.value = true;
+  try {
+    regimeData.value = await apiGet('/api/agent/regime-status?all=true');
+  } catch (e) {
+    console.warn('RegimeMonitor no disponible:', e.message);
+  } finally {
+    loadingRegime.value = false;
+  }
+}
+
 // ── Bucket Analysis (v3.0) — verificación empírica del Sweet Spot ─
 const bucketData    = ref(null);
 const loadingBucket = ref(false);
@@ -889,7 +978,7 @@ function bucketCellClass(bucket, baseline, bestRecCount) {
 }
 
 async function refreshMotor() {
-  await Promise.all([fetchPPS(), fetchDiversity(), fetchChampion(), loadBucketAnalysis()]);
+  await Promise.all([fetchPPS(), fetchDiversity(), fetchChampion(), loadBucketAnalysis(), fetchRegime()]);
 }
 
 // Override pps-controls refresh button to also refresh diversity
@@ -1251,8 +1340,68 @@ onUnmounted(() => {
 .div-cluster-tag { background: #1e2d40; color: #94a3b8; padding: 0.1rem 0.4rem; border-radius: 4px; font-size: 0.68rem; font-family: monospace; }
 .div-snap { color: #334155; font-size: 0.65rem; margin-left: auto; }
 
+/* ── RegimeMonitor ────────────────────────────────────────────── */
+.regime-monitor-card {
+  background: #0a0d14;
+  border: 1px solid #1e2d40;
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.75rem;
+}
+.regime-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+.regime-title  { font-size: 0.85rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; flex: 1; }
+.regime-overall {
+  font-size: 0.78rem; font-weight: 700; padding: 0.2rem 0.65rem;
+  border-radius: 999px; letter-spacing: 0.05em;
+}
+.regime-overall--stable           { background: #052e1622; color: #4ade80; border: 1px solid #16653444; }
+.regime-overall--hot               { background: #1c110022; color: #fbbf24; border: 1px solid #78350f44; }
+.regime-overall--cold              { background: #0e1a2e22; color: #60a5fa; border: 1px solid #1e3a5f44; }
+.regime-overall--critical          { background: #1a050522; color: #f87171; border: 1px solid #7f1d1d44; animation: pulse-red 2s infinite; }
+.regime-overall--insufficient_data { background: #1a1a2222; color: #64748b; border: 1px solid #2a354022; }
+
+@keyframes pulse-red { 0%, 100% { box-shadow: none; } 50% { box-shadow: 0 0 10px #f8717133; } }
+
+.regime-alert { padding: 0.4rem 0.75rem; border-radius: 7px; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.4rem; }
+.regime-alert--critical { background: #1a050522; color: #f87171; border: 1px solid #7f1d1d44; }
+.regime-alert--cold     { background: #0e1a2e22; color: #93c5fd; border: 1px solid #1e3a5f44; }
+.regime-alert--hot      { background: #1c110022; color: #fcd34d; border: 1px solid #78350f44; }
+
+.regime-table { width: 100%; margin-top: 0.5rem; }
+.regime-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.6fr 70px 70px 60px 55px 60px;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  align-items: center;
+}
+.regime-row--header { color: #475569; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; border-bottom: 1px solid #1e2d40; margin-bottom: 0.3rem; padding-bottom: 0.3rem; }
+.regime-row--critical { background: #1a050511; }
+.regime-row--cold     { background: #0e1a2e11; }
+.regime-row--hot      { background: #1c110011; }
+.regime-combo { font-family: monospace; color: #94a3b8; font-size: 0.75rem; }
+.regime-badge { font-size: 0.72rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 5px; white-space: nowrap; }
+.regime-badge--stable           { color: #4ade80; background: #052e1622; }
+.regime-badge--hot               { color: #fbbf24; background: #1c110022; }
+.regime-badge--cold              { color: #93c5fd; background: #0e1a2e22; }
+.regime-badge--critical          { color: #f87171; background: #1a050522; }
+.regime-badge--insufficient_data { color: #64748b; background: #1e2d4022; }
+
+.regime-recs { margin-top: 0.6rem; border-top: 1px solid #1e2d40; padding-top: 0.5rem; }
+.regime-rec-row { display: flex; gap: 0.6rem; padding: 0.3rem 0; border-bottom: 1px solid #0f1623; font-size: 0.75rem; align-items: flex-start; }
+.regime-rec-text { color: #64748b; line-height: 1.4; }
+.regime-details-btn { margin-top: 0.5rem; background: none; border: 1px solid #1e2d40; color: #475569; font-size: 0.72rem; padding: 0.2rem 0.6rem; border-radius: 5px; cursor: pointer; }
+.regime-details-btn:hover { border-color: #334155; color: #64748b; }
+
+.text-orange { color: #fb923c; }
+
 @media (max-width: 768px) {
   .cards-grid { grid-template-columns: 1fr 1fr; }
   .pps-row { grid-template-columns: 1fr 1.5fr 60px 30px; font-size: 0.72rem; }
+  .regime-row { grid-template-columns: 1fr 1fr 60px 55px; }
+  .regime-row > span:nth-child(4),
+  .regime-row > span:nth-child(5) { display: none; }
 }
 </style>

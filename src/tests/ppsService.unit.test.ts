@@ -41,6 +41,11 @@ function rankFromScores(pair_scores: Record<string, number>, winning_pair: strin
 }
 
 // Mini computeOptimalN() — pure math, no DB
+// PATCH 2026-05-15: fix tie-break N=1 bug.
+// When all effective_ranks > MAX_N, hit_rate(N)=0 for all N∈[1,10] and roi=-1 for all.
+// Old: N=1 won the tie (first to beat -Infinity), never displaced (no -1 > -1).
+// New: on roi tie, prefer larger hit_rate; on hit_rate tie with hit_rate=0, prefer larger N.
+//      → bestN advances to MAX_N_NO_EDGE (10) instead of staying at 1.
 function computeOptimalN(effectiveRanks: number[]): {
   optimal_n: number; hit_rate: number; expected_roi: number; is_profitable: boolean;
 } {
@@ -68,7 +73,12 @@ function computeOptimalN(effectiveRanks: number[]): {
     if (!profitable && roi >= TARGET_ROI) {
       bestN = N; bestRoi = roi; bestHitRate = hitRate; profitable = true; break;
     }
-    if (N <= MAX_N_NO_EDGE && roi > bestRoi) {
+    // PATCH 2026-05-15: tie-break — on roi tie prefer larger hit_rate, then larger N
+    if (N <= MAX_N_NO_EDGE && (
+      roi > bestRoi ||
+      (roi === bestRoi && hitRate > bestHitRate) ||
+      (roi === bestRoi && hitRate === bestHitRate && hitRate === 0)
+    )) {
       bestRoi = roi; bestN = N; bestHitRate = hitRate;
     }
   }
@@ -311,5 +321,49 @@ describe('PPSService — end-to-end scenario simulations', () => {
     expect(resetHigh).toBeCloseTo(71, 0);
     // Low PPS → raised toward 50
     expect(resetLow).toBeCloseTo(29, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// REGRESSION: N=1 tie-break bug (2026-05-15)
+// ═══════════════════════════════════════════════════════════════
+
+describe('computeOptimalN() — REGRESSION: N=1 tie-break bug', () => {
+  it('REGRESSION: all ranks > MAX_N should return MAX_N_NO_EDGE (10), NOT 1', () => {
+    // BUG: When all effective_ranks > 15, hit_rate(N)=0 for all N∈[1,10].
+    // roi=-1 for all N. Old code: N=1 won tie by beating -Infinity first.
+    // New code: tie-breaking advances bestN to MAX_N_NO_EDGE=10.
+    const ranks = Array.from({ length: 30 }, () => 50); // all outside top-15
+    const result = computeOptimalN(ranks);
+    expect(result.is_profitable).toBe(false);
+    expect(result.optimal_n).toBe(MAX_N_NO_EDGE); // ← was 1 before fix
+    expect(result.hit_rate).toBe(0);
+  });
+
+  it('REGRESSION: ranks between 16-30 (outside top-15 but existing) → MAX_N_NO_EDGE', () => {
+    const ranks = Array.from({ length: 30 }, () => 20); // rank 20, outside top-15
+    const result = computeOptimalN(ranks);
+    expect(result.is_profitable).toBe(false);
+    expect(result.optimal_n).toBe(MAX_N_NO_EDGE);
+  });
+
+  it('REGRESSION: after Genesis 5-year replay with high ranks → no N=1 trap', () => {
+    // Simulates the Genesis scenario: 30 draws, winners ranked 25-40 in consensus.
+    // Before fix: N=1 was returned. After fix: MAX_N_NO_EDGE (10).
+    const ranks = Array.from({ length: 30 }, (_, i) => 25 + (i % 16)); // 25..40
+    const result = computeOptimalN(ranks);
+    expect(result.optimal_n).not.toBe(1);           // ← was the failing behavior
+    expect(result.optimal_n).toBe(MAX_N_NO_EDGE);   // ← expected correct behavior
+    expect(result.is_profitable).toBe(false);
+  });
+
+  it('real signal (some ranks ≤ 10) correctly returns profitable N < MAX_N_NO_EDGE', () => {
+    // 40% of draws have winner at rank ≤ 5. At N=5: roi = 0.4 * 50/5 - 1 = 3.0 → profitable
+    const goodRanks  = Array.from({ length: 12 }, () => 3);  // 12 hits
+    const missRanks  = Array.from({ length: 18 }, () => 50); // 18 misses
+    const mixed = [...goodRanks, ...missRanks];
+    const result = computeOptimalN(mixed);
+    expect(result.is_profitable).toBe(true);
+    expect(result.optimal_n).toBeLessThan(MAX_N_NO_EDGE);
   });
 });

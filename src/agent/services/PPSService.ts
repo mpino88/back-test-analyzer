@@ -502,10 +502,16 @@ export class PPSService {
         }
 
         // PATCH 2026-05-12: cuando no hay borde, NO expandir N indefinidamente.
-        // Antes: el "best ROI fallback" elegía N alto porque hit_rate↑ con N↑.
-        // Ahora: limitamos el fallback a N ≤ MAX_N_NO_EDGE (10).
-        // Filosofía: sin borde estadístico, mejor menos pares que más cobertura ciega.
-        if (N <= MAX_N_NO_EDGE && roi > bestRoi) {
+        // PATCH 2026-05-15: fix tie-break N=1. Cuando hit_rate=0 para todo N∈[1,10]
+        //   roi=-1 para todos. Antes: N=1 ganaba por ser el primero en superar -Infinity
+        //   y nunca era desplazado (los siguientes ROI=-1 no son > -1).
+        //   Ahora: en empate de ROI, mayor hit_rate gana; si igual hit_rate, mayor N gana.
+        //   Esto hace que bestN avance hasta MAX_N_NO_EDGE cuando no hay señal real.
+        if (N <= MAX_N_NO_EDGE && (
+          roi > bestRoi ||
+          (roi === bestRoi && hitRate > bestHitRate) ||
+          (roi === bestRoi && hitRate === bestHitRate && hitRate === 0)
+        )) {
           bestRoi     = roi;
           bestN       = N;
           bestHitRate = hitRate;
