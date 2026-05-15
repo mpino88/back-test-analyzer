@@ -207,7 +207,8 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
 
   // ─── Algoritmos multi-señal o neutros (sin supuesto de memoria directo) ──
   bayesian_score:    1.10,  // multi-señal 6 componentes — peso máximo (combina evidencias)
-  trend_momentum:    1.05,  // "Fuerza de Tendencia Pro" — fórmula Ballbot comprobada
+  trend_momentum:    1.10,  // v3 endurecido (momentum≥3x) — bot's "↑↑↑ alza fuerte"
+  trend_momentum_sweet: 1.20, // v3 sweet spot (count_recent==1) — hipótesis empírica del usuario
   decade_family:     0.75,  // familias 00-09...90-99 momentum — neutral frente a autocorr
   sum_pattern_filter:0.80,  // filtro suma de dígitos — eliminador de ruido — neutral
   double_triple:     0.65,  // detector de régimen — neutral (no asume autocorr)

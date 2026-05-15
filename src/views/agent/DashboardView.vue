@@ -333,6 +333,68 @@
           <span class="hs-badge hs-badge--ok">🟢 Todos sanos ({{ ppsData.health_summary.healthy_count }})</span>
         </div>
 
+        <!-- ── Bucket Analysis (v3.0) — verificación empírica del Sweet Spot ── -->
+        <div v-if="bucketData" class="bucket-analysis-card">
+          <div class="bucket-header">
+            <span class="bucket-title">🎯 Bucket Analysis · "Fuerza de Tendencia Pro"</span>
+            <button class="bucket-refresh" :disabled="loadingBucket" @click="loadBucketAnalysis">
+              {{ loadingBucket ? '⟳' : '🔄' }}
+            </button>
+          </div>
+
+          <div v-if="bucketData.total_evaluated === 0" class="bucket-empty">
+            Sin datos suficientes (necesita ≥ 30 sorteos en {{ ppsGame.toUpperCase() }} {{ ppsDraw }})
+          </div>
+
+          <template v-else>
+            <div class="bucket-meta">
+              <span><strong>{{ bucketData.total_evaluated }}</strong> sorteos evaluados (walk-forward)</span>
+              <span>baseline aleatorio: {{ (bucketData.baseline_random * 100).toFixed(0) }}%</span>
+              <span>top-15 global hit_rate: <strong>{{ (bucketData.overall.top15_hit_rate * 100).toFixed(1) }}%</strong></span>
+            </div>
+
+            <div class="bucket-grid">
+              <div
+                v-for="b in bucketData.buckets"
+                :key="b.rec_count"
+                class="bucket-cell"
+                :class="bucketCellClass(b, bucketData.baseline_random, bucketData.best_bucket?.rec_count)"
+              >
+                <div class="bucket-cell-label">
+                  Bucket {{ b.rec_count }}
+                  <span v-if="b.rec_count === 1" class="bucket-cell-tag">🍯 sweet</span>
+                  <span v-else-if="b.rec_count === 0" class="bucket-cell-tag">🌫 sin recientes</span>
+                  <span v-else-if="b.rec_count === 3" class="bucket-cell-tag">🔥 ya caliente</span>
+                </div>
+                <div class="bucket-cell-rate">{{ (b.hit_rate * 100).toFixed(1) }}%</div>
+                <div class="bucket-cell-sub">
+                  {{ b.hits }}/{{ b.evaluations }}
+                  · avg {{ b.candidates_avg }} candidatos/sorteo
+                </div>
+              </div>
+            </div>
+
+            <div v-if="bucketData.best_bucket" class="bucket-verdict">
+              <strong>🏆 Mejor bucket:</strong>
+              count_recent = <strong>{{ bucketData.best_bucket.rec_count }}</strong>
+              · hit_rate <strong>{{ (bucketData.best_bucket.hit_rate * 100).toFixed(1) }}%</strong>
+              · edge +{{ (bucketData.best_bucket.edge_over_baseline * 100).toFixed(1) }}pp vs random
+            </div>
+
+            <div class="threshold-comparison">
+              <span class="tc-label">Threshold comparativo:</span>
+              <span class="tc-pill" :class="thresholdWinner === 'ge_1' ? 'tc-pill--winner' : ''">
+                momentum ≥ 1.0: {{ (bucketData.threshold_comparison.momentum_ge_1.hit_rate * 100).toFixed(1) }}%
+                ({{ bucketData.threshold_comparison.momentum_ge_1.candidates_avg }} avg)
+              </span>
+              <span class="tc-pill" :class="thresholdWinner === 'ge_3' ? 'tc-pill--winner' : ''">
+                momentum ≥ 3.0: {{ (bucketData.threshold_comparison.momentum_ge_3.hit_rate * 100).toFixed(1) }}%
+                ({{ bucketData.threshold_comparison.momentum_ge_3.candidates_avg }} avg)
+              </span>
+            </div>
+          </template>
+        </div>
+
         <!-- ── Champion Mode (v2.5) — algoritmo dominante reciente ── -->
         <div v-if="championData" class="champion-bar"
              :class="championData.active ? 'champion-bar--active' : 'champion-bar--idle'">
@@ -644,8 +706,42 @@ async function fetchChampion() {
   } catch { /* non-critical, silent */ }
 }
 
+// ── Bucket Analysis (v3.0) — verificación empírica del Sweet Spot ─
+const bucketData    = ref(null);
+const loadingBucket = ref(false);
+
+async function loadBucketAnalysis() {
+  loadingBucket.value = true;
+  try {
+    bucketData.value = await apiGet(
+      `/api/agent/momentum-bucket-analysis?game_type=${ppsGame.value}&draw_type=${ppsDraw.value}&half=${ppsHalf.value}&lookback=200`
+    );
+  } catch (e) {
+    // Silent — bucket analysis es secundario
+    console.warn('Bucket analysis no disponible:', e.message);
+  } finally {
+    loadingBucket.value = false;
+  }
+}
+
+// Threshold winner: compara momentum>=1 vs momentum>=3
+const thresholdWinner = computed(() => {
+  if (!bucketData.value) return null;
+  const tc = bucketData.value.threshold_comparison;
+  if (!tc) return null;
+  return tc.momentum_ge_3.hit_rate >= tc.momentum_ge_1.hit_rate ? 'ge_3' : 'ge_1';
+});
+
+function bucketCellClass(bucket, baseline, bestRecCount) {
+  const classes = [];
+  if (bucket.rec_count === bestRecCount) classes.push('bucket-cell--best');
+  if (bucket.hit_rate > baseline)        classes.push('bucket-cell--positive');
+  if (bucket.hit_rate < baseline * 0.7)  classes.push('bucket-cell--negative');
+  return classes.join(' ');
+}
+
 async function refreshMotor() {
-  await Promise.all([fetchPPS(), fetchDiversity(), fetchChampion()]);
+  await Promise.all([fetchPPS(), fetchDiversity(), fetchChampion(), loadBucketAnalysis()]);
 }
 
 // Override pps-controls refresh button to also refresh diversity
@@ -914,6 +1010,37 @@ onUnmounted(() => {
 .diag-raw pre     { background: #050810; padding: 0.75rem; border-radius: 6px; font-size: 0.65rem; color: #94a3b8; overflow-x: auto; max-height: 400px; margin-top: 0.5rem; }
 
 /* Diversity bar */
+/* Bucket Analysis card */
+.bucket-analysis-card { background: #0a0d14; border: 1px solid #1e2d40; border-radius: 10px; padding: 1rem 1.1rem; margin-bottom: 1rem; }
+.bucket-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.7rem; }
+.bucket-title  { color: #f1f5f9; font-weight: 700; font-size: 0.92rem; }
+.bucket-refresh{ background: transparent; border: 1px solid #1e2d40; color: #94a3b8; padding: 0.25rem 0.55rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+.bucket-refresh:hover:not(:disabled) { background: #1e2d40; color: #f1f5f9; }
+.bucket-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.bucket-meta { display: flex; gap: 1.2rem; flex-wrap: wrap; padding: 0.4rem 0 0.7rem; font-size: 0.78rem; color: #64748b; border-bottom: 1px solid #1e2d40; margin-bottom: 0.7rem; }
+.bucket-meta strong { color: #f1f5f9; }
+
+.bucket-empty { color: #64748b; font-style: italic; padding: 0.6rem 0; font-size: 0.82rem; }
+
+.bucket-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.6rem; margin-bottom: 0.8rem; }
+.bucket-cell { background: #050810; border: 1px solid #1e2d40; border-radius: 8px; padding: 0.65rem 0.7rem; }
+.bucket-cell--best     { border-color: #4ade8088; background: #052e1622; box-shadow: 0 0 12px #4ade8033; }
+.bucket-cell--positive .bucket-cell-rate { color: #4ade80; }
+.bucket-cell--negative .bucket-cell-rate { color: #f87171; }
+.bucket-cell-label  { font-size: 0.72rem; color: #94a3b8; font-weight: 600; margin-bottom: 0.3rem; display: flex; align-items: center; justify-content: space-between; gap: 0.3rem; }
+.bucket-cell-tag    { font-size: 0.65rem; color: #fbbf24; font-weight: 400; }
+.bucket-cell-rate   { font-size: 1.35rem; font-weight: 700; color: #f1f5f9; }
+.bucket-cell-sub    { font-size: 0.68rem; color: #64748b; margin-top: 0.15rem; line-height: 1.3; }
+
+.bucket-verdict { background: #052e1622; border: 1px solid #16653488; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.6rem; font-size: 0.82rem; color: #94a3b8; }
+.bucket-verdict strong { color: #4ade80; }
+
+.threshold-comparison { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.75rem; }
+.tc-label  { color: #64748b; font-weight: 600; }
+.tc-pill   { background: #050810; border: 1px solid #1e2d40; padding: 0.25rem 0.55rem; border-radius: 5px; color: #94a3b8; font-family: monospace; }
+.tc-pill--winner { background: #052e1622; border-color: #4ade8088; color: #4ade80; font-weight: 600; }
+
 /* Champion Mode bar */
 .champion-bar { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; padding: 0.7rem 1rem; border-radius: 10px; margin-bottom: 0.75rem; font-size: 0.85rem; border: 1px solid; }
 .champion-bar--active { background: linear-gradient(135deg, #0f2a1a 0%, #0a1410 100%); border-color: #4ade8088; box-shadow: 0 0 18px #4ade8022; }

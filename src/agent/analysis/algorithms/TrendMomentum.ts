@@ -1,13 +1,23 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — TrendMomentum v2.0.0
+// HITDASH — TrendMomentum v3.0.0 (2026-05-14 — bot's strict filter)
 //
 // Fórmula exacta de Ballbot "Fuerza de Tendencia Pro":
 //
 //   momentum(pair) = freq_recent(30 draws) / freq_historical(all)
 //
-//   Criterios candidatos:
-//     countAll >= 3  (mínimo histórico para señal válida)
-//     momentum >= 1.0 (en alza o estable respecto a la media)
+// CAMBIO CRÍTICO v3 (matching bot's "↑↑↑ alza fuerte" filter):
+//   ANTES: MOMENTUM_THRESHOLD = 1.0  (cualquier alza) — DEMASIADO PERMISIVO
+//   AHORA: MOMENTUM_THRESHOLD = 3.0  (alza FUERTE — bot's classification)
+//
+//   Razonamiento empírico:
+//   - El bot reporta sólo pares con momentum ≥ 3x como candidatos serios
+//   - Pares con momentum 1.0-3.0 son ruido (variación natural)
+//   - Bajar el umbral metía 50-70 pares espurios al consenso → dilución
+//
+// Criterios candidatos (v3):
+//   countAll     >= 3   (mínimo histórico para señal válida)
+//   countRecent  >= 1   (al menos un hit reciente — no inventos)
+//   momentum     >= 3.0 (alza fuerte ≥3x — bot's "↑↑↑")
 //
 // Extracción de pares — idéntica a Ballbot:
 //   pick3 du: p2*10 + p3  (decena + unidad)
@@ -15,13 +25,10 @@
 //   pick4 cd: p3*10 + p4
 //
 // Ventana: SOLO el draw_type objetivo (como Ballbot validDateKeys(map, period))
-//   pick3 evening → 6,565 sorteos de noche / últimos 30 de noche
-//   pick3 midday  → 6,565 sorteos de día   / últimos 30 de día
-//   Mezclar mid+eve inflaba freq_recent y distorsionaba momentum.
 //
 // Score para el consensus:
-//   Normalizado al rango [0,1] via min-max sobre momentum scores.
-//   momentum=0 → 0.0  |  top momentum → 1.0
+//   Normalizado [0,1] via min-max sobre momentum scores entre VÁLIDOS.
+//   Pares fuera del filtro → 0.01 (señal mínima, no cero para evitar division-by-zero downstream)
 // ═══════════════════════════════════════════════════════════════
 
 import type { Pool } from 'pg';
@@ -32,9 +39,10 @@ import type { AnalysisPeriod, PairHalf } from '../../types/analysis.types.js';
 
 const logger = pino({ name: 'TrendMomentum' });
 
-const RECENT_WINDOW = 30;   // ventana reciente — igual que Ballbot
-const MIN_COUNT_ALL = 3;    // mínimo histórico para señal válida
-const MOMENTUM_THRESHOLD = 1.0; // solo pares en alza o estables
+const RECENT_WINDOW       = 30;   // ventana reciente — igual que Ballbot
+const MIN_COUNT_ALL       = 3;    // mínimo histórico para señal válida
+const MIN_COUNT_RECENT    = 1;    // mínimo 1 hit reciente (no inventos en vacío)
+const MOMENTUM_THRESHOLD  = 3.0;  // v3: alza FUERTE (bot's "↑↑↑") — antes era 1.0 (demasiado laxo)
 
 export interface MomentumStat {
   pair:         string;
@@ -149,17 +157,34 @@ export class TrendMomentum {
       const { stats } = await this.computeStats(game_type, draw_type, half);
       if (!stats.length) return flat();
 
-      // Filtrar: mínimo histórico + en alza
-      const valid = stats.filter(s => s.count_all >= MIN_COUNT_ALL && s.momentum >= MOMENTUM_THRESHOLD);
+      // Filtrar (v3 — bot's strict "↑↑↑ alza fuerte"):
+      //   mínimo histórico + al menos 1 hit reciente + momentum ≥ 3x
+      const valid = stats.filter(s =>
+        s.count_all    >= MIN_COUNT_ALL    &&
+        s.count_recent >= MIN_COUNT_RECENT &&
+        s.momentum     >= MOMENTUM_THRESHOLD
+      );
 
-      if (!valid.length) return flat();
+      // ─── FALLBACK: si el filtro estricto deja vacío, relajar a momentum ≥ 1.5
+      // para no dejar al consenso completamente ciego en regímenes secos.
+      // Solo se activa cuando NO hay ninguna alza fuerte detectable.
+      let validForScoring = valid;
+      if (!valid.length) {
+        validForScoring = stats.filter(s =>
+          s.count_all    >= MIN_COUNT_ALL    &&
+          s.count_recent >= MIN_COUNT_RECENT &&
+          s.momentum     >= 1.5
+        );
+        if (!validForScoring.length) return flat();
+      }
 
       // Normalizar scores [0,1] por max momentum entre candidatos válidos
-      const maxM = Math.max(...valid.map(s => s.momentum), 1e-9);
+      const maxM = Math.max(...validForScoring.map(s => s.momentum), 1e-9);
+      const validSet = new Set(validForScoring.map(s => s.pair));
       const scores: Record<string, number> = {};
 
       for (const s of stats) {
-        if (s.count_all >= MIN_COUNT_ALL && s.momentum >= MOMENTUM_THRESHOLD) {
+        if (validSet.has(s.pair)) {
           scores[s.pair] = s.momentum / maxM;
         } else {
           scores[s.pair] = 0.01; // no candidato — señal mínima

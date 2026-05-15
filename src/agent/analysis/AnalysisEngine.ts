@@ -38,7 +38,8 @@ import { SumPatternFilter }      from './algorithms/SumPatternFilter.js';
 import { DoubleTripleDetector }  from './algorithms/DoubleTripleDetector.js';
 import { CrossDrawCorrelation }  from './algorithms/CrossDrawCorrelation.js';
 // ─── Ballbot canonical strategy (v4) ────────────────────────────────────────
-import { TrendMomentum }         from './algorithms/TrendMomentum.js';
+import { TrendMomentum }            from './algorithms/TrendMomentum.js';
+import { TrendMomentumSweetSpot }   from './algorithms/TrendMomentumSweetSpot.js';
 // ─── Ballbot absorption (v5 — est_individuales) ─────────────────────────────
 import { EstIndividuales }       from './algorithms/EstIndividuales.js';
 // ─── Ballbot absorption (v6 — solo terminal_analysis conservado) ─────────────
@@ -95,7 +96,9 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   double_triple:       'double_triple_detector',
   cross_draw:          'cross_draw_correlation',
   // Ballbot canonical (v4) — fórmula exacta trend_momentum
-  trend_momentum:      'trend_momentum',
+  trend_momentum:        'trend_momentum',
+  // Ballbot Sweet Spot (v5 — 2026-05-14) — bracket dorado empírico
+  trend_momentum_sweet:  'trend_momentum_sweet',
 };
 
 // Default top_n si la estrategia aún no tiene historial adaptativo
@@ -123,6 +126,8 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   cross_draw_correlation:  18,
   // Ballbot canonical (v4)
   trend_momentum:          15,
+  // Sweet Spot (v5) — bracket dorado
+  trend_momentum_sweet:    15,
 };
 
 // ─── Cognitive N — auto-determines optimal pair count from precision metrics ──
@@ -219,8 +224,9 @@ export class AnalysisEngine {
   private readonly dblTriple:    DoubleTripleDetector;
   private readonly crossDraw:    CrossDrawCorrelation;
   // ─── Ballbot canonical (v4) ───────────────────────────────────
-  private readonly trendMomentum:   TrendMomentum;
-  private readonly estIndividuales: EstIndividuales;
+  private readonly trendMomentum:        TrendMomentum;
+  private readonly trendMomentumSweet:   TrendMomentumSweetSpot;
+  private readonly estIndividuales:      EstIndividuales;
   // ─── Ballbot absorption (v6 — terminal only) ─────────────────
   private readonly terminalAnalysis: TerminalAnalysis;
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
@@ -254,8 +260,9 @@ export class AnalysisEngine {
     this.sumPattern    = new SumPatternFilter(agentPool);
     this.dblTriple     = new DoubleTripleDetector(agentPool);
     this.crossDraw     = new CrossDrawCorrelation(agentPool);
-    this.trendMomentum    = new TrendMomentum(agentPool);
-    this.estIndividuales  = new EstIndividuales(agentPool);
+    this.trendMomentum      = new TrendMomentum(agentPool);
+    this.trendMomentumSweet = new TrendMomentumSweetSpot(agentPool);
+    this.estIndividuales    = new EstIndividuales(agentPool);
     // ─── Ballbot absorption (v6 — terminal solo) ─────────────────
     this.terminalAnalysis = new TerminalAnalysis(agentPool);
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
@@ -544,7 +551,7 @@ export class AnalysisEngine {
            rFreqShort, rHCShort,
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
            rPairReturn, rSumPattern, rDoubleTriple, rCrossDraw,
-           rTrendMomentum, rEstIndividuales,
+           rTrendMomentum, rTrendMomentumSweet, rEstIndividuales,
            rTerminalAnalysis,
     ] = await Promise.allSettled([
       this.freq.runPairs(game_type, draw_type, half, period),
@@ -575,6 +582,8 @@ export class AnalysisEngine {
       this.crossDraw.runPairs(game_type, draw_type, half, period),
       // ─── Ballbot canonical (v4) ──────────────────────────────────────────
       this.trendMomentum.runPairs(game_type, draw_type, half, period),
+      // ─── Ballbot Sweet Spot (v5 — 2026-05-14): empirical "bracket dorado" ─
+      this.trendMomentumSweet.runPairs(game_type, draw_type, half, period),
       // ─── Ballbot absorption (v5) — hottest-due individual numbers ────────
       this.estIndividuales.runPairs(game_type, draw_type, half, 365),
       // ─── Ballbot absorption (v6 — terminal solo) ─────────────────────────
@@ -693,8 +702,10 @@ export class AnalysisEngine {
       ['double_triple',      effectiveWeight('double_triple'),      rDoubleTriple],
       ['cross_draw',         effectiveWeight('cross_draw'),         rCrossDraw],
       // ─── Ballbot canonical (v4) — misma fórmula que "Fuerza de Tendencia Pro" ──
-      ['trend_momentum',     effectiveWeight('trend_momentum'),     rTrendMomentum],
-      ['est_individuales',   effectiveWeight('est_individuales'),   rEstIndividuales],
+      ['trend_momentum',       effectiveWeight('trend_momentum'),       rTrendMomentum],
+      // ─── Sweet Spot (v5) — solo bucket count_recent=1 (hipótesis empírica) ──
+      ['trend_momentum_sweet', effectiveWeight('trend_momentum_sweet'), rTrendMomentumSweet],
+      ['est_individuales',     effectiveWeight('est_individuales'),     rEstIndividuales],
       // ─── Ballbot absorption (v6 — terminal solo) ─────────────────────────
       // Eliminados (v2.4): fibonacci_pisano, cycle_detector, mirror_complement
       ['terminal_analysis', effectiveWeight('terminal_analysis'), rTerminalAnalysis],

@@ -1675,6 +1675,61 @@ ${ragSummary}`;
   // ─── GET /api/agent/pps ─────────────────────────────────────────
   // MOTOR-Σ: Ranking de algoritmos por Predictive Power Score (PPS).
   // ?game_type=pick3&draw_type=evening&half=du
+  // ─── GET /api/agent/momentum-bucket-analysis ─────────────────────
+  // Walk-forward backtest del top-15 de Fuerza de Tendencia Pro por bucket
+  // de count_recent (0, 1, 2, 3+). Verifica empíricamente la hipótesis del
+  // usuario: "Rec% = 3.3% (count_recent=1, momentum≥3x) es el bucket más
+  // predictivo del top-15".
+  //
+  // Query params:
+  //   - game_type (default pick3)
+  //   - draw_type (default evening) | 'combined' analiza por separado
+  //                                    midday y evening y devuelve ambos
+  //   - half      (default du para pick3, ab para pick4)
+  //   - lookback  (default 200, max 500) — número de sorteos a evaluar
+  router.get('/momentum-bucket-analysis', async (req: Request, res: Response) => {
+    const game_type = (req.query['game_type'] as string) ?? 'pick3';
+    const draw_type = (req.query['draw_type'] as string) ?? 'evening';
+    const half      = (req.query['half']      as string) ?? (game_type === 'pick3' ? 'du' : 'ab');
+    const lookback  = Math.min(500, Math.max(20, parseInt((req.query['lookback'] as string) ?? '200', 10)));
+
+    const validGames = ['pick3', 'pick4'];
+    const validDraws = ['midday', 'evening', 'combined'];
+    if (!validGames.includes(game_type) || !validDraws.includes(draw_type)) {
+      return res.status(400).json({ error: 'invalid game_type or draw_type' });
+    }
+
+    try {
+      const { MomentumBucketAnalyzer } = await import('../../agent/services/MomentumBucketAnalyzer.js');
+      const analyzer = new MomentumBucketAnalyzer(agentPool);
+
+      if (draw_type === 'combined') {
+        // Analizar midday y evening por separado para comparar
+        const [midday, evening] = await Promise.all([
+          analyzer.analyze(game_type as 'pick3' | 'pick4', 'midday',  half as 'du' | 'ab' | 'cd', lookback),
+          analyzer.analyze(game_type as 'pick3' | 'pick4', 'evening', half as 'du' | 'ab' | 'cd', lookback),
+        ]);
+        return res.json({
+          mode: 'combined_comparison',
+          midday, evening,
+          // Determinar cuál turno es más predictivo
+          best_turn: midday.overall.top15_hit_rate >= evening.overall.top15_hit_rate ? 'midday' : 'evening',
+        });
+      }
+
+      const report = await analyzer.analyze(
+        game_type as 'pick3' | 'pick4',
+        draw_type as 'midday' | 'evening',
+        half      as 'du' | 'ab' | 'cd',
+        lookback
+      );
+      res.json(report);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'Error en bucket analysis');
+      res.status(500).json({ error: 'Error ejecutando bucket analysis' });
+    }
+  });
+
   // ─── GET /api/agent/champion-status ──────────────────────────────
   // Champion Mode (v2.5): retorna el algoritmo dominante por combo si existe.
   // Si rate >= 0.30 AND samples >= 20 → algo es champion (60% del consenso).
