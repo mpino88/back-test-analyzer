@@ -209,7 +209,12 @@ export class AgentScheduler {
         // ── Re-aprendizaje cognitivo semanal ──────────────────────────
         if ((job.data as any).trigger === 'weekly_relearn') {
           logger.info('AgentScheduler: re-aprendizaje cognitivo semanal iniciado');
-          for (const combo of RELEARN_COMBOS) {
+          for (let ci = 0; ci < RELEARN_COMBOS.length; ci++) {
+            const combo = RELEARN_COMBOS[ci]!;
+            // ═══ STALL-FIX: extender lock de BullMQ antes de cada combo largo
+            // Sin esto: lockDuration=30s caduca durante el walk-forward (5-10 min total)
+            // y BullMQ marca el job como "stalled" y lo reintenta en loop.
+            await job.updateProgress(Math.round((ci / RELEARN_COMBOS.length) * 50));
             try {
               const report = await cognitiveLearner.learnFromHistory(
                 combo.game_type, combo.draw_type, combo.half
@@ -225,12 +230,16 @@ export class AgentScheduler {
           }
           // ── Auto-backtest semanal — actualizar backtest_results_v2 ──
           // Corre DESPUÉS del KRONOS: pesos cognitivos ya listos.
-          for (const btCombo of [
+          const btCombos = [
             { game_type: 'pick3' as const, mode: 'midday'  as const },
             { game_type: 'pick3' as const, mode: 'evening' as const },
             { game_type: 'pick4' as const, mode: 'midday'  as const },
             { game_type: 'pick4' as const, mode: 'evening' as const },
-          ]) {
+          ];
+          for (let bi = 0; bi < btCombos.length; bi++) {
+            const btCombo = btCombos[bi]!;
+            // Extender lock: progreso 50-100% durante la fase de backtest
+            await job.updateProgress(50 + Math.round((bi / btCombos.length) * 50));
             try {
               await backtestEngine.runAll(btCombo.mode, btCombo.game_type);
               logger.info(btCombo, 'HELIX Auto-Backtest semanal: completado');
@@ -286,7 +295,12 @@ export class AgentScheduler {
       },
       {
         connection: redisConnection(),
-        concurrency: 1, // Un análisis a la vez para no saturar la DB
+        concurrency: 1,           // Un análisis a la vez para no saturar la DB
+        // ═══ STALL-FIX: el CognitiveLearner + Auto-Backtest pueden tardar 5-15 min.
+        // lockDuration default = 30s → BullMQ marca el job como "stalled" y reintenta.
+        // Con 600s el lock dura hasta que job.updateProgress() lo renueva explícitamente.
+        lockDuration: 600_000,    // 10 minutos — cubre el ciclo semanal completo
+        stalledInterval: 60_000,  // verificar stall cada 60s (no cada 30s)
       }
     );
 

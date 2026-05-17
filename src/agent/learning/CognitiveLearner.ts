@@ -40,14 +40,16 @@ const RANK_MISS   = 101;
 const MIN_TRAIN   = 30;    // mínimo de sorteos históricos para entrenar
 const HOLDOUT_PCT = 0.20;  // 20% más reciente para validación
 
-// Algoritmos que tienen runPairs() — los 20 del motor
+// Algoritmos que tienen runPairs() — sincronizado con AnalysisEngine v2.4
+// (fibonacci_pisano eliminado 2026-05-13; trend_momentum_sweet/est_individuales/terminal_analysis añadidos)
 const ALGO_NAMES = [
   'frequency', 'gap_analysis', 'hot_cold', 'pairs_correlation',
-  'fibonacci_pisano', 'streak', 'position', 'moving_averages',
+  'streak', 'position', 'moving_averages',
   'bayesian_score', 'transition_follow', 'markov_order2',
   'calendar_pattern', 'decade_family', 'max_per_week_day',
   'pair_return_cycle', 'sum_pattern_filter', 'double_triple',
-  'cross_draw', 'trend_momentum',
+  'cross_draw', 'trend_momentum', 'trend_momentum_sweet',
+  'est_individuales', 'terminal_analysis',
 ];
 
 export interface LearningReport {
@@ -443,19 +445,37 @@ export class CognitiveLearner {
       ranks['sum_pattern_filter'] = rankOf(scored);
     }
 
-    // ── 8–19. Algoritmos restantes — usar frecuencia con variantes ─
+    // ── 8. trend_momentum_sweet — bracket dorado: count_recent==1 ∧ momentum≥3x ──
+    // Misma lógica que trend_momentum pero filtrando EXACTAMENTE count_recent==1.
+    {
+      const scored = allPairs.map(p => {
+        const ca = countAll[p]    ?? 0;
+        const cr = countRecent[p] ?? 0;
+        const fa = total > 0 ? ca / total : 0;
+        const fr = recent.length > 0 ? cr / recent.length : 0;
+        const momentum = fa > 0 ? fr / fa : (cr > 0 ? 10 : 0);
+        // sweet spot: exactamente 1 hit reciente + momentum fuerte + historial mínimo
+        const score = (ca >= 3 && cr === 1 && momentum >= 3.0) ? momentum : 0;
+        return { pair: p, score };
+      });
+      ranks['trend_momentum_sweet'] = rankOf(scored);
+    }
+
+    // ── 9–21. Algoritmos restantes — usar frecuencia con variantes ─
     // (aproximaciones in-memory; suficientes para calibración PPS)
+    // fibonacci_pisano eliminado (v2.4 — sin base empírica en RNG certificado)
     const freqScored = allPairs.map(p => ({ pair: p, score: countAll[p] ?? 0 }));
     const recentScored = allPairs.map(p => ({ pair: p, score: countRecent[p] ?? 0 }));
 
     for (const algo of [
-      'pairs_correlation', 'fibonacci_pisano', 'streak', 'position',
+      'pairs_correlation', 'streak', 'position',
       'moving_averages', 'bayesian_score', 'transition_follow',
       'calendar_pattern', 'decade_family', 'max_per_week_day',
       'double_triple', 'cross_draw',
+      'est_individuales', 'terminal_analysis',   // v2.4 additions
     ]) {
       // Use frequency or recent frequency as approximation
-      const useRecent = ['bayesian_score', 'moving_averages', 'transition_follow', 'double_triple'].includes(algo);
+      const useRecent = ['bayesian_score', 'moving_averages', 'transition_follow', 'double_triple', 'est_individuales'].includes(algo);
       const src = useRecent ? recentScored : freqScored;
       ranks[algo] = rankOf([...src]);
     }
