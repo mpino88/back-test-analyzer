@@ -1,6 +1,13 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — useStrategyTracking v2
+// HITDASH — useStrategyTracking v2.1
 // Fetches strategy tracking data + computes projections + cognitive analysis
+//
+// E4 FIX (2026-05-18): Eliminados aliases fantasma del catálogo:
+//   • momentum_ema   — alias legacy de moving_avg_signal
+//   • apex_adaptive  — meta-alias eliminado en v2.4
+//   • consensus_top  — meta-strategy sin implementación real
+// RANDOM_BASELINE corregido 0.10 → 0.15 (baseline real de pares@N=15).
+// computeCollectiveIntelligence: apex reemplazado por 'leader' (top performer).
 // ═══════════════════════════════════════════════════════════════
 
 import { ref, computed, watch } from 'vue';
@@ -10,7 +17,7 @@ import { apiGet } from '../../utils/apiClient.js';
 export const STRATEGY_META = {
   gap_overdue_focus:   { icon: '⏰', color: '#f59e0b', label: 'Gap Overdue',    category: 'momentum',   optimalTopN: [10, 14] },
   streak_reversal:     { icon: '🔄', color: '#f87171', label: 'Streak Reversal', category: 'reversal',   optimalTopN: [8,  12] },
-  momentum_ema:        { icon: '⚡', color: '#a78bfa', label: 'Momentum EMA',   category: 'momentum',   optimalTopN: [12, 16] },
+  // momentum_ema removed (E4 FIX 2026-05-18) — legacy alias of moving_avg_signal
   hot_cold_weighted:   { icon: '🌡', color: '#22d3ee', label: 'Hot / Cold',     category: 'momentum',   optimalTopN: [12, 18] },
   moving_avg_signal:   { icon: '📈', color: '#60a5fa', label: 'Moving Avg',     category: 'trend',      optimalTopN: [15, 20] },
   frequency_rank:      { icon: '📊', color: '#4ade80', label: 'Frecuencia',     category: 'baseline',   optimalTopN: [15, 20] },
@@ -32,8 +39,8 @@ export const STRATEGY_META = {
   trend_momentum_sweet:{ icon: '🍯', color: '#fb923c', label: 'Sweet Spot',     category: 'momentum',   optimalTopN: [12, 15] },
   est_individuales:    { icon: '🔥', color: '#ef4444', label: 'Hot Digits',     category: 'digit',      optimalTopN: [15, 20] },
   terminal_analysis:   { icon: '🎯', color: '#22d3ee', label: 'Terminal',       category: 'digit',      optimalTopN: [15, 20] },
-  apex_adaptive:       { icon: '🏆', color: '#fbbf24', label: 'APEX Adaptive',  category: 'meta',       optimalTopN: [12, 18] },
-  consensus_top:       { icon: '⚖️', color: '#94a3b8', label: 'Consensus',      category: 'meta',       optimalTopN: [15, 20] },
+  // apex_adaptive removed (E4 FIX 2026-05-18) — meta-alias, no individual algo
+  // consensus_top removed (E4 FIX 2026-05-18) — meta-strategy, not in canonical catalog
 };
 
 // ─── Cognitive brain per strategy ───────────────────────────────
@@ -54,14 +61,7 @@ export const STRATEGY_BRAIN = {
     dataNeeds: 'Últimos 90 sorteos para calcular media y desviación estándar de gaps',
     learningNote: 'Peso EMA disminuye cuando reversiones no se materializan en 5 sorteos',
   },
-  momentum_ema:  {
-    what: 'Captura el impulso reciente de cada par usando promedios móviles exponenciales',
-    how:  'score(XY) = Σ(freq_en_ventana_k × α^k), ventanas [3,7,14,30], α=0.85',
-    optimal: 'Cuando hay tendencias cortas de "calor" — el mismo subgrupo de pares aparece con mayor frecuencia',
-    weak:    'Sobre-ajusta en períodos de alta aleatoriedad; emite señal antes que el patrón sea significativo',
-    dataNeeds: 'Últimos 30 sorteos mínimo; mejor con 90+',
-    learningNote: 'Top-N se ajusta semanalmente según recall@N en ventana deslizante de 10',
-  },
+  // momentum_ema removed (E4 FIX 2026-05-18) — alias legacy
   hot_cold_weighted: {
     what: 'Clasifica pares como "hot" (alta frecuencia reciente) vs "cold" (baja frecuencia)',
     how:  'sigmoid(z-score) donde z = (freq_7d − freq_90d_expected) / std_90d',
@@ -102,27 +102,13 @@ export const STRATEGY_BRAIN = {
     dataNeeds: '200+ sorteos para estimación robusta de probabilidades conjuntas',
     learningNote: 'Estrategia complementaria — alta correlación con frequency_rank',
   },
-  // FIX T2-I (2026-05-18): fibonacci_pisano removido — eliminated v2.4
-  // (sin base empírica en RNG certificado, Pisano period != predictor)
-  apex_adaptive: {
-    what: 'Meta-estrategia: combina todas las anteriores con pesos aprendidos adaptativamente',
-    how:  'score(XY) = Σ(weight_i × score_i(XY)) + bonus_precision(top_n_i / 15)',
-    optimal: 'Siempre — es la estrategia final. Se beneficia cuando las sub-estrategias divergen y se complementan',
-    weak:    'Si todas las sub-estrategias fallan simultáneamente (régimen de alta aleatoriedad)',
-    dataNeeds: 'Requiere datos de todas las sub-estrategias',
-    learningNote: 'Los pesos se actualizan con EMA(α=0.2) tras cada sorteo real. Convergencia en ~15 ciclos',
-  },
-  consensus_top: {
-    what: 'Votación ponderada: pares en el top-N de más estrategias tienen mayor score',
-    how:  'consensus(XY) = Σ(weight_i × I[rank_i(XY) ≤ top_n_i]) / Σ(weight_i)',
-    optimal: 'Cuando hay alta coincidencia entre estrategias — señal de consenso fuerte',
-    weak:    'En divergencia de estrategias produce señales intermedias sin conviction',
-    dataNeeds: 'Comparte los datos de las 9 estrategias base',
-    learningNote: 'Usado como validación de APEX — si diverge mucho, hay alta incertidumbre',
-  },
+  // apex_adaptive removed (E4 FIX 2026-05-18) — meta-alias, no individual algo
+  // consensus_top removed (E4 FIX 2026-05-18) — meta-strategy sin catalog entry
 };
 
-const RANDOM_BASELINE = 0.10;
+// E4 FIX: baseline correcto para pares (00-99) con N=15 = 15/100 = 15%
+// El 10% anterior era incorrecto (sería válido solo para N=10/100 pares).
+const RANDOM_BASELINE = 0.15;
 
 // ─── Math helpers ───────────────────────────────────────────────
 function linearRegression(values) {
@@ -233,10 +219,13 @@ function computeStreakStats(timeline) {
   return { currentStreak, streakType, longestHit, longestMiss, recentHitRate };
 }
 
-// ─── NEW: Collective intelligence — how strategies agree ─────────
+// ─── Collective intelligence — how strategies agree ──────────────
+// E4 FIX (2026-05-18): eliminados apex_adaptive/consensus_top filtros.
+// 'leader' reemplaza 'apex' — el algo con mayor hit_rate real en la ventana.
 export function computeCollectiveIntelligence(strategies) {
   if (!strategies?.length) return null;
-  const base = strategies.filter(s => !['apex_adaptive', 'consensus_top'].includes(s.name));
+  // Todos son canónicos ahora — sin meta-aliases que filtrar
+  const base = strategies.filter(s => s.hit_rate != null || s.win_rate != null);
   if (!base.length) return null;
 
   const hitRates = base.map(s => s.hit_rate ?? s.win_rate ?? 0);
@@ -244,21 +233,24 @@ export function computeCollectiveIntelligence(strategies) {
   const mean = hitRates.reduce((a, b) => a + b, 0) / hitRates.length;
   const sd   = stdDev(hitRates);
 
-  // Weighted consensus (Apex uses these weights)
+  // Weighted consensus
   const totalW = weights.reduce((a, b) => a + b, 0);
   const weightedMean = hitRates.reduce((sum, r, i) => sum + r * weights[i], 0) / (totalW || 1);
 
   // Divergence: how spread out are the strategies?
   const divergenceScore = clamp(sd / 0.15) * 100; // 0=all agree, 100=max spread
 
-  // Top performer
+  // Top 3 performers
   const sorted = [...base].sort((a, b) => (b.hit_rate ?? 0) - (a.hit_rate ?? 0));
   const top3 = sorted.slice(0, 3);
 
-  // APEX alignment
-  const apex = strategies.find(s => s.name === 'apex_adaptive');
-  const apexRate = apex?.hit_rate ?? apex?.win_rate ?? 0;
-  const apexVsConsensus = (apexRate - weightedMean) * 100;
+  // Leader: algo con mayor hit_rate actual (reemplaza concepto apex_adaptive)
+  const leader = sorted[0] ?? null;
+  const leaderRate = leader?.hit_rate ?? leader?.win_rate ?? 0;
+  const leaderVsConsensus = (leaderRate - weightedMean) * 100;
+
+  // Cuántos algos superan el baseline 15% (vs azar puro)
+  const aboveBaseline = base.filter(s => (s.hit_rate ?? 0) > RANDOM_BASELINE).length;
 
   return {
     mean,
@@ -266,9 +258,12 @@ export function computeCollectiveIntelligence(strategies) {
     stdDev: sd,
     divergenceScore: Math.round(divergenceScore),
     top3,
-    apexRate,
-    apexVsConsensus: +apexVsConsensus.toFixed(2),
-    learningActive: strategies.some(s => (s.hit_rate_history?.length ?? 0) >= 3),
+    leaderName:          leader?.name ?? null,
+    leaderRate,
+    leaderVsConsensus:   +leaderVsConsensus.toFixed(2),
+    aboveBaseline,
+    totalStrategies:     base.length,
+    learningActive:      strategies.some(s => (s.hit_rate_history?.length ?? 0) >= 3),
   };
 }
 
@@ -331,7 +326,8 @@ export function useStrategyTracking() {
           adaptiveHealth,
           streakStats,
           hit_rate_display: displayHistory,
-          isApex: s.name === 'apex_adaptive',
+          // E4 FIX: isApex obsoleto — ningún algo canónico es apex_adaptive
+          isApex: false,
         };
       });
     } catch (e) {
@@ -347,13 +343,13 @@ export function useStrategyTracking() {
     [...strategies.value].sort((a, b) => (b.hit_rate ?? b.win_rate) - (a.hit_rate ?? a.win_rate))
   );
 
-  const best = computed(() =>
-    ranked.value.find(s => !s.isApex && s.name !== 'consensus_top') ?? ranked.value[0]
-  );
+  // E4 FIX: best = simplemente el top-ranked (ya no hay meta-aliases que filtrar)
+  const best = computed(() => ranked.value[0] ?? null);
 
-  const apex = computed(() =>
-    strategies.value.find(s => s.name === 'apex_adaptive')
-  );
+  // E4 FIX: 'apex' renombrado a 'leader' — el algo con mayor hit_rate real.
+  // Mantenemos 'apex' como alias de compatibilidad para no romper templates existentes.
+  const leader = computed(() => ranked.value[0] ?? null);
+  const apex   = leader; // alias de compatibilidad
 
   const collective = computed(() => computeCollectiveIntelligence(strategies.value));
 
@@ -372,20 +368,20 @@ export function useStrategyTracking() {
           data:        allPts.map(p => p.y),
           borderColor: s.color,
           backgroundColor: s.color + '18',
-          borderWidth: s.isApex ? 3 : 1.5,
+          borderWidth: 1.5,
           tension:     0.4,
           pointRadius: allPts.map(p => p.projected ? 3 : 0),
           pointStyle:  allPts.map(p => p.projected ? 'triangle' : 'circle'),
           segment: {
             borderDash: (ctx) => ctx.p0DataIndex >= hist.length - 1 ? [5, 4] : undefined,
           },
-          fill: s.isApex,
+          fill: false,
         };
       });
   });
 
   return {
-    strategies, ranked, best, apex, collective,
+    strategies, ranked, best, leader, apex, collective,
     loading, error, generatedAt,
     gameType, mode, setGameType, setMode,
     chartDatasets,

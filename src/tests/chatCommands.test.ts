@@ -61,13 +61,14 @@ function extractDrawType(text: string): DrawType {
 
 // ─── Strategy name aliases understood by users ────────────────
 // Maps how users refer to strategies vs their DB names
+// E3 FIX (2026-05-18): eliminados aliases de algos eliminados/fantasma:
+//   fibonacci_pisano → eliminado v2.4 (sin base empírica en RNG)
+//   momentum_ema → alias legacy de moving_avg_signal
 const USER_ALIAS_TO_DB: Record<string, string> = {
   // User words → DB strategy_name
-  'unodostres':        'fibonacci_pisano',
-  'fibonacci':         'fibonacci_pisano',
-  'pisano':            'fibonacci_pisano',
-  'momentum':          'momentum_ema',
-  'tendencia':         'momentum_ema',
+  // fibonacci_pisano removed (E3 FIX) — eliminated v2.4
+  'momentum':          'moving_avg_signal',   // E3 FIX: momentum_ema → moving_avg_signal
+  'tendencia':         'moving_avg_signal',   // E3 FIX: idem
   'bayesiano':         'bayesian_score',
   'markov orden 2':    'markov_order2',
   'markov-2':          'markov_order2',
@@ -277,12 +278,12 @@ describe('Layer 1 — COMMANDS intent detection', () => {
   // NOT commands → Layer 3
   describe('Layer 3 pass-through (no command detected)', () => {
     const cases = [
-      'hace 3 años cuántos fue de rentable la estrategia UNODOSTRES o MOMENTUM de tendencia para 15 o 21 N candidates',
+      'hace 3 años cuántos fue de rentable la estrategia MOMENTUM de tendencia para 15 o 21 N candidates',
       'cuál es la mejor estrategia para pick3?',
       'qué pares recomiendas para esta noche?',
-      'cuántos hits tuvo fibonacci en los últimos 6 meses',
+      'cuántos hits tuvo markov en los últimos 6 meses',
       'muéstrame el historial de aciertos',
-      'qué porcentaje de aciertos tiene momentum_ema con N=21',
+      'qué porcentaje de aciertos tiene moving_avg_signal con N=15',
       'el agente es rentable?',
       'cuánto ganamos con la estrategia de tendencia?',
     ];
@@ -323,13 +324,17 @@ describe('extractDrawType', () => {
 
 // ─── Section 3: Strategy alias mapping ────────────────────────
 describe('User strategy alias mapping', () => {
-  it('UNODOSTRES maps to fibonacci_pisano', () => {
-    expect(USER_ALIAS_TO_DB['unodostres']).toBe('fibonacci_pisano');
+  // E3 FIX (2026-05-18): fibonacci_pisano eliminado del catálogo — test actualizado
+  it('fibonacci_pisano NOT in alias map (eliminated v2.4)', () => {
+    expect(USER_ALIAS_TO_DB['unodostres']).toBeUndefined();
+    expect(USER_ALIAS_TO_DB['fibonacci']).toBeUndefined();
+    expect(USER_ALIAS_TO_DB['pisano']).toBeUndefined();
   });
 
-  it('MOMENTUM / tendencia maps to momentum_ema', () => {
-    expect(USER_ALIAS_TO_DB['momentum']).toBe('momentum_ema');
-    expect(USER_ALIAS_TO_DB['tendencia']).toBe('momentum_ema');
+  // E3 FIX: momentum_ema era alias legacy — ahora apunta a moving_avg_signal
+  it('MOMENTUM / tendencia maps to moving_avg_signal (E3 FIX)', () => {
+    expect(USER_ALIAS_TO_DB['momentum']).toBe('moving_avg_signal');
+    expect(USER_ALIAS_TO_DB['tendencia']).toBe('moving_avg_signal');
   });
 
   it('Bayesiano maps to bayesian_score', () => {
@@ -350,8 +355,9 @@ describe('Layer 3 — DB context building for LLM', () => {
 
   // Mock backtest_results_v2 rows — what would be in DB after 3 years of data
   const mockBtRows: BtRow[] = [
-    { strategy_name: 'fibonacci_pisano', half: 'du', hit_rate: 0.187, final_top_n: 25, kelly_fraction: 0.032, sharpe: 0.41, total_eval_pts: 1095 },
-    { strategy_name: 'momentum_ema',     half: 'du', hit_rate: 0.201, final_top_n: 14, kelly_fraction: 0.068, sharpe: 0.89, total_eval_pts: 1095 },
+    // E3 FIX (2026-05-18): fibonacci_pisano/momentum_ema reemplazados por algos canónicos reales
+    { strategy_name: 'decade_family',    half: 'du', hit_rate: 0.168, final_top_n: 15, kelly_fraction: 0.021, sharpe: 0.35, total_eval_pts: 1095 },
+    { strategy_name: 'moving_avg_signal',half: 'du', hit_rate: 0.160, final_top_n: 15, kelly_fraction: 0.018, sharpe: 0.32, total_eval_pts: 1095 },
     { strategy_name: 'bayesian_score',   half: 'du', hit_rate: 0.215, final_top_n: 15, kelly_fraction: 0.081, sharpe: 1.12, total_eval_pts: 1095 },
     { strategy_name: 'apex_adaptive',    half: 'du', hit_rate: 0.234, final_top_n: 15, kelly_fraction: 0.095, sharpe: 1.31, total_eval_pts: 1095 },
     { strategy_name: 'frequency_rank',   half: 'du', hit_rate: 0.158, final_top_n: 15, kelly_fraction: 0.012, sharpe: 0.21, total_eval_pts: 1095 },
@@ -571,7 +577,7 @@ describe('CONVERSATION SIMULATION — "UNODOSTRES / MOMENTUM 3 años N=15/21"', 
 describe('Chat message validation', () => {
   it('rejects empty message (would return 400)', () => {
     const msg = '';
-    expect(!msg || typeof msg !== 'string' || msg.trim().length === 0).toBe(true);
+    expect(!msg || typeof msg !== 'string' || (msg as string).trim().length === 0).toBe(true);
   });
 
   it('rejects whitespace-only message', () => {
