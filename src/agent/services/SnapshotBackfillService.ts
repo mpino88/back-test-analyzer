@@ -35,6 +35,8 @@
 
 import type { Pool } from 'pg';
 import pino from 'pino';
+// FIX #7 (2026-05-18) — Single Source of Truth para el catálogo de algoritmos
+import { CANONICAL_ALGORITHMS } from '../types/analysis.types.js';
 
 const logger = pino({ name: 'SnapshotBackfillService' });
 
@@ -524,6 +526,10 @@ async function scoreBayesianScore(
 }
 
 // ── 14. pair_return_cycle ───────────────────────────────────────
+// FIX #6 (2026-05-18): la fórmula previa usaba `EXTRACT(DAY FROM gap_days)`
+// pero `gap_days = draw_date - LAG(draw_date)` devuelve INTEGER (días), NO INTERVAL.
+// EXTRACT(DAY FROM integer) → "function pg_catalog.extract(unknown, integer)
+// does not exist" → fallaba silenciosamente. Ahora usamos AVG(gap_days) directo.
 async function scorePairReturnCycle(
   pool: Pool, game_type: string, draw_type: string,
   half: string, as_of_date: string, period: number
@@ -540,13 +546,13 @@ async function scorePairReturnCycle(
      ),
      gaps AS (
        SELECT pair, draw_date,
-              draw_date - LAG(draw_date) OVER (PARTITION BY pair ORDER BY draw_date) AS gap_days
+              (draw_date - LAG(draw_date) OVER (PARTITION BY pair ORDER BY draw_date))::int AS gap_days
        FROM base
      )
      SELECT pair,
             COUNT(*)::int AS cnt,
             MAX(draw_date)::text AS last_seen,
-            COALESCE(AVG(EXTRACT(DAY FROM gap_days))::float, 0) AS avg_gap
+            COALESCE(AVG(gap_days)::float, 0) AS avg_gap
      FROM gaps
      GROUP BY pair`,
     [game_type, draw_type, as_of_date, period]
@@ -970,33 +976,57 @@ export class SnapshotBackfillService {
       return { game_type, draw_type, half, dates_processed: 0, dates_skipped: 0, total_snapshots: 0, duration_ms: Date.now() - t0, errors: 0 };
     }
 
-    // 2. Verificar cuáles ya tienen snapshot (para saltarlos)
-    const { rows: existingRows } = await this.pool.query<{ draw_date: string }>(
-      `SELECT DISTINCT draw_date::text
+    // 2. FIX #5 (2026-05-18) — Skip-logic GRANULAR por (date, algo_name)
+    //
+    // Antes: si una fecha tenía CUALQUIER snapshot, se saltaba completa.
+    // Consecuencia: tras la expansión a 21 algos, las fechas viejas (que
+    // solo tenían 8 algos) NUNCA recibían los 13 nuevos retroactivamente.
+    //
+    // Ahora: cargamos el set (date, algo_name) completo y solo computamos
+    // los algos FALTANTES por fecha. Una fecha con los 21 algos completos
+    // se salta. Una con 8 procesa los 13 faltantes.
+    const { rows: existingRows } = await this.pool.query<{ draw_date: string; algo_name: string }>(
+      `SELECT DISTINCT draw_date::text, algo_name
        FROM hitdash.algo_prediction_snapshot
        WHERE game_type = $1 AND draw_type = $2 AND half = $3
          AND draw_date >= CURRENT_DATE - ($4 || ' days')::interval`,
       [game_type, draw_type, half, days_back]
     );
-    const existingDates = new Set(existingRows.map(r => r.draw_date));
+    // Map<draw_date, Set<algo_name>>
+    const existingByDate = new Map<string, Set<string>>();
+    for (const r of existingRows) {
+      if (!existingByDate.has(r.draw_date)) existingByDate.set(r.draw_date, new Set());
+      existingByDate.get(r.draw_date)!.add(r.algo_name);
+    }
 
-    let processed = 0, skipped = 0, totalSnaps = 0, errors = 0;
+    // FIX #7 (2026-05-18) — usar CANONICAL_ALGORITHMS de analysis.types.ts
+    const CATALOG = CANONICAL_ALGORITHMS;
+
+    let processed = 0, skipped = 0, partial = 0, totalSnaps = 0, errors = 0;
     const total = drawDates.length;
 
     for (const { draw_date } of drawDates) {
-      // Skip if all algos already have a snapshot for this date
-      if (existingDates.has(draw_date)) {
+      const existingAlgos = existingByDate.get(draw_date) ?? new Set<string>();
+      const missingAlgos  = CATALOG.filter(a => !existingAlgos.has(a));
+
+      // Skip COMPLETO solo si tiene los 21 algos
+      if (missingAlgos.length === 0) {
         skipped++;
         onProgress?.(processed + skipped, total, draw_date);
         continue;
       }
 
       try {
-        const algoScores = await this.scoreForDate(game_type, draw_type, half, draw_date, period);
+        const allScores = await this.scoreForDate(game_type, draw_type, half, draw_date, period);
 
-        // 3. Persistir en algo_prediction_snapshot
-        const inserts = [...algoScores.entries()].map(([algo_name, scores]) =>
-          this.pool.query(
+        // Persistir SOLO los algos faltantes (no recomputar los que ya están)
+        const inserts: Promise<unknown>[] = [];
+        let insertedForDate = 0;
+        for (const algo_name of missingAlgos) {
+          const scores = allScores.get(algo_name);
+          if (!scores) continue;
+          insertedForDate++;
+          inserts.push(this.pool.query(
             `INSERT INTO hitdash.algo_prediction_snapshot
                (game_type, draw_type, draw_date, half, algo_name, pair_scores)
              VALUES ($1, $2, $3::date, $4, $5, $6)
@@ -1004,18 +1034,22 @@ export class SnapshotBackfillService {
             [game_type, draw_type, draw_date, half, algo_name, JSON.stringify(scores)]
           ).catch(err => {
             logger.warn({ algo_name, draw_date, error: String(err) }, 'Backfill: insert error — continuando');
-          })
-        );
+          }));
+        }
         await Promise.allSettled(inserts);
-        totalSnaps += algoScores.size;
-        processed++;
+        totalSnaps += insertedForDate;
+        if (existingAlgos.size > 0) partial++;
+        else processed++;
       } catch (err) {
         logger.error({ draw_date, error: String(err) }, 'Backfill: error en fecha — saltando');
         errors++;
       }
 
-      onProgress?.(processed + skipped, total, draw_date);
+      onProgress?.(processed + partial + skipped, total, draw_date);
     }
+
+    // Nota: processed = fechas vírgenes; partial = fechas con algos faltantes completados
+    processed += partial;
 
     const summary: BackfillSummary = {
       game_type, draw_type, half,

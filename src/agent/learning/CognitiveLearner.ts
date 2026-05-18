@@ -40,17 +40,13 @@ const RANK_MISS   = 101;
 const MIN_TRAIN   = 30;    // mínimo de sorteos históricos para entrenar
 const HOLDOUT_PCT = 0.20;  // 20% más reciente para validación
 
-// Algoritmos que tienen runPairs() — sincronizado con AnalysisEngine v2.4
-// (fibonacci_pisano eliminado 2026-05-13; trend_momentum_sweet/est_individuales/terminal_analysis añadidos)
-const ALGO_NAMES = [
-  'frequency', 'gap_analysis', 'hot_cold', 'pairs_correlation',
-  'streak', 'position', 'moving_averages',
-  'bayesian_score', 'transition_follow', 'markov_order2',
-  'calendar_pattern', 'decade_family', 'max_per_week_day',
-  'pair_return_cycle', 'sum_pattern_filter', 'double_triple',
-  'cross_draw', 'trend_momentum', 'trend_momentum_sweet',
-  'est_individuales', 'terminal_analysis',
-];
+// FIX #7 (2026-05-18) — Single Source of Truth
+// Antes: array hardcoded duplicado vs analysis.types.ts. Cuando v2.4 eliminó
+// fibonacci_pisano, este array se actualizó en commit posterior pero el
+// scheduler ya había corrido con la versión vieja y re-insertó fibonacci_pisano
+// en pps_state via INSERT línea 231. Migration 022 ahora lo bloquea con trigger.
+import { CANONICAL_ALGORITHMS } from '../types/analysis.types.js';
+const ALGO_NAMES = CANONICAL_ALGORITHMS;
 
 export interface LearningReport {
   run_id:          string;

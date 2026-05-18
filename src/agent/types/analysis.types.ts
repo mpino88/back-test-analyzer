@@ -220,6 +220,36 @@ export const ALGORITHM_WEIGHTS: Record<string, number> = {
   // mirror_complement — simetría de complementarios sin mecanismo generativo
 };
 
+// ─────────────────────────────────────────────────────────────────
+// FIX #7 (2026-05-18) — SINGLE SOURCE OF TRUTH para el catálogo
+//
+// Antes: CognitiveLearner.ALGO_NAMES y SnapshotBackfillService.CATALOG
+// eran arrays hardcoded e independientes. Cuando v2.4 eliminó 3 algos
+// y v5 añadió trend_momentum_sweet, los arrays quedaron desincronizados
+// → fibonacci_pisano reapareció en pps_state vía CognitiveLearner viejo.
+//
+// Ahora: CANONICAL_ALGORITHMS es la única fuente. Cualquier componente
+// que persiste a pps_state DEBE importar de aquí.
+//
+// REGLA: si añades un algoritmo a ALGORITHM_WEIGHTS, añádelo también
+// aquí Y verifica que SnapshotBackfillService.scoreForDate lo soporte.
+// El test `catalogConsistency.unit.test.ts` lo verifica automáticamente.
+// ─────────────────────────────────────────────────────────────────
+export const CANONICAL_ALGORITHMS: readonly string[] = Object.freeze([
+  'frequency', 'hot_cold', 'gap_analysis', 'calendar_pattern',
+  'markov_order2', 'transition_follow', 'decade_family', 'max_per_week_day',
+  'pairs_correlation', 'streak', 'position', 'moving_averages',
+  'bayesian_score', 'pair_return_cycle', 'sum_pattern_filter',
+  'double_triple', 'cross_draw', 'trend_momentum', 'trend_momentum_sweet',
+  'est_individuales', 'terminal_analysis',
+]);
+
+// Lista de algoritmos eliminados — para validación defensiva.
+// Cualquier referencia a estos en código nuevo debe lanzar warning/error.
+export const ELIMINATED_ALGORITHMS: readonly string[] = Object.freeze([
+  'fibonacci_pisano', 'cycle_detector', 'mirror_complement',
+]);
+
 // ─── Score por dígito/posición ───────────────────────────────────
 export interface DigitSignal {
   digit: number;
