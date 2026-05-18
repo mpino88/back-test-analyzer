@@ -169,10 +169,10 @@ export class CognitiveLearner {
     const ppsRunning: Record<string, number> = {};
     for (const a of ALGO_NAMES) ppsRunning[a] = PPS_INITIAL;
 
-    // Para el optimizador: guardar ranks por sorteo en holdout
-    // Structure: ranksHoldout[algoName] = [rank1, rank2, ...]
-    const ranksHoldout: Record<string, number[]> = {};
-    for (const a of ALGO_NAMES) ranksHoldout[a] = [];
+    // M2 FIX: guardar ranks en AMBOS splits para WeightOptimizer hit_rate-relative
+    const ranksHoldout:  Record<string, number[]> = {};
+    const ranksTraining: Record<string, number[]> = {};
+    for (const a of ALGO_NAMES) { ranksHoldout[a] = []; ranksTraining[a] = []; }
 
     // PPS before (snapshot del estado inicial)
     const ppsBefore: Record<string, number> = {};
@@ -196,7 +196,7 @@ export class CognitiveLearner {
         game_type, draw_type, half, trainDraws, winPair
       );
 
-      // Actualizar PPS por EMA
+      // Actualizar PPS por EMA + guardar ranks en el split correcto (M2 FIX)
       for (const [algo, rank] of Object.entries(algoRanks)) {
         const contribution = RANK_MISS - rank;  // 0–100
         ppsRunning[algo] = +(PPS_ALPHA * contribution + (1 - PPS_ALPHA) * (ppsRunning[algo] ?? PPS_INITIAL)).toFixed(4);
@@ -204,6 +204,10 @@ export class CognitiveLearner {
         if (isHoldout) {
           ranksHoldout[algo] = ranksHoldout[algo] ?? [];
           ranksHoldout[algo]!.push(rank);
+        } else {
+          // M2 FIX: acumular ranks de training para hit_rate-relative weighting
+          ranksTraining[algo] = ranksTraining[algo] ?? [];
+          ranksTraining[algo]!.push(rank);
         }
       }
 
@@ -215,9 +219,9 @@ export class CognitiveLearner {
       }
     }
 
-    // ── 4. WeightOptimizer — encontrar pesos óptimos ──────────────────────────
+    // ── 4. WeightOptimizer — hit_rate-relative (M2 FIX) ──────────────────────
     const { weights: learnedWeights, hit_rate: holdoutHitRate, optimal_n: optN, best_roi: bestRoi } =
-      this._optimizeWeights(ranksHoldout, ppsRunning);
+      this._optimizeWeights(ranksHoldout, ranksTraining, ppsRunning);
 
     // ── 5. Sembrar pps_state con PPS histórico aprendido ──────────────────────
     logger.info({ game_type, draw_type, half }, 'CognitiveLearner: sembrando pps_state con PPS histórico');
@@ -746,19 +750,46 @@ export class CognitiveLearner {
   }
 
   // ════════════════════════════════════════════════════════════
-  // WEIGHT OPTIMIZER — gradient-free grid scan
-  // Encuentra la combinación de algoritmos que maximiza hit_rate
-  // en el holdout (sin data leakage)
+  // WEIGHT OPTIMIZER — hit_rate-relative (M2 FIX 2026-05-18)
+  //
+  // PROBLEMA ANTERIOR (M2):
+  //   peso(algo) = max(0.1, PPS/50) — proporcional al PPS, no al hit_rate real.
+  //   PPS mide EMA(101-rank), que correlaciona con average rank pero NO con
+  //   hit_rate@N. Dos algos con mismo PPS pero hit_rates muy diferentes recibían
+  //   el mismo peso → amplificaba algos NOISE/HARMFUL igual que EDGE.
+  //
+  // SOLUCIÓN (M2 FIX):
+  //   Paso 1 — Calcular hit_rate@15 de cada algo en el TRAINING set (no holdout).
+  //   Paso 2 — peso(algo) = max(0.1, hr_train / BASELINE) donde BASELINE = 0.15.
+  //     • hr > 0.15 (EDGE): peso > 1.0 → amplifica señales útiles
+  //     • hr ≈ 0.15 (NOISE): peso ≈ 1.0 → no amplifica ni suprime
+  //     • hr < 0.15 (HARMFUL): peso < 1.0, mínimo 0.1 → silencia dañinos
+  //   Paso 3 — Calcular effective_rank del consensus en HOLDOUT con esos pesos.
+  //   Paso 4 — Buscar N óptimo que maximiza ROI en holdout.
+  //
+  //   NOTA METODOLÓGICA:
+  //   El peso se computa en TRAINING para evitar data leakage en el holdout.
+  //   El effective_rank en holdout es una media ponderada de los ranks individuales
+  //   — esto NO es equivalente al consensus real (que requeriría los pair-scores
+  //   completos) pero es la mejor aproximación con los datos disponibles en
+  //   la simulación walk-forward (solo tenemos rank_of_winner por draw, no el
+  //   vector completo de scores). Mejora M2 COMPLETA requeriría almacenar
+  //   pair_scores por draw en la simulación, lo que implicaría refactoring mayor.
   // ════════════════════════════════════════════════════════════
   private _optimizeWeights(
     ranksHoldout: Record<string, number[]>,
-    ppsLearned: Record<string, number>
+    ranksTraining: Record<string, number[]>,  // M2 FIX: nuevo parámetro
+    ppsLearned:   Record<string, number>       // mantenido para fallback
   ): {
-    weights: Record<string, number>;
-    hit_rate: number;
+    weights:   Record<string, number>;
+    hit_rate:  number;
     optimal_n: number;
-    best_roi: number;
+    best_roi:  number;
   } {
+    const BASELINE_HR = 0.15;  // baseline pares@N=15
+    const N_WEIGHT    = 15;    // N usado para compute weights en training
+    const WEIGHT_CAP  = 3.0;   // tope superior de peso para evitar dominación extrema
+
     const algos  = Object.keys(ranksHoldout).filter(a => (ranksHoldout[a]?.length ?? 0) > 0);
     const nDraws = ranksHoldout[algos[0]!]?.length ?? 0;
 
@@ -768,48 +799,53 @@ export class CognitiveLearner {
       return { weights: eq, hit_rate: 0, optimal_n: 15, best_roi: -1 };
     }
 
-    // Estrategia de optimización: PPS-proportional weights
-    // peso(algo) = max(0.1, PPS(algo) / 50.0)
-    // Esto escala: PPS=100 → peso=2.0, PPS=50 → peso=1.0, PPS=0 → peso=0.1
+    // ── Paso 1: hit_rate@N_WEIGHT en training set por algo ────────
     const weights: Record<string, number> = {};
     for (const a of ALGO_NAMES) {
-      const pps = ppsLearned[a] ?? PPS_INITIAL;
-      weights[a] = +(Math.max(0.1, pps / 50.0)).toFixed(3);
-    }
-
-    // Calcular effective_rank del consensus con estos pesos para cada sorteo holdout
-    // effective_rank = rango que tendría el par ganador en el ranking ponderado
-    const effectiveRanks: number[] = [];
-
-    for (let d = 0; d < nDraws; d++) {
-      // Score ponderado por par para este sorteo
-      const pairScores: Record<string, number> = {};
-      let totalW = 0;
-
-      for (const algo of algos) {
-        const rank = ranksHoldout[algo]![d]!;
-        const w    = weights[algo] ?? 1.0;
-        // Convertir rank a score: rank=1 → 1.0, rank=100 → 0.0
-        const score = rank < RANK_MISS ? (RANK_MISS - rank) / 100 : 0;
-        // Distribuir score sobre los pares (aproximación: asignamos score al par en esa posición)
-        // Para simplificar: usamos rank directamente como indicador del par ganador
-        const pairKey = `rank_${rank}`;  // placeholder
-        pairScores[algo] = rank;
-        totalW += w;
+      const trainRanks = ranksTraining[a];
+      if (!trainRanks || trainRanks.length === 0) {
+        // Fallback a PPS-proportional si no hay training data
+        const pps = ppsLearned[a] ?? PPS_INITIAL;
+        weights[a] = +(Math.max(0.1, Math.min(WEIGHT_CAP, pps / 50.0))).toFixed(3);
+        continue;
       }
 
-      // Effective rank = media ponderada de ranks por algoritmo
+      // hit_rate@N_WEIGHT en training
+      const hits = trainRanks.filter(r => r <= N_WEIGHT).length;
+      const hrTrain = hits / trainRanks.length;
+
+      // peso = hr_train / baseline, clamped a [0.1, WEIGHT_CAP]
+      const rawWeight = hrTrain / BASELINE_HR;
+      weights[a] = +(Math.max(0.1, Math.min(WEIGHT_CAP, rawWeight))).toFixed(3);
+    }
+
+    logger.debug(
+      { weights_sample: Object.entries(weights).slice(0, 5).map(([a, w]) => `${a}=${w}`) },
+      'M2 WeightOptimizer: hit_rate-relative weights computed'
+    );
+
+    // ── Paso 2: effective_rank del consensus en holdout ────────────
+    const effectiveRanks: number[] = [];
+    const algoWeightsFiltered = algos.map(a => ({ algo: a, w: weights[a] ?? 1.0 }));
+    const totalW = algoWeightsFiltered.reduce((s, e) => s + e.w, 0);
+
+    for (let d = 0; d < nDraws; d++) {
       let wRankSum = 0;
-      for (const algo of algos) {
-        wRankSum += (ranksHoldout[algo]![d]! * (weights[algo] ?? 1.0));
+      for (const { algo, w } of algoWeightsFiltered) {
+        wRankSum += (ranksHoldout[algo]![d]! * w);
       }
       effectiveRanks.push(totalW > 0 ? wRankSum / totalW : 50);
     }
 
+    // ── Paso 3: N óptimo — maximiza ROI en holdout ─────────────────
+    // Nota: effective_rank es una media ponderada, no el rank real del consensus.
+    // ROI = hit_rate(effective_rank ≤ N) × $50/N − 1
     effectiveRanks.sort((a, b) => a - b);
 
-    // Encontrar N óptimo: min N donde hit_rate × $50 / N − 1 ≥ 1%
-    let bestN = 15, bestRoi = -Infinity, bestHit = 0, profitable = false;
+    let bestN    = 15;
+    let bestRoi  = -Infinity;
+    let bestHit  = 0;
+    let profitable = false;
 
     for (let N = 5; N <= 30; N++) {
       const hits = effectiveRanks.filter(r => r <= N).length;
@@ -817,18 +853,18 @@ export class CognitiveLearner {
       const roi  = hr * 50 / N - 1;
 
       if (!profitable && roi >= 0.01) {
-        bestN       = N;
-        bestRoi     = roi;
-        bestHit     = hr;
-        profitable  = true;
+        bestN = N; bestRoi = roi; bestHit = hr;
+        profitable = true;
         break;
       }
       if (roi > bestRoi) { bestRoi = roi; bestN = N; bestHit = hr; }
     }
 
     logger.info(
-      { optimal_n: bestN, hit_rate: bestHit.toFixed(3), roi: bestRoi.toFixed(3), profitable },
-      'WeightOptimizer: resultado'
+      { optimal_n: bestN, hit_rate: bestHit.toFixed(3), roi: bestRoi.toFixed(3), profitable,
+        edge_algos: Object.entries(weights).filter(([, w]) => w > 1.0).map(([a]) => a).length,
+        harmful_algos: Object.entries(weights).filter(([, w]) => w <= 0.2).map(([a]) => a).length },
+      'M2 WeightOptimizer: resultado (hit_rate-relative)'
     );
 
     return {
