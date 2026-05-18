@@ -492,7 +492,10 @@ export class PostDrawProcessor {
         await this.agentPool.query(
           `UPDATE hitdash.backtest_points_v2 SET hit_pair = true WHERE id = $1`,
           [row.id]
-        ).catch(() => undefined);
+        ).catch((err: Error) => {
+          // F3 FIX: error visible — fallo aquí significa que backtest_points_v2 pierde hit_pair
+          logger.warn({ error: err.message, row_id: row.id }, 'PostDrawProcessor: fallo en UPDATE backtest_points_v2 hit_pair');
+        });
       }
     }
 
@@ -528,7 +531,11 @@ export class PostDrawProcessor {
          SET hit = $1, actual_pair = $2, hit_at_rank = $3
          WHERE id = $4`,
         [hit, actualPair, rank, rec.id]
-      ).catch(() => undefined);
+      ).catch((err: Error) => {
+        // F3 FIX: error visible — fallo aquí significa que pair_recommendations pierde feedback
+        logger.warn({ error: err.message, rec_id: rec.id, hit, actual_pair: actualPair },
+          'PostDrawProcessor: fallo en UPDATE pair_recommendations hit');
+      });
 
       // ─── CIRUGÍA 4: Actualizar contribution_count en dynamic_strategies ───
       // Si la recomendación fue un HIT, incrementar contribution_count en las
@@ -555,19 +562,12 @@ export class PostDrawProcessor {
       }
 
       // ─── N-rank EMA feedback → calibra computeCognitiveN() en tiempo real ──
-      // hit: usar rank real (1=perfecto); miss: penalizar con rango central 55
-      // Actualiza backtest_results_v2.expected_rank para 'apex_adaptive' con EMA(α=0.15)
-      // Esto cierra el bucle: PostDrawProcessor → expected_rank → AnalysisEngine.computeCognitiveN()
-      const emaRank = hit ? rank! : 55;
-      await this.agentPool.query(
-        `UPDATE hitdash.backtest_results_v2
-         SET expected_rank = $1 * 0.15 + expected_rank * 0.85,
-             updated_at    = now()
-         WHERE strategy_name = 'apex_adaptive'
-           AND game_type     = $2
-           AND half          = $3`,
-        [emaRank, game_type, rec.half]
-      ).catch(() => undefined);
+      // F3 + E4 FIX (2026-05-18): Esta query actualizaba WHERE strategy_name='apex_adaptive'
+      // que fue eliminado en v2.4. El UPDATE siempre retornaba 0 filas (dead code silente).
+      // DEPRECADO hasta que se defina una estrategia canónica para el EMA de expected_rank.
+      // TODO: redirigir a consensus o a la estrategia con mayor hit_rate (ver E7).
+      // const emaRank = hit ? rank! : 55;
+      // (query omitida — sin efecto)
     }
 
     // ── COMPARATIVA SIMÉTRICA: registrar hits por algoritmo ─────────────────
@@ -666,7 +666,11 @@ export class PostDrawProcessor {
            hit_rate_history  = $5,
            updated_at        = now()`,
         [strategy_name, game_type, mode, newTopN, JSON.stringify(newHistory)]
-      ).catch(() => undefined);
+      ).catch((err: Error) => {
+        // F3 FIX: error visible — fallo aquí interrumpe el tracking de adaptive top-N
+        logger.warn({ error: err.message, strategy_name, game_type, mode },
+          'PostDrawProcessor: fallo en UPDATE adaptive_weights top_n/hit_rate_history');
+      });
     }
 
     logger.info({ game_type, draw_type, strategies: strategies.length }, 'Adaptive top-N live actualizado');
