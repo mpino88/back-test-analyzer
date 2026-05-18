@@ -1,19 +1,23 @@
 // ═══════════════════════════════════════════════════════════════
-// HELIX — AlgorithmHealthMonitor v1.0.0 (ROUND 2 FIX 2026-05-12)
+// HELIX — AlgorithmHealthMonitor v1.1.0
+// v1.0 (2026-05-12): Killswitch con CTE particionado (fix previo)
+// v1.1 (2026-05-18): T2-J — Grace period para algos recién backfilled
 //
 // Killswitch real: deshabilita algoritmos perdedores del consensus.
 //
 // Reglas (basadas en algo_rank_history existente):
+//   GRACE PERIOD: si total_draws < GRACE_DRAWS_TOTAL (100), aplicar
+//     penalización suave (no killswitch, degrade leve ×0.8 solo si hr<13%).
+//     Razonamiento: algos nuevos/recién backfilled necesitan ~100 evaluaciones
+//     reales para que su distribución de ranks converja. Matarlos antes de
+//     ese umbral basado en 30 sorteos de simulación es sesgo de arranque.
+//
+//   NORMAL (total_draws ≥ GRACE_DRAWS_TOTAL):
 //   hit_rate@15 < baseline*1.10 (0.165) ∧ samples≥30 → DISABLED
 //   hit_rate@15 < baseline      (0.150) ∧ samples≥15 → DEGRADED (weight ×0.5)
 //   else                                              → HEALTHY
 //
 // donde baseline = N_DEFAULT/100 = 0.15 (probabilidad si predijéramos al azar)
-//
-// AnalysisEngine consulta antes del Promise.allSettled y:
-//   - DISABLED → skip (no corre)
-//   - DEGRADED → corre pero weight ÷ 2
-//   - HEALTHY  → corre normal
 // ═══════════════════════════════════════════════════════════════
 
 import type { Pool } from 'pg';
@@ -21,12 +25,16 @@ import pino from 'pino';
 
 const logger = pino({ name: 'AlgorithmHealthMonitor' });
 
-const BASELINE_RATE      = 0.15;         // P(rank≤15 | random) = 15/100
-const KILLSWITCH_FACTOR  = 1.10;         // hit_rate debe superar baseline×1.10
-const ROLLING_WINDOW     = 30;           // últimos 30 evaluaciones
-const MIN_SAMPLES_KILL   = 30;           // bajo este sample_size, no killeamos
-const MIN_SAMPLES_DEGRADE = 15;          // bajo este sample_size, no degradamos
-const DEGRADE_PENALTY    = 0.5;          // weight multiplier si DEGRADED
+const BASELINE_RATE       = 0.15;        // P(rank≤15 | random) = 15/100
+const KILLSWITCH_FACTOR   = 1.10;        // hit_rate debe superar baseline×1.10
+const ROLLING_WINDOW      = 30;          // últimos 30 evaluaciones
+const MIN_SAMPLES_KILL    = 30;          // bajo este sample_size, no killeamos
+const MIN_SAMPLES_DEGRADE  = 15;         // bajo este sample_size, no degradamos
+const DEGRADE_PENALTY     = 0.5;         // weight multiplier si DEGRADED
+// T2-J (2026-05-18): Grace period para algos recién backfilled
+const GRACE_DRAWS_TOTAL   = 100;         // si total histórico < 100, modo grace
+const GRACE_DEGRADE_THRESHOLD = 0.10;   // solo degrada en grace si hr < 10% (muy malo)
+const GRACE_DEGRADE_PENALTY   = 0.8;    // penalización suave en grace period
 
 export type AlgoHealthStatus = 'healthy' | 'degraded' | 'disabled';
 
@@ -59,20 +67,24 @@ export class AlgorithmHealthMonitor {
       // los algos más recientes mezclados → distribución aleatoria, no ventana per-algo.
       // FIX: CTE con ROW_NUMBER() PARTITION BY algo_name, igual que computeRecentHitRates().
       const { rows } = await this.pool.query<{
-        algo_name: string;
-        samples:   number;
-        hits_at_15: number;
+        algo_name:    string;
+        samples:      number;
+        hits_at_15:   number;
+        total_draws:  number;   // T2-J: total histórico del combo
       }>(
+        // T2-J FIX: añadir total_draws para detectar grace period
         `WITH recent AS (
            SELECT algo_name, rank_of_winner,
-                  ROW_NUMBER() OVER (PARTITION BY algo_name ORDER BY draw_date DESC) AS rn
+                  ROW_NUMBER() OVER (PARTITION BY algo_name ORDER BY draw_date DESC) AS rn,
+                  COUNT(*) OVER (PARTITION BY algo_name)                             AS total_draws
            FROM hitdash.algo_rank_history
            WHERE game_type = $1 AND draw_type = $2 AND half = $3
          )
          SELECT
            algo_name,
            COUNT(*)::int                                               AS samples,
-           SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS hits_at_15
+           SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS hits_at_15,
+           MAX(total_draws)::int                                       AS total_draws
          FROM recent
          WHERE rn <= $4
          GROUP BY algo_name`,
@@ -80,15 +92,26 @@ export class AlgorithmHealthMonitor {
       );
 
       for (const r of rows) {
-        const samples = Number(r.samples);
-        const hits    = Number(r.hits_at_15);
-        const hitRate = samples > 0 ? hits / samples : 0;
+        const samples     = Number(r.samples);
+        const hits        = Number(r.hits_at_15);
+        const totalDraws  = Number(r.total_draws);
+        const hitRate     = samples > 0 ? hits / samples : 0;
+        const inGrace     = totalDraws < GRACE_DRAWS_TOTAL;  // T2-J
 
         let status:           AlgoHealthStatus = 'healthy';
         let weight_multiplier = 1.0;
         let reason            = `hit@15=${(hitRate*100).toFixed(1)}% (baseline ${(BASELINE_RATE*100).toFixed(0)}%)`;
 
-        if (samples >= MIN_SAMPLES_KILL && hitRate < BASELINE_RATE * KILLSWITCH_FACTOR) {
+        if (inGrace) {
+          // T2-J: Grace period — solo penalización suave si hit_rate es muy bajo
+          if (samples >= MIN_SAMPLES_DEGRADE && hitRate < GRACE_DEGRADE_THRESHOLD) {
+            status            = 'degraded';
+            weight_multiplier = GRACE_DEGRADE_PENALTY;
+            reason            = `GRACE-DEGRADED: hit@15=${(hitRate*100).toFixed(1)}% < ${GRACE_DEGRADE_THRESHOLD*100}% (total=${totalDraws}, gracia <${GRACE_DRAWS_TOTAL})`;
+          } else {
+            reason = `GRACE: hit@15=${(hitRate*100).toFixed(1)}% (total=${totalDraws} draws, esperando ≥${GRACE_DRAWS_TOTAL} para evaluar)`;
+          }
+        } else if (samples >= MIN_SAMPLES_KILL && hitRate < BASELINE_RATE * KILLSWITCH_FACTOR) {
           status            = 'disabled';
           weight_multiplier = 0;
           reason            = `KILLSWITCH: hit@15=${(hitRate*100).toFixed(1)}% < baseline×1.10=${(BASELINE_RATE*KILLSWITCH_FACTOR*100).toFixed(1)}% (n=${samples})`;
