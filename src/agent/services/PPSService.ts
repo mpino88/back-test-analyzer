@@ -620,7 +620,11 @@ export class PPSService {
   // Criterios (todos deben cumplirse):
   //   1. total ≥ 20 sorteos en la ventana (sample size mínimo)
   //   2. rate ≥ 0.30 (2× baseline aleatorio @ N=15)
-  //   3. rate es el más alto entre todos los algoritmos
+  //   3. Wilson 95% CI lower bound ≥ CHAMPION_WILSON_FLOOR (M3 FIX 2026-05-18)
+  //      Sin este check, con n=20 y rate=30% el Wilson lower = 14.5% ≈ baseline
+  //      → cualquier racha aleatoria de 6/20 dispara un champion falso.
+  //      El Wilson floor garantiza que el edge está estadísticamente confirmado.
+  //   4. rate es el más alto entre todos los algoritmos
   //
   // Si nadie cumple → returns null (consenso normal opera)
   // Si hay champion → el consenso le da ~60% del peso total
@@ -630,38 +634,70 @@ export class PPSService {
     draw_type:   string,
     half:        string,
     windowDraws: number = 30
-  ): Promise<{ algo_name: string; hits: number; total: number; rate: number; edge: number } | null> {
-    const BASELINE       = 0.15;       // baseline aleatorio @ N=15
-    const CHAMPION_RATE  = 0.30;       // 2× baseline (1.5pp de edge mínimo)
-    const MIN_SAMPLES    = 20;         // sample size mínimo para evidencia
+  ): Promise<{ algo_name: string; hits: number; total: number; rate: number; edge: number; wilson_lower: number } | null> {
+    const BASELINE              = 0.15;    // baseline aleatorio @ N=15
+    const CHAMPION_RATE         = 0.30;    // 2× baseline (observado)
+    // M3 FIX (2026-05-18): Wilson 95% CI lower bound mínimo para aceptar champion.
+    // Con PAYOUT=$50, MIN_SAMPLES=20, rate=0.30 → Wilson lower ≈ 14.5% (< baseline).
+    // Requiriendo wilson_lower ≥ 0.20 se necesitan ~80 sorteos con rate≥30%
+    // para confirmar el champion, eliminando falsos positivos por muestras pequeñas.
+    const CHAMPION_WILSON_FLOOR = 0.20;    // Wilson lower bound mínimo @ 95% CI
+    const MIN_SAMPLES           = 20;      // sample size mínimo (guard de arranque)
 
     const hitRates = await this.computeRecentHitRates(game_type, draw_type, half, windowDraws, 15);
     if (hitRates.size === 0) return null;
 
-    let bestAlgo: string | null = null;
-    let bestRate = 0;
-    let bestHits = 0;
-    let bestTotal = 0;
+    let bestAlgo:         string | null = null;
+    let bestRate          = 0;
+    let bestHits          = 0;
+    let bestTotal         = 0;
+    let bestWilsonLower   = 0;
 
     for (const [algo, m] of hitRates) {
-      if (m.total < MIN_SAMPLES) continue;
-      if (m.rate < CHAMPION_RATE) continue;
+      if (m.total < MIN_SAMPLES)    continue;
+      if (m.rate  < CHAMPION_RATE)  continue;
+
+      // ── M3 FIX: Wilson 95% lower bound check ────────────────
+      const z  = 1.96;
+      const p  = m.rate;
+      const n  = m.total;
+      const z2 = z * z;
+      const denom  = 1 + z2 / n;
+      const center = (p + z2 / (2 * n)) / denom;
+      const spread = (z / denom) * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n));
+      const wilsonLower = Math.max(0, center - spread);
+
+      if (wilsonLower < CHAMPION_WILSON_FLOOR) {
+        logger.debug(
+          { algo, rate: m.rate, total: m.total, wilsonLower: wilsonLower.toFixed(4) },
+          'Champion candidate rejected: Wilson lower bound below floor (M3)'
+        );
+        continue;
+      }
+
       if (m.rate > bestRate) {
-        bestRate  = m.rate;
-        bestAlgo  = algo;
-        bestHits  = m.hits;
-        bestTotal = m.total;
+        bestRate        = m.rate;
+        bestAlgo        = algo;
+        bestHits        = m.hits;
+        bestTotal       = m.total;
+        bestWilsonLower = wilsonLower;
       }
     }
 
     if (!bestAlgo) return null;
 
+    logger.info(
+      { algo_name: bestAlgo, rate: bestRate, total: bestTotal, wilson_lower: bestWilsonLower.toFixed(4) },
+      '🏆 Champion Mode activado (M3-validado con Wilson lower bound)'
+    );
+
     return {
-      algo_name: bestAlgo,
-      hits:      bestHits,
-      total:     bestTotal,
-      rate:      +bestRate.toFixed(4),
-      edge:      +(bestRate - BASELINE).toFixed(4),
+      algo_name:    bestAlgo,
+      hits:         bestHits,
+      total:        bestTotal,
+      rate:         +bestRate.toFixed(4),
+      edge:         +(bestRate - BASELINE).toFixed(4),
+      wilson_lower: +bestWilsonLower.toFixed(4),
     };
   }
 

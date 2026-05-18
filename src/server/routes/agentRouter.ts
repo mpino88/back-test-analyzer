@@ -20,6 +20,7 @@ import { DigitAnalyzer }           from '../../agent/analysis/DigitAnalyzer.js';
 import { AutonomousOrchestrator }  from '../../agent/core/AutonomousOrchestrator.js';
 import { BootstrapLearning }           from '../../agent/learning/BootstrapLearning.js';
 import { AlgorithmCandidateService }   from '../../agent/services/AlgorithmCandidateService.js';
+import { StatisticalEdgeValidator }    from '../../agent/services/StatisticalEdgeValidator.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -42,6 +43,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const autonomousOrchestrator  = new AutonomousOrchestrator(agentPool);
   const bootstrapLearning       = new BootstrapLearning(agentPool);
   const algoComparativaService  = new AlgorithmCandidateService(agentPool);
+  const statisticalEdgeValidator = new StatisticalEdgeValidator(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -2566,6 +2568,38 @@ ${ragSummary}`;
       });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ─── GET /api/agent/statistical-edge ────────────────────────────
+  // F1 VALIDATION: ¿Tiene el sistema edge estadístico real vs azar?
+  // Computa hit_rate@N, z-score, Wilson CI, ROI por algoritmo.
+  // Requiere Genesis Bootstrap ejecutado (algo_rank_history con datos).
+  //
+  // Query params (todos opcionales — sin filtros = análisis global):
+  //   game_type  pick3 | pick4
+  //   draw_type  midday | evening
+  //   half       du | ab | cd
+  //   algo_name  nombre específico del algoritmo
+  //
+  // Response: EdgeValidationReport completo
+  // ────────────────────────────────────────────────────────────────
+  router.get('/statistical-edge', async (req: Request, res: Response) => {
+    try {
+      const filters: Record<string, string> = {};
+      if (req.query['game_type']) filters['game_type'] = req.query['game_type'] as string;
+      if (req.query['draw_type']) filters['draw_type'] = req.query['draw_type'] as string;
+      if (req.query['half'])      filters['half']      = req.query['half']      as string;
+      if (req.query['algo_name']) filters['algo_name'] = req.query['algo_name'] as string;
+
+      const report = await statisticalEdgeValidator.validate(
+        Object.keys(filters).length > 0 ? filters : undefined
+      );
+
+      res.json(report);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'statistical-edge failed');
+      res.status(500).json({ error: 'Error en validación estadística', details: err instanceof Error ? err.message : String(err) });
     }
   });
 
