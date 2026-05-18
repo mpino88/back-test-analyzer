@@ -461,23 +461,289 @@ export class CognitiveLearner {
       ranks['trend_momentum_sweet'] = rankOf(scored);
     }
 
-    // ── 9–21. Algoritmos restantes — usar frecuencia con variantes ─
-    // (aproximaciones in-memory; suficientes para calibración PPS)
-    // fibonacci_pisano eliminado (v2.4 — sin base empírica en RNG certificado)
-    const freqScored = allPairs.map(p => ({ pair: p, score: countAll[p] ?? 0 }));
-    const recentScored = allPairs.map(p => ({ pair: p, score: countRecent[p] ?? 0 }));
+    // ─────────────────────────────────────────────────────────────────────────
+    // FIX #2 (2026-05-18) — VERDAD RADICAL APEX
+    // Antes: 13 algoritmos compartían 2 rankings idénticos (freq vs recent_freq).
+    // La regresión de pesos en _optimizeWeights() era matemáticamente degenerada
+    // — no podía distinguir 8 algos del grupo freq ni 5 del grupo recent_freq.
+    // Ahora: cada algoritmo tiene su scoring diferenciado real, alineado con
+    // la lógica del algoritmo live (runPairs) en AnalysisEngine. Esto produce
+    // pesos cognitivos genuinos por algoritmo.
+    // ─────────────────────────────────────────────────────────────────────────
 
-    for (const algo of [
-      'pairs_correlation', 'streak', 'position',
-      'moving_averages', 'bayesian_score', 'transition_follow',
-      'calendar_pattern', 'decade_family', 'max_per_week_day',
-      'double_triple', 'cross_draw',
-      'est_individuales', 'terminal_analysis',   // v2.4 additions
-    ]) {
-      // Use frequency or recent frequency as approximation
-      const useRecent = ['bayesian_score', 'moving_averages', 'transition_follow', 'double_triple', 'est_individuales'].includes(algo);
-      const src = useRecent ? recentScored : freqScored;
-      ranks[algo] = rankOf([...src]);
+    // ── 9. pairs_correlation — co-ocurrencia de dígitos a y b ─────
+    // Frecuencia conjunta de dígitos vs producto de marginales (lift).
+    {
+      const digitFreq: number[] = new Array(10).fill(0) as number[];
+      for (const p of pairs) {
+        digitFreq[parseInt(p[0]!, 10)]! += 1;
+        digitFreq[parseInt(p[1]!, 10)]! += 1;
+      }
+      const totalDigits = digitFreq.reduce((a, b) => a + b, 0) || 1;
+      const scored = allPairs.map(p => {
+        const a = parseInt(p[0]!, 10);
+        const b = parseInt(p[1]!, 10);
+        const observed = (countAll[p] ?? 0) / Math.max(total, 1);
+        const expected = (digitFreq[a]! / totalDigits) * (digitFreq[b]! / totalDigits);
+        const lift = expected > 0 ? observed / expected : 0;
+        return { pair: p, score: lift };
+      });
+      ranks['pairs_correlation'] = rankOf(scored);
+    }
+
+    // ── 10. streak — racha de presencia consecutiva ──────────────
+    // Pares con racha activa de aparición en últimos sorteos.
+    {
+      const streakLen: Record<string, number> = {};
+      for (const p of allPairs) streakLen[p] = 0;
+      // Recorremos del final hacia atrás; mientras sigue apareciendo, contamos
+      for (let i = pairs.length - 1; i >= 0 && i >= pairs.length - 10; i--) {
+        const cur = pairs[i]!;
+        streakLen[cur] = (streakLen[cur] ?? 0) + 1;
+      }
+      const scored = allPairs.map(p => ({ pair: p, score: streakLen[p] ?? 0 }));
+      ranks['streak'] = rankOf(scored);
+    }
+
+    // ── 11. position — bias posicional por dígito ────────────────
+    // Usa la posición REAL en trainDraws.p1..p4 (no solo el par extraído).
+    {
+      const posBias: Record<string, number> = {};
+      const idxA = half === 'ab' ? 0 : half === 'cd' ? 2 : 1;
+      const idxB = half === 'ab' ? 1 : half === 'cd' ? 3 : 2;
+      const posCountA: number[] = new Array(10).fill(0) as number[];
+      const posCountB: number[] = new Array(10).fill(0) as number[];
+      for (const d of trainDraws) {
+        const digits = [d.p1, d.p2, d.p3, d.p4];
+        posCountA[digits[idxA]!]! += 1;
+        posCountB[digits[idxB]!]! += 1;
+      }
+      const totA = posCountA.reduce((a, b) => a + b, 0) || 1;
+      const totB = posCountB.reduce((a, b) => a + b, 0) || 1;
+      for (const p of allPairs) {
+        const a = parseInt(p[0]!, 10);
+        const b = parseInt(p[1]!, 10);
+        posBias[p] = (posCountA[a]! / totA) * (posCountB[b]! / totB);
+      }
+      const scored = allPairs.map(p => ({ pair: p, score: posBias[p] ?? 0 }));
+      ranks['position'] = rankOf(scored);
+    }
+
+    // ── 12. moving_averages — SMA7 menos SMA14 (momentum señal MA) ───
+    {
+      const last7  = pairs.slice(-7);
+      const last14 = pairs.slice(-14);
+      const sma7:  Record<string, number> = {};
+      const sma14: Record<string, number> = {};
+      for (const p of last7)  sma7[p]  = (sma7[p]  ?? 0) + 1;
+      for (const p of last14) sma14[p] = (sma14[p] ?? 0) + 1;
+      const scored = allPairs.map(p => ({
+        pair: p,
+        score: ((sma7[p] ?? 0) / 7) - ((sma14[p] ?? 0) / 14),
+      }));
+      ranks['moving_averages'] = rankOf(scored);
+    }
+
+    // ── 13. bayesian_score — combina 3 señales independientes ─────
+    // P(par | evidencia) ∝ freq_normalizada × hot_factor × recency_factor
+    {
+      const maxAll    = Math.max(...Object.values(countAll), 1);
+      const maxRecent = Math.max(...Object.values(countRecent), 1);
+      const lastSeen: Record<string, number> = {};
+      for (let i = pairs.length - 1; i >= 0; i--) {
+        const p = pairs[i]!;
+        if (lastSeen[p] === undefined) lastSeen[p] = pairs.length - i;
+      }
+      const scored = allPairs.map(p => {
+        const freqN   = (countAll[p] ?? 0) / maxAll;          // P(par)
+        const hotN    = (countRecent[p] ?? 0) / maxRecent;    // P(reciente)
+        const recency = 1 / Math.max(lastSeen[p] ?? total, 1); // 1/gap
+        return { pair: p, score: freqN * 0.4 + hotN * 0.4 + recency * 0.2 };
+      });
+      ranks['bayesian_score'] = rankOf(scored);
+    }
+
+    // ── 14. transition_follow — Markov-1 sucesor inmediato ───────
+    // P(par = X | último_par = Y). Diferente a markov_order2 que usa
+    // contexto adicional; aquí solo el sucesor directo último→siguiente.
+    {
+      const trans: Record<string, number> = {};
+      let total_trans = 0;
+      const lastPair = pairs[pairs.length - 1];
+      for (let i = 0; i < pairs.length - 1; i++) {
+        if (pairs[i] === lastPair) {
+          const next = pairs[i + 1]!;
+          trans[next] = (trans[next] ?? 0) + 1;
+          total_trans++;
+        }
+      }
+      // Mezclamos con la frecuencia global (Laplace smoothing) para evitar
+      // colapso cuando lastPair tiene pocas observaciones.
+      const scored = allPairs.map(p => {
+        const transProb = total_trans > 0 ? (trans[p] ?? 0) / total_trans : 0;
+        const globalProb = (countAll[p] ?? 0) / Math.max(total, 1);
+        return { pair: p, score: 0.7 * transProb + 0.3 * globalProb };
+      });
+      ranks['transition_follow'] = rankOf(scored);
+    }
+
+    // ── 15. calendar_pattern — frecuencia en el DOW del próximo sorteo ──
+    // Usa draw_date REAL de trainDraws para extraer DOW (0=Sun..6=Sat).
+    // Asumimos que el "próximo sorteo" es DOW(last_draw_date) + 1.
+    {
+      const last = trainDraws[trainDraws.length - 1];
+      const nextDate = last
+        ? new Date(new Date(last.draw_date).getTime() + 86400000)
+        : new Date();
+      const targetDOW = nextDate.getUTCDay();
+      const dowFreq: Record<string, number> = {};
+      for (let i = 0; i < trainDraws.length; i++) {
+        const d = trainDraws[i]!;
+        if (new Date(d.draw_date).getUTCDay() === targetDOW) {
+          const p = pairs[i]!;
+          dowFreq[p] = (dowFreq[p] ?? 0) + 1;
+        }
+      }
+      const scored = allPairs.map(p => ({ pair: p, score: dowFreq[p] ?? 0 }));
+      ranks['calendar_pattern'] = rankOf(scored);
+    }
+
+    // ── 16. decade_family — momentum por familia de decena (00-09, 10-19, ...) ──
+    {
+      const famCountAll:    number[] = new Array(10).fill(0) as number[];
+      const famCountRecent: number[] = new Array(10).fill(0) as number[];
+      for (const p of pairs)  famCountAll[parseInt(p[0]!, 10)]!    += 1;
+      for (const p of recent) famCountRecent[parseInt(p[0]!, 10)]! += 1;
+      const scored = allPairs.map(p => {
+        const fam = parseInt(p[0]!, 10);
+        const fa  = famCountAll[fam]!    / Math.max(total, 1);
+        const fr  = famCountRecent[fam]! / Math.max(recent.length, 1);
+        const momentum = fa > 0 ? fr / fa : (fr > 0 ? 10 : 0);
+        return { pair: p, score: momentum };
+      });
+      ranks['decade_family'] = rankOf(scored);
+    }
+
+    // ── 17. max_per_week_day — par con max frecuencia en DOW específico ──
+    // Diferencia con calendar_pattern: este premia consistencia DOW (DOW-only,
+    // sin smoothing global).
+    {
+      const last = trainDraws[trainDraws.length - 1];
+      const nextDate = last
+        ? new Date(new Date(last.draw_date).getTime() + 86400000)
+        : new Date();
+      const targetDOW = nextDate.getUTCDay();
+      const dowCounts: Record<string, number> = {};
+      let dowTotal = 0;
+      for (let i = 0; i < trainDraws.length; i++) {
+        if (new Date(trainDraws[i]!.draw_date).getUTCDay() === targetDOW) {
+          dowCounts[pairs[i]!] = (dowCounts[pairs[i]!] ?? 0) + 1;
+          dowTotal++;
+        }
+      }
+      const maxDow = Math.max(...Object.values(dowCounts), 1);
+      const scored = allPairs.map(p => ({
+        pair: p,
+        score: dowTotal > 0 ? (dowCounts[p] ?? 0) / maxDow : 0,
+      }));
+      ranks['max_per_week_day'] = rankOf(scored);
+    }
+
+    // ── 18. double_triple — detector de pares con dígitos repetidos ──
+    // Régimen: ¿estamos en periodo "dobles" (xx) o "únicos" (xy)?
+    {
+      let doublesRecent = 0;
+      let totalRecent = recent.length;
+      for (const p of recent) {
+        if (p[0] === p[1]) doublesRecent++;
+      }
+      const doubleRegime = totalRecent > 0 ? doublesRecent / totalRecent : 0.1;
+      // Si régimen es alto en dobles, premia dobles; si bajo, premia únicos.
+      const scored = allPairs.map(p => {
+        const isDouble = p[0] === p[1];
+        const baseFreq = (countAll[p] ?? 0) / Math.max(total, 1);
+        const regimeBoost = isDouble ? doubleRegime * 2 : (1 - doubleRegime);
+        return { pair: p, score: baseFreq * regimeBoost };
+      });
+      ranks['double_triple'] = rankOf(scored);
+    }
+
+    // ── 19. cross_draw — co-ocurrencia midday↔evening del MISMO día ──
+    // Sin DB call no podemos cruzar con el otro draw_type. Aproximamos con
+    // la correlación entre pares consecutivos (proxy de cross-draw similar
+    // a usar el sorteo previo como contexto vecino).
+    {
+      const consecutive: Record<string, number> = {};
+      let total_consec = 0;
+      for (let i = 1; i < pairs.length; i++) {
+        const cur = pairs[i]!;
+        const prev = pairs[i - 1]!;
+        // Co-ocurrencia: cuando aparece prev, ¿qué viene después?
+        // Esto es similar a markov pero usando el par-en-bloque-de-2.
+        const key = `${prev}:${cur}`;
+        consecutive[key] = (consecutive[key] ?? 0) + 1;
+        total_consec++;
+      }
+      const lastPair = pairs[pairs.length - 1] ?? '00';
+      const scored = allPairs.map(p => {
+        const cnt = consecutive[`${lastPair}:${p}`] ?? 0;
+        const baseFreq = (countAll[p] ?? 0) / Math.max(total, 1);
+        return {
+          pair: p,
+          score: total_consec > 0
+            ? 0.5 * (cnt / total_consec) + 0.5 * baseFreq
+            : baseFreq,
+        };
+      });
+      ranks['cross_draw'] = rankOf(scored);
+    }
+
+    // ── 20. est_individuales — hottest-due individual digits ─────
+    // Score(par a,b) = hot_score(a) × hot_score(b) — favorece pares
+    // donde AMBOS dígitos individuales tienen momentum positivo.
+    {
+      const digCountAll:    number[] = new Array(10).fill(0) as number[];
+      const digCountRecent: number[] = new Array(10).fill(0) as number[];
+      for (const p of pairs) {
+        digCountAll[parseInt(p[0]!, 10)]! += 1;
+        digCountAll[parseInt(p[1]!, 10)]! += 1;
+      }
+      for (const p of recent) {
+        digCountRecent[parseInt(p[0]!, 10)]! += 1;
+        digCountRecent[parseInt(p[1]!, 10)]! += 1;
+      }
+      const totA = digCountAll.reduce((a, b) => a + b, 0) || 1;
+      const totR = digCountRecent.reduce((a, b) => a + b, 0) || 1;
+      const hotScore = (d: number) => {
+        const fa = digCountAll[d]!    / totA;
+        const fr = digCountRecent[d]! / totR;
+        return fa > 0 ? fr / fa : (fr > 0 ? 10 : 0);
+      };
+      const scored = allPairs.map(p => {
+        const a = parseInt(p[0]!, 10);
+        const b = parseInt(p[1]!, 10);
+        return { pair: p, score: hotScore(a) * hotScore(b) };
+      });
+      ranks['est_individuales'] = rankOf(scored);
+    }
+
+    // ── 21. terminal_analysis — terminal (segundo dígito) momentum ──
+    // Agrupa por terminal: 00,10,20,..,90 todos terminan en 0.
+    {
+      const termCountAll:    number[] = new Array(10).fill(0) as number[];
+      const termCountRecent: number[] = new Array(10).fill(0) as number[];
+      for (const p of pairs)  termCountAll[parseInt(p[1]!, 10)]!    += 1;
+      for (const p of recent) termCountRecent[parseInt(p[1]!, 10)]! += 1;
+      const scored = allPairs.map(p => {
+        const term = parseInt(p[1]!, 10);
+        const fa = termCountAll[term]!    / Math.max(total, 1);
+        const fr = termCountRecent[term]! / Math.max(recent.length, 1);
+        const momentum = fa > 0 ? fr / fa : (fr > 0 ? 10 : 0);
+        // Combina con frecuencia del par específico (cap a aporte ≤50%)
+        const pairFreq = (countAll[p] ?? 0) / Math.max(total, 1);
+        return { pair: p, score: 0.6 * momentum + 0.4 * pairFreq * 10 };
+      });
+      ranks['terminal_analysis'] = rankOf(scored);
     }
 
     return ranks;

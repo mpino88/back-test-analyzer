@@ -214,29 +214,31 @@ describe('reason field', () => {
 });
 
 describe('AlgorithmHealthMonitor — algorithm catalog validation', () => {
-  const ALL_20_ALGORITHMS = [
+  // FIX #3 (2026-05-18): catálogo real es 21 (faltaba trend_momentum_sweet)
+  const ALL_21_ALGORITHMS = [
     'frequency', 'gap_analysis', 'hot_cold', 'pairs_correlation',
     'streak', 'position', 'moving_averages',
     'bayesian_score', 'transition_follow', 'markov_order2', 'calendar_pattern',
     'decade_family', 'max_per_week_day',
     'pair_return_cycle', 'sum_pattern_filter', 'double_triple', 'cross_draw',
-    'trend_momentum', 'est_individuales', 'terminal_analysis',
+    'trend_momentum', 'trend_momentum_sweet',   // ← sweet spot v5 (faltaba)
+    'est_individuales', 'terminal_analysis',
   ];
 
   const ELIMINATED_ALGORITHMS = ['fibonacci_pisano', 'cycle_detector', 'mirror_complement'];
 
-  it('20 algorithms remain after v2.4 elimination', () => {
-    expect(ALL_20_ALGORITHMS).toHaveLength(20);
+  it('21 algorithms remain after v2.4 elimination + sweet_spot addition', () => {
+    expect(ALL_21_ALGORITHMS).toHaveLength(21);
   });
 
-  it('eliminated algorithms are not in the 20 remaining', () => {
+  it('eliminated algorithms are not in the 21 remaining', () => {
     for (const eliminated of ELIMINATED_ALGORITHMS) {
-      expect(ALL_20_ALGORITHMS).not.toContain(eliminated);
+      expect(ALL_21_ALGORITHMS).not.toContain(eliminated);
     }
   });
 
   it('each algorithm can be classified with any hit_rate in [0,1]', () => {
-    for (const algo of ALL_20_ALGORITHMS) {
+    for (const algo of ALL_21_ALGORITHMS) {
       expect(() => classifyHealth(algo, 50, 0.15)).not.toThrow();
     }
   });

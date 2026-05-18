@@ -1,12 +1,15 @@
 // ═══════════════════════════════════════════════════════════════
-// HITDASH — AnalysisEngine v2.4.0  (MOTOR-Σ)
-// Orquestador de los 20 algoritmos con consensus ponderado por PPS.
+// HITDASH — AnalysisEngine v2.4.1 (MOTOR-Σ)
+// Orquestador de los 21 algoritmos con consensus ponderado por PPS.
 //
 // v2.4 (2026-05-13): Eliminados 3 algoritmos sin base empírica:
 //   • fibonacci_pisano  — numerología en RNG certificado
 //   • cycle_detector    — artefacto estadístico en series memoryless
 //   • mirror_complement — simetría sin mecanismo generativo
-//   23 → 20 algoritmos. Consensus más limpio, menos ruido espurio.
+//   23 − 3 + 1 (trend_momentum_sweet) = 21 algoritmos efectivos.
+//
+// v2.4.1 (2026-05-18): Coherencia ALG_TO_STRATEGY — añadidos
+//   est_individuales y terminal_analysis al mapping adaptive_weights.
 //
 // Capas de peso (jerarquía):
 //   1. PPS live (EMA sorteo a sorteo — aprendizaje real)
@@ -99,6 +102,10 @@ const ALG_TO_STRATEGY: Record<string, string> = {
   trend_momentum:        'trend_momentum',
   // Ballbot Sweet Spot (v5 — 2026-05-14) — bracket dorado empírico
   trend_momentum_sweet:  'trend_momentum_sweet',
+  // FIX #3 (2026-05-18): cerrar mapping incompleto — los 2 algos huérfanos del adaptive layer.
+  // Antes: caían al fallback `stratName = algName`, perdiendo capa adaptive_weights.
+  est_individuales:      'est_individuales',
+  terminal_analysis:     'terminal_analysis',
 };
 
 // Default top_n si la estrategia aún no tiene historial adaptativo
@@ -128,6 +135,9 @@ const DEFAULT_TOP_N_MAP: Record<string, number> = {
   trend_momentum:          15,
   // Sweet Spot (v5) — bracket dorado
   trend_momentum_sweet:    15,
+  // FIX #3 (2026-05-18): coherencia con ALG_TO_STRATEGY
+  est_individuales:        15,
+  terminal_analysis:       15,
 };
 
 // ─── Cognitive N — auto-determines optimal pair count from precision metrics ──
@@ -546,7 +556,7 @@ export class AnalysisEngine {
     // short-term (30d) frequency + hot_cold for momentum detection.
     // Blend: primary consensus + 25% momentum overlay captures both stability and trend.
     const SHORT_PERIOD: AnalysisPeriod = 30;
-    // v2.4: 20 algoritmos (eliminados fibonacci_pisano, cycle_detector, mirror_complement)
+    // v2.4: 21 algoritmos (eliminados 3 viejos, añadido trend_momentum_sweet en v5)
     const [rFreq, rGap, rHC, rPairs, rStreak, rPos, rMA,
            rFreqShort, rHCShort,
            rBayesian, rTransition, rMarkov2, rCalendar, rDecade, rMaxDow,
