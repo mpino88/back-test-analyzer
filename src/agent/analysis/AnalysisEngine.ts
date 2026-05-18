@@ -68,7 +68,7 @@ import type {
   PairAnalysis,
   RankedPair,
 } from '../types/analysis.types.js';
-import { ALGORITHM_WEIGHTS } from '../types/analysis.types.js';
+import { ALGORITHM_WEIGHTS, CANONICAL_ALGORITHMS } from '../types/analysis.types.js';
 
 const logger = pino({ name: 'AnalysisEngine' });
 
@@ -720,6 +720,25 @@ export class AnalysisEngine {
       // Eliminados (v2.4): fibonacci_pisano, cycle_detector, mirror_complement
       ['terminal_analysis', effectiveWeight('terminal_analysis'), rTerminalAnalysis],
     ];
+
+    // FIX T2-A (2026-05-18) — SSOT validation:
+    // Garantiza que algResults declara EXACTAMENTE el catálogo canónico.
+    // Si alguien añade un algo a CANONICAL_ALGORITHMS pero olvida añadirlo
+    // a algResults (o viceversa), esto lanza un error claro en lugar de un
+    // bug silencioso en el consensus. Test catalogConsistency también valida
+    // estáticamente esta condición.
+    const algNamesDeclared = new Set(algResults.map(([name]) => name));
+    const algNamesCanonical = new Set(CANONICAL_ALGORITHMS);
+    if (algNamesDeclared.size !== algNamesCanonical.size ||
+        ![...algNamesCanonical].every(a => algNamesDeclared.has(a))) {
+      const missing = [...algNamesCanonical].filter(a => !algNamesDeclared.has(a));
+      const extra   = [...algNamesDeclared].filter(a => !algNamesCanonical.has(a));
+      throw new Error(
+        `AnalysisEngine.algResults desincronizado con CANONICAL_ALGORITHMS. ` +
+        `Faltantes: [${missing.join(', ')}] · Extras: [${extra.join(', ')}]. ` +
+        `Actualiza ambos en sincronía o el consensus producirá data incompleta.`
+      );
+    }
 
     // Accumulate weighted scores per pair "00"-"99"
     const accumulated: Record<string, number> = {};

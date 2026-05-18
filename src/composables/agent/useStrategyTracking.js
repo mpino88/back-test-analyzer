@@ -16,7 +16,22 @@ export const STRATEGY_META = {
   frequency_rank:      { icon: '📊', color: '#4ade80', label: 'Frecuencia',     category: 'baseline',   optimalTopN: [15, 20] },
   position_bias:       { icon: '🎯', color: '#a3e635', label: 'Pos. Bias',      category: 'structural', optimalTopN: [20, 30] },
   pair_correlation:    { icon: '🔗', color: '#f472b6', label: 'Correlación',    category: 'structural', optimalTopN: [20, 30] },
-  fibonacci_pisano:    { icon: '🌀', color: '#818cf8', label: 'Fibonacci',      category: 'cyclic',     optimalTopN: [20, 30] },
+  // FIX T2-I (2026-05-18): fibonacci_pisano removed — eliminated v2.4
+  // Strategies del catálogo v2 añadidas para completitud frontend:
+  bayesian_score:      { icon: '🧠', color: '#a78bfa', label: 'Bayesian',       category: 'multi',      optimalTopN: [12, 18] },
+  transition_follow:   { icon: '➡️', color: '#fb923c', label: 'Transition',     category: 'markov',     optimalTopN: [12, 18] },
+  markov_order2:       { icon: '🔗', color: '#f87171', label: 'Markov-2',       category: 'markov',     optimalTopN: [12, 18] },
+  calendar_pattern:    { icon: '📅', color: '#fbbf24', label: 'Calendar',       category: 'temporal',   optimalTopN: [15, 20] },
+  decade_family:       { icon: '🔢', color: '#4ade80', label: 'Decade',         category: 'family',     optimalTopN: [15, 20] },
+  max_per_weekday:     { icon: '📆', color: '#fcd34d', label: 'Max DOW',        category: 'temporal',   optimalTopN: [15, 20] },
+  pair_return_cycle:   { icon: '🔄', color: '#60a5fa', label: 'Return Cycle',   category: 'cyclic',     optimalTopN: [10, 15] },
+  sum_pattern_filter:  { icon: '➕', color: '#22d3ee', label: 'Sum Filter',     category: 'structural', optimalTopN: [15, 20] },
+  double_triple_detector:{ icon: '🎰', color: '#f472b6', label: 'Doubles',      category: 'regime',     optimalTopN: [18, 25] },
+  cross_draw_correlation:{ icon: '🌐', color: '#a3e635', label: 'Cross-Draw',   category: 'cross',      optimalTopN: [15, 20] },
+  trend_momentum:      { icon: '🚀', color: '#f59e0b', label: 'Trend Pro',      category: 'momentum',   optimalTopN: [12, 18] },
+  trend_momentum_sweet:{ icon: '🍯', color: '#fb923c', label: 'Sweet Spot',     category: 'momentum',   optimalTopN: [12, 15] },
+  est_individuales:    { icon: '🔥', color: '#ef4444', label: 'Hot Digits',     category: 'digit',      optimalTopN: [15, 20] },
+  terminal_analysis:   { icon: '🎯', color: '#22d3ee', label: 'Terminal',       category: 'digit',      optimalTopN: [15, 20] },
   apex_adaptive:       { icon: '🏆', color: '#fbbf24', label: 'APEX Adaptive',  category: 'meta',       optimalTopN: [12, 18] },
   consensus_top:       { icon: '⚖️', color: '#94a3b8', label: 'Consensus',      category: 'meta',       optimalTopN: [15, 20] },
 };
@@ -87,14 +102,8 @@ export const STRATEGY_BRAIN = {
     dataNeeds: '200+ sorteos para estimación robusta de probabilidades conjuntas',
     learningNote: 'Estrategia complementaria — alta correlación con frequency_rank',
   },
-  fibonacci_pisano: {
-    what: 'Analiza frecuencia de pares por fase del período de Pisano (ciclo de 60)',
-    how:  'phase = draw_index % 60  →  score(XY) = freq(XY | phase) / freq_general(XY)',
-    optimal: 'Si el generador subyacente tiene periodicidad oculta (pseudo-random seeds)',
-    weak:    'En generadores verdaderamente aleatorios no aporta señal real',
-    dataNeeds: '>60 sorteos para al menos un ciclo completo de Pisano',
-    learningNote: 'Estrategia especulativa — peso EMA suele caer con el tiempo si el juego es truly random',
-  },
+  // FIX T2-I (2026-05-18): fibonacci_pisano removido — eliminated v2.4
+  // (sin base empírica en RNG certificado, Pisano period != predictor)
   apex_adaptive: {
     what: 'Meta-estrategia: combina todas las anteriores con pesos aprendidos adaptativamente',
     how:  'score(XY) = Σ(weight_i × score_i(XY)) + bonus_precision(top_n_i / 15)',

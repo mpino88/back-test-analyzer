@@ -1164,8 +1164,14 @@ function algoLabel(name) {
     pair_return_cycle: '🔁 Ciclo Retorno', sum_pattern_filter: '➕ Suma Patrón',
     double_triple: '🎲 Doble/Triple', cross_draw: '✕ Cross-Draw',
     moving_avg_signal: '📈 Moving Avg', position_bias: '🎯 Sesgo Posicional',
-    pair_correlation: '🔗 Correlación', fibonacci_pisano: '🌀 FibResonance',
+    pair_correlation: '🔗 Correlación',
+    // FIX T2-I (2026-05-18): fibonacci_pisano removed (eliminated v2.4)
     decade_family: '🏘 Familias Décadas', max_per_weekday: '📆 Máx. Día',
+    // Catálogo v2 — algos canónicos faltantes en mapping legacy
+    trend_momentum_sweet: '🍯 Sweet Spot', est_individuales: '🔥 Hot Digits',
+    terminal_analysis: '🎯 Terminal', bayesian_score: '🧠 Bayesian',
+    transition_follow: '➡️ Transition', markov_order2: '🔗 Markov-2',
+    streak: '🔄 Streak',
   };
   return MAP[name] ?? name;
 }

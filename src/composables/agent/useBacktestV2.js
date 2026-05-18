@@ -15,7 +15,22 @@ const STRATEGY_META = {
   streak_reversal:   { label: 'Streak Reversal',    icon: '🔄', color: '#06b6d4' },
   position_bias:     { label: 'Position Bias',      icon: '🎯', color: '#84cc16' },
   pair_correlation:  { label: 'Pair Correlation',   icon: '🔗', color: '#f97316' },
-  fibonacci_pisano:  { label: 'Fibonacci/Pisano',   icon: '🌀', color: '#a78bfa' },
+  // FIX T2-I (2026-05-18): fibonacci_pisano removed — eliminated v2.4
+  // 8 nuevas strategies del catálogo v2:
+  bayesian_score:    { label: 'Bayesian Score',     icon: '🧠', color: '#a78bfa' },
+  transition_follow: { label: 'Transition Follow',  icon: '➡️', color: '#fb923c' },
+  markov_order2:     { label: 'Markov Order-2',     icon: '🔗', color: '#f87171' },
+  calendar_pattern:  { label: 'Calendar Pattern',   icon: '📅', color: '#fbbf24' },
+  decade_family:     { label: 'Decade Family',      icon: '🔢', color: '#4ade80' },
+  max_per_weekday:   { label: 'Max per Weekday',    icon: '📆', color: '#fcd34d' },
+  pair_return_cycle: { label: 'Pair Return Cycle',  icon: '🔄', color: '#60a5fa' },
+  sum_pattern_filter:{ label: 'Sum Pattern Filter', icon: '➕', color: '#22d3ee' },
+  double_triple_detector:{ label: 'Doubles Detector', icon: '🎰', color: '#f472b6' },
+  cross_draw_correlation:{ label: 'Cross-Draw Corr', icon: '🌐', color: '#a3e635' },
+  trend_momentum:    { label: 'Trend Momentum Pro', icon: '🚀', color: '#f59e0b' },
+  trend_momentum_sweet:{ label: 'Sweet Spot',       icon: '🍯', color: '#fb923c' },
+  est_individuales:  { label: 'Hot Digits',         icon: '🔥', color: '#ef4444' },
+  terminal_analysis: { label: 'Terminal Analysis',  icon: '🎯', color: '#22d3ee' },
   consensus_top:     { label: 'Consensus Top',      icon: '🧩', color: '#64748b' },
   apex_adaptive:     { label: 'APEX Adaptive',      icon: '🦾', color: '#60a5fa' },
 };
