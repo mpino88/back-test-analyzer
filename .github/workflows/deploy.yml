@@ -78,12 +78,48 @@ jobs:
               'until docker compose exec -T hitdash-postgres pg_isready -U hitdash -d hitdash -q; do sleep 2; done'
             echo "✅ PostgreSQL listo"
 
-            # ── PASO 3: Construir imagen sin caché ────────────────────
+            # ── PASO 3: Pre-build — verificar recursos + limpiar cache antiguo ──
+            # LECCIÓN VPS FREEZE (2026-05-19): --no-cache forzaba 3× npm ci completos
+            # (Stage1+2+3) → pico RAM 1.8GB → VPS con 115MB libre → OOM killer → freeze.
+            # CAUSA ADICIONAL: build cache acumulado (5.15GB) + disco al 89% → ENOSPC.
+            # SOLUCIÓN:
+            #   1. Verificar RAM y disco antes del build
+            #   2. Limpiar build cache >24h de antigüedad si disco < 8GB libre
+            #   3. Usar build CON CACHE: si package.json no cambió → npm ci cacheado
+            #      solo tsc/vite rebuildan → pico RAM ~400MB (vs 1.8GB antes)
+            #   4. DOCKER_BUILDKIT=1 para cache mounts en Dockerfile
+            echo "🔍 Verificando recursos del sistema antes del build..."
+            FREE_DISK_KB=$(df / | awk 'NR==2{print $4}')
+            FREE_MEM_MB=$(free -m | awk '/^Mem:/{print $7}')
+            echo "💾 Disco libre: $((FREE_DISK_KB/1024))MB | RAM disponible: ${FREE_MEM_MB}MB"
+
+            if [ "$FREE_DISK_KB" -lt 6000000 ]; then
+              echo "⚠️  Disco < 6GB libre — limpiando build cache antiguo..."
+              docker builder prune -f --filter until=24h || true
+              docker image prune -f || true
+              echo "💾 Disco tras limpieza: $(df / | awk 'NR==2{print int($4/1024)}')MB libre"
+            fi
+
+            if [ "$FREE_MEM_MB" -lt 600 ]; then
+              echo "⚠️  RAM < 600MB disponible — liberando page cache..."
+              sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+              FREE_MEM_MB=$(free -m | awk '/^Mem:/{print $7}')
+              echo "💾 RAM tras liberación: ${FREE_MEM_MB}MB disponible"
+            fi
+
+            # Abortar si el sistema no tiene capacidad mínima de build
+            if [ "$FREE_DISK_KB" -lt 3000000 ]; then
+              echo "❌ Disco crítico: menos de 3GB libre. Deploy abortado."
+              echo "Ejecutar en VPS: docker system prune -f && docker builder prune -af"
+              exit 1
+            fi
+
+            # ── PASO 3: Construir imagen CON CACHÉ (fix OOM 2026-05-19) ────────
             # CRÍTICO: build ANTES de migraciones — la imagen nueva contiene
             # el JS compilado (dist-server/agent/db/migrate.js) que se ejecutará
             # en el siguiente paso. Orden invertido = migraciones con imagen vieja.
-            echo "🔨 Construyendo imagen hitdash-server..."
-            docker compose build --no-cache hitdash-server
+            echo "🔨 Construyendo imagen hitdash-server (con cache Docker)..."
+            DOCKER_BUILDKIT=1 docker compose build hitdash-server
 
             # ── PASO 4: Ejecutar migraciones SQL con imagen nueva ─────
             # Ejecuta el migrate.js ya compilado en Stage 2 del Dockerfile.
@@ -146,7 +182,9 @@ jobs:
             # Garantiza que los gráficos muestren datos reales en el primer login.
             # NOTA v2.4: fibonacci_pisano REMOVIDO (sin base empírica, eliminado del motor).
             echo "📊 Disparando Genesis Backtest (pick3 + pick4, 90 días)..."
-            ALL_STRATS='["frequency_rank","momentum_ema","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","consensus_top","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","apex_adaptive"]'
+            # FIX (2026-05-18): eliminados momentum_ema/consensus_top/apex_adaptive
+            # — fueron removidos del catálogo canónico en v2.4 (phantom strategies)
+            ALL_STRATS='["frequency_rank","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","pair_return_cycle","sum_pattern_filter","double_triple_detector","cross_draw_correlation","trend_momentum","trend_momentum_sweet","est_individuales","terminal_analysis"]'
             curl -sf -X POST "http://localhost:3005/api/backtest-control/run" \
               -H "Content-Type: application/json" \
               -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \

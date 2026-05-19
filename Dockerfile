@@ -1,9 +1,15 @@
+# syntax=docker/dockerfile:1
 # ═══════════════════════════════════════════════════════════════
 # HITDASH — Dockerfile (Node.js App)
 # Multi-stage:
 #   Stage 1 (frontend-builder): compila Vue 3 → /app/dist
 #   Stage 2 (server-builder):   compila TypeScript → /app/dist-server
 #   Stage 3 (runtime):          imagen final mínima, JS puro (sin ts-node)
+#
+# FIX OOM (2026-05-19): BuildKit cache mounts para npm.
+#   Sin cache mounts: cada rebuild = 3× npm ci completos = pico 1.8GB RAM
+#   Con cache mounts: npm ci cachea node_modules entre builds = pico ~350MB RAM
+#   El cache de npm persiste en /var/cache/buildkit/npmcache entre deploys.
 # ═══════════════════════════════════════════════════════════════
 
 # ─── Stage 1: Build frontend Vue 3 ──────────────────────────────
@@ -11,7 +17,10 @@ FROM node:20-alpine AS frontend-builder
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+# BuildKit cache mount: node_modules de deps reutilizados entre builds
+# Cuando package.json NO cambia → esta capa viene del cache → 0 RAM extra
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --cache /root/.npm
 
 # VITE_AGENT_API_KEY debe inyectarse en build-time para que Vite
 # lo incluya en el bundle estático (import.meta.env.VITE_AGENT_API_KEY)
@@ -28,7 +37,8 @@ FROM node:20-alpine AS server-builder
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --cache /root/.npm
 
 COPY src ./src
 COPY tsconfig.server.json ./
@@ -42,7 +52,8 @@ WORKDIR /app
 
 # Solo dependencias de producción — sin typescript ni ts-node
 COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --ignore-scripts --cache /root/.npm
 
 # JS compilado del servidor (rootDir=src → dist-server/{server,agent}/...)
 COPY --from=server-builder /app/dist-server ./dist-server
