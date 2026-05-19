@@ -21,6 +21,12 @@ import { AutonomousOrchestrator }  from '../../agent/core/AutonomousOrchestrator
 import { BootstrapLearning }           from '../../agent/learning/BootstrapLearning.js';
 import { AlgorithmCandidateService }   from '../../agent/services/AlgorithmCandidateService.js';
 import { StatisticalEdgeValidator }    from '../../agent/services/StatisticalEdgeValidator.js';
+import { EVTScorer }                   from '../../agent/services/EVTScorer.js';
+import { ContextGating }               from '../../agent/services/ContextGating.js';
+import { TransferEntropyAnalyzer }     from '../../agent/services/TransferEntropyAnalyzer.js';
+import { ThompsonSampler }             from '../../agent/services/ThompsonSampler.js';
+import { ConformalPredictor }          from '../../agent/services/ConformalPredictor.js';
+import { HelixV2Engine }               from '../../agent/services/HelixV2Engine.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -44,6 +50,12 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const bootstrapLearning       = new BootstrapLearning(agentPool);
   const algoComparativaService  = new AlgorithmCandidateService(agentPool);
   const statisticalEdgeValidator = new StatisticalEdgeValidator(agentPool);
+  const evtScorer                = new EVTScorer(agentPool);
+  const contextGating            = new ContextGating(agentPool);
+  const teAnalyzer               = new TransferEntropyAnalyzer(agentPool);
+  const thompsonSampler          = new ThompsonSampler(agentPool);
+  const conformalPredictor       = new ConformalPredictor(agentPool);
+  const helixV2Engine            = new HelixV2Engine(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -2600,6 +2612,310 @@ ${ragSummary}`;
     } catch (err) {
       logger.error({ error: err instanceof Error ? err.message : String(err) }, 'statistical-edge failed');
       res.status(500).json({ error: 'Error en validación estadística', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ─── GET /api/agent/evt-state ────────────────────────────────────
+  // Extreme Value Theory regime + Hawkes cluster detection.
+  //
+  // Returns the current EVT state (Hawkes intensities, overdue scores,
+  // regime classification), the corresponding ContextGating weight map,
+  // and a condensed retrovalidation summary for the last 90 days.
+  //
+  // Cache strategy: if hitdash.evt_state_cache has a row for today that
+  // is less than 1 hour old, it is served from cache; otherwise the full
+  // computation runs and the result is upserted into the cache table.
+  //
+  // Query params (all optional):
+  //   game_type   pick3 | pick4            (default: pick4)
+  //   draw_type   midday | evening          (default: evening)
+  //   half        du | ab | cd             (default: ab)
+  //   as_of_date  YYYY-MM-DD              (default: today)
+  //
+  // Response:
+  //   evt_state    — EVTState object
+  //   gating       — GatingWeights object
+  //   retro_summary — condensed RetroReport (by_regime only)
+  // ────────────────────────────────────────────────────────────────
+  router.get('/evt-state', async (req: Request, res: Response) => {
+    try {
+      const game_type  = (req.query['game_type']  as string | undefined) ?? 'pick4';
+      const draw_type  = (req.query['draw_type']  as string | undefined) ?? 'evening';
+      const half       = (req.query['half']       as string | undefined) ?? 'ab';
+      const as_of_date = (req.query['as_of_date'] as string | undefined);
+
+      const today     = as_of_date ?? new Date().toISOString().slice(0, 10);
+      const cacheKey  = { game_type, draw_type, as_of_date: today };
+
+      // ── Cache lookup ────────────────────────────────────────
+      let cachedRow: {
+        regime: string; regime_strength: number;
+        days_since_quad: number | null; days_since_triple: number | null;
+        quad_hawkes_intensity: number; triple_hawkes_intensity: number;
+        computed_at: Date;
+      } | undefined;
+
+      try {
+        const cacheResult = await agentPool.query<typeof cachedRow & { computed_at: Date }>(
+          `SELECT regime, regime_strength, days_since_quad, days_since_triple,
+                  quad_hawkes_intensity, triple_hawkes_intensity, computed_at
+           FROM hitdash.evt_state_cache
+           WHERE game_type = $1 AND draw_type = $2 AND as_of_date = $3
+             AND computed_at > NOW() - INTERVAL '1 hour'
+           LIMIT 1`,
+          [game_type, draw_type, today],
+        );
+        if (cacheResult.rows.length > 0) {
+          cachedRow = cacheResult.rows[0];
+        }
+      } catch {
+        // Table may not exist yet — silently skip cache
+      }
+
+      // ── Compute EVT state ────────────────────────────────────
+      const evt_state = await evtScorer.computeState(game_type, draw_type, as_of_date);
+
+      // ── Upsert into cache if table exists ────────────────────
+      if (!cachedRow) {
+        try {
+          await agentPool.query(
+            `INSERT INTO hitdash.evt_state_cache
+               (game_type, draw_type, as_of_date, regime, regime_strength,
+                days_since_quad, days_since_triple,
+                quad_hawkes_intensity, triple_hawkes_intensity)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             ON CONFLICT (game_type, draw_type, as_of_date)
+             DO UPDATE SET
+               regime                  = EXCLUDED.regime,
+               regime_strength         = EXCLUDED.regime_strength,
+               days_since_quad         = EXCLUDED.days_since_quad,
+               days_since_triple       = EXCLUDED.days_since_triple,
+               quad_hawkes_intensity   = EXCLUDED.quad_hawkes_intensity,
+               triple_hawkes_intensity = EXCLUDED.triple_hawkes_intensity,
+               computed_at             = now()`,
+            [
+              game_type, draw_type, today,
+              evt_state.regime, evt_state.regime_strength,
+              evt_state.days_since_quad, evt_state.days_since_triple,
+              evt_state.quad_hawkes_intensity, evt_state.triple_hawkes_intensity,
+            ],
+          );
+        } catch {
+          // Cache write failure is non-fatal
+        }
+      }
+
+      // ── Compute gating weights ───────────────────────────────
+      const gating = await contextGating.computeGating(game_type, draw_type, half, as_of_date);
+
+      // ── Retrovalidation (last 90 days) ───────────────────────
+      const to_date   = today;
+      const from_date = new Date(Date.now() - 90 * 86400 * 1000).toISOString().slice(0, 10);
+      const retro     = await evtScorer.retrovalidate(game_type, draw_type, from_date, to_date);
+
+      // Condensed summary: by_regime only (no full draw list)
+      const retro_summary = {
+        game_type:                     retro.game_type,
+        draw_type:                     retro.draw_type,
+        from_date:                     retro.from_date,
+        to_date:                       retro.to_date,
+        total_draws:                   retro.total_draws,
+        by_regime:                     retro.by_regime,
+        hawkes_window_draws:           retro.hawkes_window_draws,
+        hawkes_window_double_win_rate: retro.hawkes_window_double_win_rate,
+        baseline_double_win_rate:      retro.baseline_double_win_rate,
+        total_improvement_draws:       retro.total_improvement_draws,
+      };
+
+      logger.info(
+        { game_type, draw_type, half, regime: evt_state.regime, cache_hit: !!cachedRow },
+        'evt-state served',
+      );
+
+      res.json({
+        evt_state,
+        gating,
+        retro_summary,
+        meta: { cache_hit: !!cachedRow, computed_at: new Date().toISOString() },
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'evt-state failed');
+      res.status(500).json({
+        error: 'Error computing EVT state',
+        details: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  // ─── GET /api/agent/transfer-entropy ─────────────────────────────────
+  // Query params: game_type, draw_type
+  // Returns full TEReport with per-digit MI analysis and investor verdict.
+  router.get('/transfer-entropy', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query['game_type'] as string) || 'pick3';
+      const draw_type = (req.query['draw_type'] as string) || 'evening';
+
+      const report = await teAnalyzer.analyze(game_type, draw_type);
+
+      logger.info(
+        { game_type, draw_type, overall_verdict: report.overall_verdict, n_digits: report.results.length },
+        'transfer-entropy served',
+      );
+
+      res.json(report);
+    } catch (err) {
+      logger.error(
+        { error: err instanceof Error ? err.message : String(err) },
+        'transfer-entropy failed',
+      );
+      res.status(500).json({
+        error:   'Error computing Transfer Entropy',
+        details: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  // ─── GET /api/agent/thompson-state ───────────────────────────────────
+  // Query params: game_type, draw_type, half, n_at (default 15)
+  // Returns Array<ThompsonState> sorted by ucb_score desc.
+  router.get('/thompson-state', async (req: Request, res: Response) => {
+    try {
+      const game_type    = (req.query['game_type'] as string) || 'pick3';
+      const draw_type    = (req.query['draw_type'] as string) || 'evening';
+      const half         = (req.query['half']      as string) || 'du';
+      const n_at_raw     = req.query['n_at'];
+      const n_at         = n_at_raw ? parseInt(n_at_raw as string, 10) : 15;
+
+      const stateMap = await thompsonSampler.buildState(game_type, draw_type, half, n_at, 90);
+
+      const stateArray = Array.from(stateMap.values())
+        .sort((a, b) => b.ucb_score - a.ucb_score);
+
+      logger.info(
+        { game_type, draw_type, half, n_at, n_algos: stateArray.length },
+        'thompson-state served',
+      );
+
+      res.json({
+        game_type,
+        draw_type,
+        half,
+        n_at,
+        n_algos:     stateArray.length,
+        generated_at: new Date().toISOString(),
+        states:      stateArray,
+      });
+    } catch (err) {
+      logger.error(
+        { error: err instanceof Error ? err.message : String(err) },
+        'thompson-state failed',
+      );
+      res.status(500).json({
+        error:   'Error computing Thompson state',
+        details: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  // ─── GET /api/agent/conformal-calibration ────────────────────────────
+  // Query params: game_type, draw_type, half, target (0.80|0.90, default 0.80)
+  // Returns CalibrationResult with conformal thresholds guaranteed by theorem.
+  router.get('/conformal-calibration', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query['game_type'] as string) || 'pick3';
+      const draw_type = (req.query['draw_type'] as string) || 'evening';
+      const half      = (req.query['half']      as string) || 'du';
+
+      const calibration = await conformalPredictor.calibrate(game_type, draw_type, half, 365);
+
+      logger.info(
+        {
+          game_type, draw_type, half,
+          algo_name: calibration.algo_name,
+          n: calibration.n_calibration,
+          threshold_80: calibration.coverage_80,
+        },
+        'conformal-calibration served',
+      );
+
+      res.json(calibration);
+    } catch (err) {
+      logger.error(
+        { error: err instanceof Error ? err.message : String(err) },
+        'conformal-calibration failed',
+      );
+      res.status(500).json({
+        error:   'Error computing conformal calibration',
+        details: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  // ─── GET /api/agent/helix-v2/predict ─────────────────────────────────
+  // Query params: game_type, draw_type, half, as_of_date (optional)
+  // Returns HelixV2Prediction integrating all 4 HELIX phases.
+  router.get('/helix-v2/predict', async (req: Request, res: Response) => {
+    try {
+      const game_type   = (req.query['game_type']   as string) || 'pick3';
+      const draw_type   = (req.query['draw_type']   as string) || 'evening';
+      const half        = (req.query['half']        as string) || 'du';
+      const as_of_date  = req.query['as_of_date'] as string | undefined;
+
+      const prediction = await helixV2Engine.predict(game_type, draw_type, half, as_of_date);
+
+      logger.info(
+        {
+          game_type, draw_type, half,
+          regime: prediction.regime,
+          helix_v2_n: prediction.helix_v2_n,
+          coverage_80_threshold: prediction.coverage_80_threshold,
+        },
+        'helix-v2/predict served',
+      );
+
+      res.json(prediction);
+    } catch (err) {
+      logger.error(
+        { error: err instanceof Error ? err.message : String(err) },
+        'helix-v2/predict failed',
+      );
+      res.status(500).json({
+        error:   'Error computing HELIX v2 prediction',
+        details: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
+  // ─── GET /api/agent/helix-v2/retrovalidate ───────────────────────────
+  // Query params: game_type, draw_type, half
+  // Returns HelixV2RetroReport aggregating Phases 1, 3 and 4 retro results.
+  router.get('/helix-v2/retrovalidate', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query['game_type'] as string) || 'pick3';
+      const draw_type = (req.query['draw_type'] as string) || 'evening';
+      const half      = (req.query['half']      as string) || 'du';
+
+      const report = await helixV2Engine.retrovalidate(game_type, draw_type, half);
+
+      logger.info(
+        {
+          game_type, draw_type, half,
+          helix_v2_hit_rate: report.helix_v2_hit_rate,
+          total_improvement_pp: report.total_improvement_pp,
+        },
+        'helix-v2/retrovalidate served',
+      );
+
+      res.json(report);
+    } catch (err) {
+      logger.error(
+        { error: err instanceof Error ? err.message : String(err) },
+        'helix-v2/retrovalidate failed',
+      );
+      res.status(500).json({
+        error:   'Error computing HELIX v2 retro-validation',
+        details: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 
