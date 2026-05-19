@@ -73,18 +73,19 @@
           </div>
         </div>
 
-        <div v-if="apex" class="apex-card">
-          <div class="apex-card__label">🏆 APEX Adaptive</div>
-          <div class="apex-rate" :style="{ color: apex.color }">{{ pct(apex.hit_rate ?? apex.win_rate) }}</div>
+        <!-- E4 FIX: apex → leader (top-ranked canonical algo, not apex_adaptive meta) -->
+        <div v-if="leader" class="apex-card">
+          <div class="apex-card__label">🥇 {{ leader.label ?? leader.name }}</div>
+          <div class="apex-rate" :style="{ color: leader.color }">{{ pct(leader.hit_rate ?? leader.win_rate) }}</div>
           <div class="apex-health">
             <div class="health-bar-bg">
-              <div class="health-bar-fill" :style="{ width: apex.adaptiveHealth + '%', background: healthColor(apex.adaptiveHealth) }"></div>
+              <div class="health-bar-fill" :style="{ width: leader.adaptiveHealth + '%', background: healthColor(leader.adaptiveHealth) }"></div>
             </div>
-            <span class="health-val">{{ apex.adaptiveHealth }}% salud</span>
+            <span class="health-val">{{ leader.adaptiveHealth }}% salud</span>
           </div>
-          <div class="apex-meta">Meta-estrategia · pesos adaptativos</div>
-          <div class="apex-projection" v-if="apex.projection?.values?.length">
-            <span v-for="(v, i) in apex.projection.values" :key="i" class="proj-pill proj-pill--gold">
+          <div class="apex-meta">Estrategia líder · {{ collective?.aboveBaseline ?? 0 }}/{{ collective?.totalStrategies ?? 21 }} sobre baseline</div>
+          <div class="apex-projection" v-if="leader.projection?.values?.length">
+            <span v-for="(v, i) in leader.projection.values" :key="i" class="proj-pill proj-pill--gold">
               S+{{ i+1 }}: {{ pct(v) }}
             </span>
           </div>
@@ -101,19 +102,20 @@
           <div class="ci-card">
             <div class="ci-card__val" :style="{ color: '#60a5fa' }">{{ pct(collective.weightedMean) }}</div>
             <div class="ci-card__lbl">Consenso ponderado</div>
-            <div class="ci-card__sub">media de {{ strategies.filter(s => !s.isApex).length }} estrategias</div>
+            <div class="ci-card__sub">media de {{ collective.totalStrategies ?? strategies.length }} estrategias</div>
           </div>
           <div class="ci-card">
             <div class="ci-card__val" :style="{ color: divergenceColor(collective.divergenceScore) }">{{ collective.divergenceScore }}/100</div>
             <div class="ci-card__lbl">Divergencia</div>
             <div class="ci-card__sub">{{ collective.divergenceScore < 30 ? 'Consenso fuerte' : collective.divergenceScore < 60 ? 'Divergencia moderada' : 'Alta incertidumbre' }}</div>
           </div>
+          <!-- E4 FIX (2026-05-18): apexVsConsensus → leaderVsConsensus (apex_adaptive eliminado v2.4) -->
           <div class="ci-card">
-            <div class="ci-card__val" :style="{ color: collective.apexVsConsensus >= 0 ? '#22c55e' : '#f87171' }">
-              {{ collective.apexVsConsensus >= 0 ? '+' : '' }}{{ collective.apexVsConsensus.toFixed(1) }}%
+            <div class="ci-card__val" :style="{ color: (collective.leaderVsConsensus ?? 0) >= 0 ? '#22c55e' : '#f87171' }">
+              {{ (collective.leaderVsConsensus ?? 0) >= 0 ? '+' : '' }}{{ (collective.leaderVsConsensus ?? 0).toFixed(1) }}%
             </div>
-            <div class="ci-card__lbl">APEX vs Consenso</div>
-            <div class="ci-card__sub">{{ collective.apexVsConsensus >= 0 ? 'APEX supera el promedio' : 'APEX bajo promedio' }}</div>
+            <div class="ci-card__lbl">🥇 Líder vs Consenso</div>
+            <div class="ci-card__sub">{{ collective.leaderName ? collective.leaderName : 'top algo' }} {{ (collective.leaderVsConsensus ?? 0) >= 0 ? 'supera el promedio' : 'bajo promedio' }}</div>
           </div>
           <div class="ci-card">
             <div class="ci-card__val" :style="{ color: collective.learningActive ? '#22c55e' : '#475569' }">
@@ -793,7 +795,7 @@ import { apiGet, apiPost } from '../../utils/apiClient.js';
 Chart.register(...registerables);
 
 const {
-  strategies, ranked, best, apex, collective,
+  strategies, ranked, best, leader, apex, collective,
   loading, error, generatedAt,
   gameType, mode, setGameType, setMode,
   fetch,
@@ -809,12 +811,10 @@ let   chartInstance    = null;
 const sparkW = 100, sparkH = 36;
 
 // ─── Computed ───────────────────────────────────────────────────
+// E4 FIX: isApex siempre false → simplificado. deepMode muestra todos los 21 canónicos.
 const displayStrategies = computed(() => {
   if (deepMode.value) return ranked.value;
-  return [
-    ...ranked.value.filter(s => !s.isApex && s.name !== 'consensus_top').slice(0, 5),
-    ...ranked.value.filter(s => s.isApex),
-  ];
+  return ranked.value.slice(0, 5); // top 5 por hit_rate
 });
 
 const sortedByWeight = computed(() =>
@@ -940,11 +940,12 @@ function buildChartData() {
       data:            full,
       borderColor:     s.color,
       backgroundColor: s.color + '15',
-      borderWidth:     s.isApex ? 2.5 : 1.5,
+      // E4 FIX: isApex siempre false — líder destacado por ser el primero en ranked
+      borderWidth:     ranked.value[0]?.name === s.name ? 2.5 : 1.5,
       tension:         0.4,
       pointRadius:     full.map((_, i) => i >= maxLen - proj.length - 1 ? 4 : 0),
       pointBackgroundColor: s.color,
-      fill:            s.isApex,
+      fill:            false,
       segment: {
         borderDash: (ctx) => ctx.p0DataIndex >= maxLen - proj.length - 1 ? [5, 4] : undefined,
       },
@@ -1156,7 +1157,7 @@ function kronosStatusClass(status) {
 }
 function algoLabel(name) {
   const MAP = {
-    frequency_rank: '📊 Frecuencia', momentum_ema: '⚡ Momentum EMA',
+    frequency_rank: '📊 Frecuencia', moving_avg_signal: '📈 Moving Average',
     gap_overdue_focus: '⏰ Gap Sobredebido', hot_cold_weighted: '🌡 Hot/Cold',
     streak_reversal: '🔄 Reversión Racha', bayesian_score: '🔬 Bayesiano',
     markov_order2: '🔀 Markov O2', transition_follow: '➡️ Transición Markov',

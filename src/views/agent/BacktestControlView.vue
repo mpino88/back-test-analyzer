@@ -342,9 +342,10 @@ const hasProactiveJob = computed(() =>
   history.value.some(j => j.triggered_by === 'agent_proactive' && j.status === 'running')
 );
 
-const apexResult = computed(() =>
-  resultsSorted.value.find(r => r.strategy_name === 'apex_adaptive')
-);
+// E4 FIX (2026-05-18): apex_adaptive eliminado v2.4 — apexResult siempre undefined.
+// Reemplazado por bestResult: la estrategia con mayor hit_rate en los resultados actuales.
+const apexResult = null; // deprecated — v-if="apexResult" bloquea el render → sección oculta
+const bestResult = computed(() => resultsSorted.value[0] ?? null);
 
 // ─── Helpers ─────────────────────────────────────────────────────
 function catMeta(cat) {
