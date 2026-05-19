@@ -74,7 +74,8 @@
       <section class="section">
         <h2 class="section-title">ROI esperado por tamaño N <span class="badge">Florida $50 payout</span></h2>
         <div class="n-scan-chart">
-          <div v-for="row in data.backtest.n_scan" :key="row.n" class="n-bar-wrap">
+          <!-- FIX (2026-05-19): n_scan puede ser null si backend no lo incluye -->
+          <div v-for="row in (data.backtest.n_scan ?? [])" :key="row.n" class="n-bar-wrap">
             <div class="n-bar-container">
               <div class="n-bar"
                    :style="`height: ${Math.max(2, Math.min(100, (row.hit_rate * 100) * 3))}%`"
@@ -117,7 +118,8 @@
       <section class="section">
         <h2 class="section-title">
           Recorrido histórico
-          <span class="badge">{{ data.backtest.timeline.length }} sorteos evaluados</span>
+          <!-- FIX: optional chaining en timeline -->
+          <span class="badge">{{ data.backtest.timeline?.length ?? 0 }} sorteos evaluados</span>
           <span class="badge" style="background:#14532d;color:#4ade80" v-if="data.backtest.hit_rate > 0">
             {{ data.backtest.hits }} HITS
           </span>
@@ -129,7 +131,8 @@
             <span>#1</span><span>#15</span><span>#30</span><span>#50</span>
           </div>
           <div class="rank-chart__bars">
-            <div v-for="t in data.backtest.timeline" :key="t.draw_date"
+            <!-- FIX: timeline puede ser null -->
+            <div v-for="t in (data.backtest.timeline ?? [])" :key="t.draw_date"
                  class="rank-bar-wrap"
                  :title="`${t.draw_date} · par ${t.winning_pair} · ${t.hit ? 'HIT rank #'+t.rank : 'rank '+t.rank_in_100+'/100'} · momentum=${t.momentum_of_winner}x`">
               <div class="rank-bar"
@@ -148,7 +151,7 @@
 
         <!-- Strip detallado -->
         <div class="timeline-strip" style="margin-top:0.75rem">
-          <div v-for="t in data.backtest.timeline" :key="'s'+t.draw_date"
+          <div v-for="t in (data.backtest.timeline ?? [])" :key="'s'+t.draw_date"
                class="strip-cell"
                :style="`background:${rankColor(t)}`"
                :title="`${t.draw_date} · ${t.winning_pair} · ${t.hit ? 'HIT #'+t.rank : 'rank '+t.rank_in_100} · mom=${t.momentum_of_winner}x`">

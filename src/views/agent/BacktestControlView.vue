@@ -221,12 +221,13 @@
         </div>
       </div>
 
-      <!-- APEX best pairs highlight -->
-      <div class="apex-highlight" v-if="apexResult">
-        <div class="ah-header">🏆 APEX Adaptive — Top {{ topN }} Pares Recomendados</div>
+      <!-- FIX (2026-05-19): apexResult era null (apex_adaptive eliminado v2.4)
+           Reemplazado por bestResult — #1 estrategia por hit_rate en resultados actuales -->
+      <div class="apex-highlight" v-if="bestResult">
+        <div class="ah-header">🥇 {{ bestResult.strategy_name }} — Top {{ topN }} Pares Recomendados</div>
         <div class="ah-pairs">
           <span
-            v-for="(p, i) in (apexResult.top_pairs_sample ?? []).slice(0, topN)"
+            v-for="(p, i) in (bestResult.top_pairs_sample ?? []).slice(0, topN)"
             :key="p"
             class="ah-pair"
             :class="i < 5 ? 'ah-pair--top5' : ''"
@@ -236,9 +237,9 @@
           </span>
         </div>
         <div class="ah-meta">
-          Hit rate: <strong :style="{ color: rateColor(apexResult.hit_rate ?? 0) }">{{ pct(apexResult.hit_rate ?? 0) }}</strong>
-          · Sharpe: <strong>{{ apexResult.sharpe?.toFixed(2) ?? '—' }}</strong>
-          · Eval: <strong>{{ apexResult.total_eval_pts ?? '—' }} sorteos</strong>
+          Hit rate: <strong :style="{ color: rateColor(bestResult.hit_rate ?? 0) }">{{ pct(bestResult.hit_rate ?? 0) }}</strong>
+          · Sharpe: <strong>{{ bestResult.sharpe?.toFixed(2) ?? '—' }}</strong>
+          · Eval: <strong>{{ bestResult.total_eval_pts ?? '—' }} sorteos</strong>
         </div>
       </div>
     </div>

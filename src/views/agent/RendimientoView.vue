@@ -59,7 +59,8 @@
       </div>
 
       <!-- ── Strategy Performance Table (backtest) ────────────────── -->
-      <section class="section" v-if="data.strategies.length > 0">
+      <!-- FIX (2026-05-19): optional chaining — data.strategies puede no existir -->
+      <section class="section" v-if="data?.strategies?.length > 0">
         <h2 class="section-title">Rendimiento por Estrategia <span class="badge-algo">Backtest v2</span></h2>
         <div class="table-wrap">
           <table class="data-table">
@@ -115,7 +116,8 @@
           </div>
         </div>
         <div v-if="ppsLoading" class="loading">Cargando ranking PPS...</div>
-        <div v-else-if="ppsData && ppsData.algorithms.length > 0" class="table-wrap">
+        <!-- FIX (2026-05-19): optional chaining — ppsData.algorithms puede ser undefined -->
+        <div v-else-if="ppsData?.algorithms?.length > 0" class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>

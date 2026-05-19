@@ -36,7 +36,9 @@ export function useProgressive() {
 
   const period = computed({
     get: () => mode.value === 'evening' ? 'e' : 'm',
-    set: (v) => setMode(v === 'evening' ? 'evening' : 'midday')
+    // FIX (2026-05-19): el select envía 'e'/'m', no 'evening'/'midday'
+    // BUG anterior: v === 'evening' siempre era FALSE → evening NUNCA se activaba desde UI
+    set: (v) => setMode(v === 'e' ? 'evening' : 'midday')
   });
 
   const topN       = ref(10);

@@ -71,9 +71,12 @@ export function useBacktestV2() {
     return filtered.value.reduce((s, r) => s + r.hit_rate, 0) / filtered.value.length;
   });
 
+  // FIX (2026-05-19): kelly_fraction puede ser null → suma NaN → media NaN
   const avgKelly = computed(() => {
     if (!filtered.value.length) return 0;
-    return filtered.value.reduce((s, r) => s + r.kelly_fraction, 0) / filtered.value.length;
+    const valid = filtered.value.filter(r => r.kelly_fraction != null);
+    if (!valid.length) return 0;
+    return valid.reduce((s, r) => s + Number(r.kelly_fraction), 0) / valid.length;
   });
 
   const totalEvalPts = computed(() => filtered.value[0]?.total_eval_pts ?? 0);

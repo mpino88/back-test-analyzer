@@ -141,14 +141,15 @@
           <div class="verdict-list">
             <div class="verdict-row">
               <span class="verdict-label">F01 draw_date NULL</span>
-              <span class="verdict-val" :class="diagData.verdict.F01_draw_date_null.startsWith('CONFIRMED') ? 'v--red' : 'v--green'">
-                {{ diagData.verdict.F01_draw_date_null }}
+              <!-- FIX (2026-05-19): optional chaining — verdict fields pueden ser null/absent -->
+              <span class="verdict-val" :class="diagData.verdict?.F01_draw_date_null?.startsWith('CONFIRMED') ? 'v--red' : 'v--green'">
+                {{ diagData.verdict?.F01_draw_date_null ?? '—' }}
               </span>
             </div>
             <div class="verdict-row">
               <span class="verdict-label">F02 feedback_loop</span>
-              <span class="verdict-val" :class="diagData.verdict.F02_feedback_loop_empty.startsWith('CONFIRMED') ? 'v--red' : 'v--green'">
-                {{ diagData.verdict.F02_feedback_loop_empty }}
+              <span class="verdict-val" :class="diagData.verdict?.F02_feedback_loop_empty?.startsWith('CONFIRMED') ? 'v--red' : 'v--green'">
+                {{ diagData.verdict?.F02_feedback_loop_empty ?? '—' }}
               </span>
             </div>
             <div class="verdict-row">
@@ -212,11 +213,12 @@
         <!-- proactive_alerts -->
         <div class="diag-card">
           <div class="diag-card__title">proactive_alerts (no acked)</div>
-          <div v-for="a in diagData.proactive_alerts" :key="a.alert_type" class="diag-row">
+          <!-- FIX: optional chaining — proactive_alerts puede estar ausente -->
+          <div v-for="a in (diagData.proactive_alerts ?? [])" :key="a.alert_type" class="diag-row">
             <strong>{{ a.alert_type }}</strong>: {{ a.cnt }}
             <span class="diag-meta">({{ a.oldest?.slice(0,10) }} → {{ a.newest?.slice(0,10) }})</span>
           </div>
-          <div v-if="diagData.proactive_alerts.length === 0" class="diag-row">Sin alertas pendientes</div>
+          <div v-if="!(diagData.proactive_alerts?.length)" class="diag-row">Sin alertas pendientes</div>
         </div>
 
         <!-- backtest_points_v2 -->

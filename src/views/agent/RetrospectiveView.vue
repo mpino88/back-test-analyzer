@@ -105,7 +105,8 @@
         <div class="metric-card">
           <div class="metric-label">Sorteos evaluados</div>
           <div class="metric-value">{{ metrics.total_draws_evaluated }}</div>
-          <div class="metric-detail">{{ metrics.date_range.from }} → {{ metrics.date_range.to }}</div>
+          <!-- FIX: optional chaining — date_range puede ser null si backtest es nuevo -->
+          <div class="metric-detail">{{ metrics.date_range?.from ?? '—' }} → {{ metrics.date_range?.to ?? '—' }}</div>
         </div>
         <div class="metric-card" :class="metrics.consensus.has_edge ? 'card-edge' : 'card-no-edge'">
           <div class="metric-label">Hit Rate @15</div>

@@ -89,9 +89,10 @@
               <span :class="c.current_misses > c.avg_pre_miss ? 'warn' : ''">
                 {{ c.current_misses }}
               </span>
-              <span class="dim"> / {{ c.avg_pre_miss.toFixed(1) }}</span>
+              <!-- FIX: PostgreSQL NUMERIC retorna string → Number() antes de toFixed -->
+              <span class="dim"> / {{ (+c.avg_pre_miss).toFixed(1) }}</span>
             </td>
-            <td class="cell--num">{{ c.avg_pre_miss.toFixed(1) }} ± {{ c.std_pre_miss.toFixed(1) }}</td>
+            <td class="cell--num">{{ (+c.avg_pre_miss).toFixed(1) }} ± {{ (+c.std_pre_miss).toFixed(1) }}</td>
             <td>
               <span :class="`cluster cluster--${c.clustering.toLowerCase()}`">{{ c.clustering }}</span>
             </td>

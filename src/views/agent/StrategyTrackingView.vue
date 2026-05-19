@@ -1155,24 +1155,34 @@ function kronosStatusLabel(status) {
 function kronosStatusClass(status) {
   return { completed: 'dot--completed', running: 'dot--running', failed: 'dot--error' }[status] ?? 'dot--pending';
 }
+// FIX (2026-05-19): eliminadas entradas duplicadas que sobreescribían las anteriores
+// (moving_avg_signal, bayesian_score, transition_follow, markov_order2 aparecían 2 veces)
 function algoLabel(name) {
   const MAP = {
-    frequency_rank: '📊 Frecuencia', moving_avg_signal: '📈 Moving Average',
-    gap_overdue_focus: '⏰ Gap Sobredebido', hot_cold_weighted: '🌡 Hot/Cold',
-    streak_reversal: '🔄 Reversión Racha', bayesian_score: '🔬 Bayesiano',
-    markov_order2: '🔀 Markov O2', transition_follow: '➡️ Transición Markov',
-    calendar_pattern: '📅 Patrón Calendario', trend_momentum: '📈 Tend. Momentum',
-    pair_return_cycle: '🔁 Ciclo Retorno', sum_pattern_filter: '➕ Suma Patrón',
-    double_triple: '🎲 Doble/Triple', cross_draw: '✕ Cross-Draw',
-    moving_avg_signal: '📈 Moving Avg', position_bias: '🎯 Sesgo Posicional',
-    pair_correlation: '🔗 Correlación',
-    // FIX T2-I (2026-05-18): fibonacci_pisano removed (eliminated v2.4)
-    decade_family: '🏘 Familias Décadas', max_per_weekday: '📆 Máx. Día',
-    // Catálogo v2 — algos canónicos faltantes en mapping legacy
-    trend_momentum_sweet: '🍯 Sweet Spot', est_individuales: '🔥 Hot Digits',
-    terminal_analysis: '🎯 Terminal', bayesian_score: '🧠 Bayesian',
-    transition_follow: '➡️ Transition', markov_order2: '🔗 Markov-2',
-    streak: '🔄 Streak',
+    // ── 8 algos originales ──────────────────────────────────────────────
+    frequency_rank:       '📊 Frecuencia',
+    gap_overdue_focus:    '⏰ Gap Sobredebido',
+    hot_cold_weighted:    '🌡 Hot/Cold',
+    streak_reversal:      '🔄 Reversión Racha',
+    moving_avg_signal:    '📈 Moving Average',
+    position_bias:        '🎯 Sesgo Posicional',
+    pair_correlation:     '🔗 Correlación',
+    // ── 13 algos canónicos adicionales ──────────────────────────────────
+    bayesian_score:       '🧠 Bayesian',
+    transition_follow:    '➡️ Transición',
+    markov_order2:        '🔀 Markov O2',
+    calendar_pattern:     '📅 Patrón Calendario',
+    decade_family:        '🏘 Familias Décadas',
+    max_per_weekday:      '📆 Máx. Día',
+    pair_return_cycle:    '🔁 Ciclo Retorno',
+    sum_pattern_filter:   '➕ Suma Patrón',
+    double_triple:        '🎲 Doble/Triple',
+    cross_draw:           '✕ Cross-Draw',
+    trend_momentum:       '📈 Tend. Momentum',
+    trend_momentum_sweet: '🍯 Sweet Spot',
+    est_individuales:     '🔥 Hot Digits',
+    terminal_analysis:    '🎯 Terminal',
+    streak:               '🔄 Streak',
   };
   return MAP[name] ?? name;
 }
