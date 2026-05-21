@@ -804,26 +804,24 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, inject } from 'vue';
 import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
-// C1 (2026-05-20): cerebro F1 panel
-import { useHelixV2Brain } from '../../composables/agent/useHelixV2Brain.js';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 const { status, connected } = useAgentStatus();
 
-// ─── Cerebro F1 (HELIX v2) — auto-refresh 30s ───────────────
-const {
-  evtState:        brainEvtState,
-  gating:          brainGating,
-  thompsonAlgos:   brainThompsonAlgos,
-  lastFetch:       brainLastFetch,
-  regimeBadge:     brainRegimeBadge,
-  activeMultipliers: brainMultipliers,
-  hawkesPairCount: brainHawkesCount,
-  topHawkesPairs:  brainTopHawkesPairs,
-  conformalCoverage: brainConformal,
-} = useHelixV2Brain();
+// ─── U3 (2026-05-20): Cerebro F1 vía inject — UNIFICADO con AgentLayout ───
+// Eliminado useHelixV2Brain (duplicado). Ahora se usa el singleton de useHelixBrain.
+const helixBrain = inject('helixBrain', null);
+const brainEvtState     = computed(() => helixBrain?.evtPick4Evening.value?.evt_state ?? null);
+const brainGating       = computed(() => helixBrain?.evtPick4Evening.value?.gating ?? null);
+const brainThompsonAlgos = computed(() => helixBrain?.thompsonLeaders.value ?? []);
+const brainLastFetch    = computed(() => helixBrain?.lastF1Fetch.value ?? null);
+const brainRegimeBadge  = computed(() => helixBrain?.regimeMeta.value ?? { label: '—', color: '#475569', emoji: '⚪' });
+const brainMultipliers  = computed(() => helixBrain?.activeMultipliers.value ?? []);
+const brainHawkesCount  = computed(() => 0); // ahora dentro de BrainStatusBar
+const brainTopHawkesPairs = computed(() => []); // similar
+const brainConformal    = computed(() => helixBrain?.conformalCoverage.value ?? null);
 const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
 const lastSession   = computed(() => status.value?.last_session ?? null);
 

@@ -60,6 +60,9 @@
 
     <!-- Main content -->
     <main class="agent-main">
+      <!-- ── U3 (2026-05-20): Sistema Nervioso Central — visible en TODAS las vistas ── -->
+      <BrainStatusBar />
+
       <!-- ── Error boundary: captura crashes silenciosos de vistas hijas ── -->
       <div v-if="routeError" class="route-error">
         <div class="re-icon">⚠️</div>
@@ -78,6 +81,7 @@ import { computed, ref, provide, onErrorCaptured } from 'vue';
 import { RouterLink, RouterView } from 'vue-router';
 import { useAgentStatus }    from '../../composables/agent/useAgentStatus.js';
 import { createHelixBrain }  from '../../composables/agent/useHelixBrain.js';
+import BrainStatusBar        from '../../components/layout/BrainStatusBar.vue';
 
 const { status, connected } = useAgentStatus();
 
