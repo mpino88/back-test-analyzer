@@ -2389,6 +2389,72 @@ ${ragSummary}`;
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // ROUTE A — Surgical Feature Exploration (2026-05-21)
+  // 7 familias NO testeadas previamente con train/test validation
+  // ═══════════════════════════════════════════════════════════════
+
+  // POST /api/agent/route-a/explore — corre las 7 familias completas
+  router.post('/route-a/explore', strictLimiter, async (_req: Request, res: Response) => {
+    try {
+      const { SurgicalRouteAExplorer } = await import('../../agent/services/SurgicalRouteAExplorer.js');
+      const explorer = new SurgicalRouteAExplorer(agentPool);
+      const result = await explorer.explore();
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'route-a/explore failed');
+      res.status(500).json({ error: 'Error en exploration', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/route-a/report?run_id=X — reporte por familia
+  router.get('/route-a/report', async (req: Request, res: Response) => {
+    try {
+      const run_id = req.query.run_id as string | undefined;
+      const runQuery = run_id
+        ? { sql: 'SELECT * FROM hitdash.route_a_exploration_runs WHERE run_id=$1', params: [run_id] }
+        : { sql: 'SELECT * FROM hitdash.route_a_exploration_runs ORDER BY started_at DESC LIMIT 1', params: [] };
+
+      const { rows: runs } = await agentPool.query(runQuery.sql, runQuery.params);
+      if (runs.length === 0) {
+        res.status(404).json({ error: 'No runs encontrados' });
+        return;
+      }
+      const run = runs[0]!;
+
+      const { rows: tests } = await agentPool.query(
+        `SELECT feature_family, test_name, game_type, draw_type, scope,
+                null_hypothesis, test_statistic, p_value, bonferroni_threshold,
+                significant, effect_size, effect_size_metric, sample_size,
+                train_p_value, test_p_value, replicates_in_holdout,
+                interpretation, data
+         FROM hitdash.route_a_exploration_tests
+         WHERE run_id=$1
+         ORDER BY p_value ASC`,
+        [run.run_id],
+      );
+
+      const byFamily = new Map<string, { total: number; significant: number; replicating: number; min_p: number }>();
+      for (const t of tests) {
+        const f = t.feature_family;
+        const entry = byFamily.get(f) ?? { total: 0, significant: 0, replicating: 0, min_p: 1 };
+        entry.total++;
+        if (t.significant) entry.significant++;
+        if (t.replicates_in_holdout) entry.replicating++;
+        entry.min_p = Math.min(entry.min_p, Number(t.p_value));
+        byFamily.set(f, entry);
+      }
+
+      res.json({
+        run, tests,
+        family_summary: [...byFamily.entries()].map(([family, s]) => ({ family, ...s })),
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'route-a/report failed');
+      res.status(500).json({ error: 'Error consultando reporte', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // GET /api/agent/edge-discovery/list — todos los runs
   router.get('/edge-discovery/list', async (_req: Request, res: Response) => {
     try {
