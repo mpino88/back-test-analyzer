@@ -571,7 +571,14 @@ export class PostDrawProcessor {
             parseInt(actualPair[0]!, 10),
             parseInt(actualPair[1]!, 10),
           ]
-        ).catch(() => undefined);
+        ).catch((err: unknown) => {
+          // SW FIX (2026-05-21): antes .catch(() => undefined) silenciaba este error.
+          // contribution_count es relevante para StrategyLifecycleManager — loguear si falla.
+          logger.warn(
+            { error: err instanceof Error ? err.message : String(err), game_type, draw_type, actualPair },
+            'PostDrawProcessor: fallo en contribution_count +1 para dynamic_strategies (non-fatal)',
+          );
+        });
       }
 
       // ─── N-rank EMA feedback → calibra computeCognitiveN() en tiempo real ──

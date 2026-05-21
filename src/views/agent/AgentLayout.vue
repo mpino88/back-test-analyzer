@@ -42,6 +42,9 @@
         <RouterLink to="/agent/chat"              class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🤖</span> Agente IA
         </RouterLink>
+        <RouterLink to="/agent/brain"             class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">🧠</span> Cerebro F1
+        </RouterLink>
       </nav>
 
       <div class="agent-nav__footer">

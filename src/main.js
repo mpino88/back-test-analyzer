@@ -30,6 +30,7 @@ const router = createRouter({
         { path: 'anomalies',   component: () => import('./views/agent/AnomalyView.vue') },
         { path: 'retrospective', component: () => import('./views/agent/RetrospectiveView.vue') },
         { path: 'accuracy',    component: () => import('./views/agent/AccuracyView.vue') },
+        { path: 'brain',       component: () => import('./views/agent/BrainView.vue') },
         // F9 FIX (2026-05-21): rutas duplicadas eliminadas — progressive y
         // ballbot-strategies ya están registradas arriba. Cartones eliminada
         // (CartonesView/useCartones eran dead code, no referenciados desde nav).

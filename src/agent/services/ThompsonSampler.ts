@@ -77,19 +77,32 @@ function normalSample(): number {
 }
 
 /**
- * Beta(a, b) sample via Normal approximation.
- * For a,b > 1: Normal(mean, var) clamped to (0.01, 0.99).
- * Fallback: return mean.
+ * Beta(a, b) sample — three paths for correctness at all parameter ranges:
+ *
+ * 1. a=1, b=1  → Uniform(0,1)                          (exact)
+ * 2. a=1, b>1  → 1 - U^(1/b)                           (exact CDF inverse)
+ * 3. a>1, b=1  → U^(1/a)                               (exact CDF inverse)
+ * 4. a>1, b>1  → Normal approximation (Box-Muller)      (good for large a,b)
+ *
+ * Edge case fix (BSB 2026-05-21): the previous fallback `return a/(a+b)` returned
+ * the MEAN — a deterministic constant, not a sample. New algorithms start with
+ * alpha=1 (no hits), beta=N+1; the old code always returned 1/(N+2) = no exploration.
+ * The CDF-inverse for Beta(1,b) = 1-(1-u)^(1/b) gives proper stochastic samples,
+ * restoring the exploration bonus that Thompson Sampling requires for new algos.
  */
 function sampleBeta(a: number, b: number): number {
-  if (a > 1 && b > 1) {
-    const mean     = a / (a + b);
-    const variance = (a * b) / ((a + b) ** 2 * (a + b + 1));
-    const z        = normalSample();
-    return Math.max(0.01, Math.min(0.99, mean + Math.sqrt(variance) * z));
-  }
-  // Fallback for edge cases (a=1 or b=1 → uniform-ish)
-  return a / (a + b);
+  const u = Math.random();
+
+  // ── Exact CDF-inverse for a=1 or b=1 ──────────────────────────
+  if (a === 1 && b === 1) return u;                             // Uniform
+  if (a === 1)            return 1 - Math.pow(Math.max(u, 1e-15), 1 / b); // Beta(1,b)
+  if (b === 1)            return Math.pow(Math.max(u, 1e-15), 1 / a);     // Beta(a,1)
+
+  // ── Normal approximation for a,b > 1 (Moivre-Laplace CLT for large n) ──
+  const mean     = a / (a + b);
+  const variance = (a * b) / ((a + b) ** 2 * (a + b + 1));
+  const z        = normalSample();
+  return Math.max(0.01, Math.min(0.99, mean + Math.sqrt(variance) * z));
 }
 
 // ── Main Service ───────────────────────────────────────────────
