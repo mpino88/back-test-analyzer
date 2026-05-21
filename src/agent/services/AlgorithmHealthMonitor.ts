@@ -26,10 +26,16 @@ import pino from 'pino';
 const logger = pino({ name: 'AlgorithmHealthMonitor' });
 
 const BASELINE_RATE       = 0.15;        // P(rank≤15 | random) = 15/100
-const KILLSWITCH_FACTOR   = 1.10;        // hit_rate debe superar baseline×1.10
+// V1 FIX (2026-05-21): Post-F3 dedupe reveló hit_rates reales mucho más bajas
+// (los duplicados inflaban artificialmente las hit_rates a >baseline×1.10).
+// Threshold previo (1.10) mataba 13/21 algos → consensus frágil.
+// Nuevo: solo killear si hit_rate < baseline×0.85 (verdaderamente harmful),
+// degradar a baseline×1.05 (marginal pero no destruir consensus).
+const KILLSWITCH_FACTOR   = 0.85;        // hit_rate debe estar 15% por DEBAJO del baseline para kill
+const DEGRADE_FACTOR      = 1.05;        // bajo baseline×1.05 → degrade (no kill)
 const ROLLING_WINDOW      = 30;          // últimos 30 evaluaciones
-const MIN_SAMPLES_KILL    = 30;          // bajo este sample_size, no killeamos
-const MIN_SAMPLES_DEGRADE  = 15;         // bajo este sample_size, no degradamos
+const MIN_SAMPLES_KILL    = 60;          // V1 FIX: subido de 30 → 60 (más data antes de matar)
+const MIN_SAMPLES_DEGRADE = 30;          // V1 FIX: subido de 15 → 30
 const DEGRADE_PENALTY     = 0.5;         // weight multiplier si DEGRADED
 // T2-J (2026-05-18): Grace period para algos recién backfilled
 const GRACE_DRAWS_TOTAL   = 100;         // si total histórico < 100, modo grace
@@ -112,13 +118,15 @@ export class AlgorithmHealthMonitor {
             reason = `GRACE: hit@15=${(hitRate*100).toFixed(1)}% (total=${totalDraws} draws, esperando ≥${GRACE_DRAWS_TOTAL} para evaluar)`;
           }
         } else if (samples >= MIN_SAMPLES_KILL && hitRate < BASELINE_RATE * KILLSWITCH_FACTOR) {
+          // V1 FIX: Solo killear si hit_rate < baseline*0.85 (verdaderamente harmful)
           status            = 'disabled';
           weight_multiplier = 0;
-          reason            = `KILLSWITCH: hit@15=${(hitRate*100).toFixed(1)}% < baseline×1.10=${(BASELINE_RATE*KILLSWITCH_FACTOR*100).toFixed(1)}% (n=${samples})`;
-        } else if (samples >= MIN_SAMPLES_DEGRADE && hitRate < BASELINE_RATE) {
+          reason            = `KILLSWITCH: hit@15=${(hitRate*100).toFixed(1)}% < baseline×${KILLSWITCH_FACTOR}=${(BASELINE_RATE*KILLSWITCH_FACTOR*100).toFixed(1)}% (n=${samples})`;
+        } else if (samples >= MIN_SAMPLES_DEGRADE && hitRate < BASELINE_RATE * DEGRADE_FACTOR) {
+          // V1 FIX: Degradar si está cerca del baseline (entre 0.85x y 1.05x)
           status            = 'degraded';
           weight_multiplier = DEGRADE_PENALTY;
-          reason            = `DEGRADED: hit@15=${(hitRate*100).toFixed(1)}% < baseline=${(BASELINE_RATE*100).toFixed(0)}% (n=${samples})`;
+          reason            = `DEGRADED: hit@15=${(hitRate*100).toFixed(1)}% < baseline×${DEGRADE_FACTOR}=${(BASELINE_RATE*DEGRADE_FACTOR*100).toFixed(1)}% (n=${samples})`;
         }
 
         result.set(r.algo_name, {

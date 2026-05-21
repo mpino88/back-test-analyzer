@@ -164,21 +164,25 @@ export class HelixV2Engine {
     );
 
     // ── Build HELIX v2 final recommendation ───────────────────────
+    // F4 FIX v2 (2026-05-21): SIEMPRE usar conformal_pairs_80 que ya está
+    // ordenado por score REAL del algo líder. _buildRealConformalSet ya
+    // prioriza same-digit pairs en HAWKES regimes.
     let helix_v2_pairs: string[];
 
-    if (evtState.regime === 'HAWKES_QUAD_CLUSTER') {
-      // Force all 10 same-digit pairs into top-10; fill remainder by Thompson UCB
-      const nonSame = ALL_PAIRS.filter(p => !SAME_DIGIT_PAIRS.includes(p));
-      helix_v2_pairs = [...SAME_DIGIT_PAIRS, ...nonSame].slice(
+    if (conformal_pairs_80.length > 0) {
+      // Camino feliz: usar ranking real del algo líder
+      helix_v2_pairs = conformal_pairs_80.slice(
         0,
-        Math.max(10, coverage_80_threshold),
+        evtState.regime === 'HAWKES_QUAD_CLUSTER'
+          ? Math.max(10, coverage_80_threshold)
+          : Math.min(15, coverage_80_threshold),
       );
+    } else if (evtState.regime === 'HAWKES_QUAD_CLUSTER') {
+      // Fallback solo si NO hay snapshot: same-digit pairs (cluster signal)
+      helix_v2_pairs = SAME_DIGIT_PAIRS.slice(0, 10);
     } else {
-      // Top pairs by Thompson UCB (best leader's historical ranking used as
-      // proxy; conformal threshold determines set size)
-      helix_v2_pairs = conformal_pairs_80.length > 0
-        ? conformal_pairs_80
-        : ALL_PAIRS.slice(0, Math.min(15, coverage_80_threshold));
+      // Fallback final: top-15 lexicográfico (degradación honesta)
+      helix_v2_pairs = ALL_PAIRS.slice(0, 15);
     }
 
     // ── Current system (top-15 baseline) ──────────────────────────
