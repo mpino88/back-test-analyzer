@@ -164,6 +164,19 @@ jobs:
               -d "{\"game_type\":\"pick4\",\"mode\":\"combined\",\"top_n\":15,\"strategies\":$ALL_STRATS}" \
               && echo "✅ Genesis pick4 encolado" || echo "⚠️  Genesis pick4 no encolado (no crítico)"
 
+            # ── PASO 6.6: HELIX v2 Walk-Forward Retrospective (2026-05-21) ─
+            # Respuesta a inversores: replay del pipeline completo sobre 5 años.
+            # POST /retrospective/helix-v2/run-all dispara los 6 combos secuencial.
+            # Fire-and-forget — el simulador corre async en el server.
+            # Es la PRUEBA AUDITABLE del edge sostenido históricamente.
+            echo "🧬 Disparando HELIX v2 Walk-Forward Retrospective (5 años, 6 combos)..."
+            RUN_ID="helix-v2-deploy-$(date -u +%Y%m%dT%H%M%S)"
+            curl -sf -X POST "http://localhost:3005/api/agent/retrospective/helix-v2/run-all" \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \
+              -d "{\"top_n\":15,\"run_id\":\"$RUN_ID\"}" \
+              && echo "✅ Walk-forward iniciado run_id=$RUN_ID" || echo "⚠️  Walk-forward no iniciado (no crítico)"
+
             # ── PASO 7: Extraer Assets para Nginx (Bypass Cache) ──────
             # En alojamiento con panel cPanel/Nginx, Nginx intercepta .js/.css
             # Si no están físicamente en el disco host, devuelve 404 ignorando Apache.

@@ -2113,6 +2113,161 @@ ${ragSummary}`;
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // HELIX v2 WALK-FORWARD RETROSPECTIVE (2026-05-21)
+  //
+  // Respuesta a inversores: "no tienen historial retrospectivo".
+  // Replay del pipeline HELIX v2 completo sobre 5 años de historia,
+  // estrictamente walk-forward (sin future leakage).
+  // ═══════════════════════════════════════════════════════════════
+
+  // POST /api/agent/retrospective/helix-v2/run
+  // Lanza simulación walk-forward. Async — devuelve run_id inmediato,
+  // el job corre en background y persiste a helix_retrospective_summary.
+  router.post('/retrospective/helix-v2/run', strictLimiter, async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.body.game_type as 'pick3' | 'pick4') || 'pick3';
+      const draw_type = (req.body.draw_type as 'midday' | 'evening') || 'evening';
+      const half      = (req.body.half as 'du' | 'ab' | 'cd') || (game_type === 'pick3' ? 'du' : 'ab');
+      const top_n     = Math.min(Math.max(Number(req.body.top_n ?? 15), 1), 50);
+      const run_id    = req.body.run_id as string | undefined;
+      const from_date = req.body.from_date as string | undefined;
+      const to_date   = req.body.to_date as string | undefined;
+
+      const { HelixRetrospectiveSimulator } = await import('../../agent/services/HelixRetrospectiveSimulator.js');
+      const sim = new HelixRetrospectiveSimulator(agentPool);
+      const effective_run_id = run_id ?? `helix-v2-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+
+      // Respond immediately — run async
+      res.status(202).json({
+        accepted: true,
+        run_id:   effective_run_id,
+        message:  'Walk-forward iniciado. Consulta GET /retrospective/helix-v2/summary?run_id=...',
+      });
+
+      // Fire-and-forget — async execution
+      sim.simulate({ game_type, draw_type, half, top_n, run_id: effective_run_id, from_date, to_date })
+        .then(summary => logger.info({ summary }, '✅ Walk-forward HELIX v2 completado'))
+        .catch(err   => logger.error({ error: err instanceof Error ? err.message : String(err), run_id: effective_run_id }, '❌ Walk-forward HELIX v2 falló'));
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'retrospective/helix-v2/run failed');
+      res.status(500).json({ error: 'Error iniciando walk-forward', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/retrospective/helix-v2/summary?run_id=X
+  // Devuelve métricas agregadas por combo (game_type, draw_type, half).
+  router.get('/retrospective/helix-v2/summary', async (req: Request, res: Response) => {
+    try {
+      const run_id    = req.query.run_id as string | undefined;
+      const game_type = req.query.game_type as string | undefined;
+
+      let sql = `SELECT * FROM hitdash.helix_retrospective_summary`;
+      const params: unknown[] = [];
+      const where: string[]   = [];
+      if (run_id)    { params.push(run_id);    where.push(`run_id = $${params.length}`); }
+      if (game_type) { params.push(game_type); where.push(`game_type = $${params.length}`); }
+      if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
+      sql += ` ORDER BY game_type, draw_type, half, created_at DESC`;
+
+      const { rows } = await agentPool.query(sql, params);
+      res.json({ count: rows.length, summaries: rows });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'retrospective/helix-v2/summary failed');
+      res.status(500).json({ error: 'Error consultando summary', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/retrospective/helix-v2/timeseries?run_id=X&game_type=Y&half=Z&bucket=monthly
+  // Time-series del hit rate para gráfica. Bucket: daily|weekly|monthly.
+  router.get('/retrospective/helix-v2/timeseries', async (req: Request, res: Response) => {
+    try {
+      const run_id     = req.query.run_id as string | undefined;
+      const game_type  = (req.query.game_type as string) || 'pick3';
+      const draw_type  = (req.query.draw_type as string) || 'evening';
+      const half       = (req.query.half      as string) || 'du';
+      const bucket     = (req.query.bucket    as string) || 'monthly';
+
+      const trunc = bucket === 'daily'   ? 'day'
+                  : bucket === 'weekly'  ? 'week'
+                  : 'month';
+
+      const { rows } = await agentPool.query<{
+        bucket:    string;
+        n_draws:   string;
+        n_hits:    string;
+        hit_rate:  string;
+      }>(
+        `SELECT
+           date_trunc('${trunc}', draw_date)::date::text AS bucket,
+           COUNT(*)::int                                  AS n_draws,
+           SUM(CASE WHEN hit THEN 1 ELSE 0 END)::int     AS n_hits,
+           (SUM(CASE WHEN hit THEN 1 ELSE 0 END)::float / COUNT(*))::float AS hit_rate
+         FROM hitdash.helix_retrospective_runs
+         WHERE ${run_id ? 'run_id = $1 AND ' : ''}game_type = $${run_id ? 2 : 1}
+           AND draw_type = $${run_id ? 3 : 2}
+           AND half      = $${run_id ? 4 : 3}
+         GROUP BY 1
+         ORDER BY 1`,
+        run_id ? [run_id, game_type, draw_type, half] : [game_type, draw_type, half],
+      );
+
+      res.json({
+        run_id, game_type, draw_type, half, bucket,
+        series: rows.map(r => ({
+          bucket: r.bucket,
+          n_draws: Number(r.n_draws),
+          n_hits:  Number(r.n_hits),
+          hit_rate: Number(r.hit_rate),
+        })),
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'retrospective/helix-v2/timeseries failed');
+      res.status(500).json({ error: 'Error consultando timeseries', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/agent/retrospective/helix-v2/run-all
+  // Conveniencia: lanza walk-forward para los 6 combos en paralelo con el mismo run_id.
+  router.post('/retrospective/helix-v2/run-all', strictLimiter, async (req: Request, res: Response) => {
+    try {
+      const top_n  = Math.min(Math.max(Number(req.body.top_n ?? 15), 1), 50);
+      const run_id = req.body.run_id ?? `helix-v2-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+
+      const combos: Array<{ game_type: 'pick3' | 'pick4'; draw_type: 'midday' | 'evening'; half: 'du' | 'ab' | 'cd' }> = [
+        { game_type: 'pick3', draw_type: 'midday',  half: 'du' },
+        { game_type: 'pick3', draw_type: 'evening', half: 'du' },
+        { game_type: 'pick4', draw_type: 'midday',  half: 'ab' },
+        { game_type: 'pick4', draw_type: 'midday',  half: 'cd' },
+        { game_type: 'pick4', draw_type: 'evening', half: 'ab' },
+        { game_type: 'pick4', draw_type: 'evening', half: 'cd' },
+      ];
+
+      res.status(202).json({
+        accepted: true,
+        run_id,
+        n_combos: combos.length,
+        message:  `Walk-forward sobre 6 combos iniciado. Status: GET /retrospective/helix-v2/summary?run_id=${run_id}`,
+      });
+
+      const { HelixRetrospectiveSimulator } = await import('../../agent/services/HelixRetrospectiveSimulator.js');
+      const sim = new HelixRetrospectiveSimulator(agentPool);
+
+      // Sequential — evita saturar el pool con 6 walk-forwards paralelos
+      for (const c of combos) {
+        try {
+          const summary = await sim.simulate({ ...c, top_n, run_id });
+          logger.info({ summary }, `✅ Combo ${c.game_type}/${c.draw_type}/${c.half} completado`);
+        } catch (e) {
+          logger.error({ error: e instanceof Error ? e.message : String(e), combo: c }, '❌ Combo falló — continuando');
+        }
+      }
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'retrospective/helix-v2/run-all failed');
+      res.status(500).json({ error: 'Error iniciando run-all', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // ─── GET /api/agent/patterns/mine ────────────────────────────────
   // Análisis de patrones empíricos: DOW bias, mes, gaps, autocorr, streaks.
   router.get('/patterns/mine', async (req: Request, res: Response) => {
