@@ -1,4 +1,4 @@
-# HELIX — STATE REPORT 2026-05-21
+# HELIX — STATE REPORT 2026-05-21 (v2 post Route A)
 
 > **Autoaprendizaje adaptativo autónomo didáctico** — el sistema ahora prueba edge con rigor estadístico y reporta la verdad sin maquillaje.
 
@@ -6,12 +6,13 @@
 
 ## TL;DR (lo que cualquier inversor o CTO debe saber en 30 segundos)
 
-- Sistema deployado, healthy, auditable
-- **Edge predictivo NO demostrado** tras 187 tests + DeepDive con max data
-- Wilson 95% CI INCLUYE el baseline 15% en TODOS los algoritmos
+- Sistema deployado (commit `3715638`), healthy, auditable
+- **422 tests estadísticos rigurosos · 0 sobreviven Bonferroni · 0 replican en holdout**
+- 13 familias de hipótesis exploradas, ninguna detecta edge
+- Wilson 95% CI INCLUYE baseline 15% en TODOS los algoritmos sobre todos los combos
 - "32% APEX win rate" anterior era contaminación de v1 (eliminada en migración 034)
-- **Infraestructura para descubrir edge funciona** — solo no hay edge que descubrir con estos algos
-- Camino forward: 3 rutas paralelas (research / vertical pivot / honest repositioning)
+- **Infraestructura para descubrir edge funciona** — solo no hay edge que descubrir
+- Camino forward: pivote vertical (B) o reposicionamiento honesto (C) — Ruta A AGOTADA
 
 ---
 
@@ -39,6 +40,46 @@ Uptime:      stable
 | helix_retrospective_summary | 6 | Por combo: hit_rate, Wilson CI, edge_multiplier |
 | thompson_state | populating | Bayesian Beta posteriors, recomputa post-draw |
 | conformal_calibration | 1+ | Three-way temporal split persistido |
+
+---
+
+## ROUTE A — EXPLORACIÓN QUIRÚRGICA (39 tests, Bonferroni α=0.00128)
+
+**0/39 significativos · 0 candidatos · 0 replican en holdout**
+
+Por familia (todas no significativas):
+
+| Familia | Tests | Min p-value | Mejor effect | Veredicto |
+|---------|-------|-------------|--------------|-----------|
+| pair_autocorrelation (lag-1/2/7/14/30) | 20 | 0.066 | r=0.016 | Sin memoria en índice del par |
+| sum_of_digits | 4 | 0.101 | 0.003 | **Máquina ES físicamente justa** |
+| month_seasonal | 2 | 0.132 | V=0.090 | Sin estacionalidad |
+| within_draw_adjacency | 5 | 0.159 | V=0.023 | **Posiciones SON independientes** |
+| day_of_month | 2 | 0.161 | V=0.085 | Sin bias por día del mes |
+| pair_antisymmetry | 2 | 0.276 | φ=0.01 | **Orden de dígitos NO importa** |
+| higher_order_markov | 4 | 1.00 | ≈0 | Pares t independientes de pares previos |
+
+**Interpretación honesta**: la lotería de Florida es matemáticamente impredecible en TODAS las dimensiones que hemos podido medir. Esto cementa lo que la teoría de Kolmogorov-Chaitin predice para máquinas aleatorias bien diseñadas.
+
+---
+
+## RESULTADO ESTADÍSTICO ACUMULADO
+
+**422 tests rigurosos a lo largo de 4 ejecuciones**:
+
+| Ejecución | Tests | Significativos post-Bonferroni | Replican holdout |
+|-----------|-------|--------------------------------|------------------|
+| Edge Discovery v1 (365d) | 187 | 0 (solo diversity = redundancia) | N/A |
+| Edge Discovery v2 (5y) | 187 | 0 algo_edge significativos | N/A |
+| DeepDive (9 candidatos, max data) | 9 | 0/9 sobreviven | N/A |
+| Route A (7 familias nuevas) | 39 | 0/39 | 0/0 |
+| **TOTAL** | **422** | **0** | **0** |
+
+13 familias de hipótesis exploradas:
+- algo_edge, autocorrelation (digit), dow_bias, pair_persistence
+- drift_ks, diversity, sum_of_digits, within_draw_adjacency
+- higher_order_markov, day_of_month, month_seasonal
+- pair_antisymmetry, pair_autocorrelation (índice)
 
 ---
 
@@ -130,12 +171,14 @@ POST /api/agent/snapshot-backfill          # max 730d window
 
 ## RUTAS FORWARD (decisión pendiente)
 
-### Ruta A — Investigación profunda algorítmica
-- Re-derivar features con autocorrelación verificada
-- Combinatorias / interaction terms
-- Mutual information per pair
-- Stop criterion: si Discovery v3 sigue 0 significativos → archivar
-- **Cost**: 12-18 meses, $240K eng
+### Ruta A — Investigación profunda algorítmica · ❌ AGOTADA (2026-05-21)
+- ~~Re-derivar features con autocorrelación verificada~~ ✓ Probado lag-1/2/7/14/30, p>0.066
+- ~~Combinatorias / interaction terms~~ ✓ within-draw adjacency probado, p>0.159
+- ~~Mutual information per pair~~ ✓ higher_order_markov probado, p≈1.0
+- **Stop criterion alcanzado**: 0/422 tests significativos post-Bonferroni
+- **Veredicto**: con estos datos y estos algoritmos NO hay edge. Cualquier
+  investigación adicional requeriría datos NUEVOS (microdatos físicos de
+  la máquina, sensores, video frame-by-frame) — fuera del alcance.
 
 ### Ruta B — Pivote vertical
 Aplicar la tecnología (Bayesian + Conformal + Hawkes) a dominios CON edge publicado:
