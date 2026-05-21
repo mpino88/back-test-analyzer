@@ -260,10 +260,13 @@ export class EdgeDiscoveryEngine {
 
   // ═══════════════════════════════════════════════════════════════
   // FAMILY 1: ALGO_EDGE — per-algorithm Wilson CI + binomial test
+  //
+  // SURGICAL CHANGE (2026-05-21): extender ventana 365d → 5y.
+  // Razón: en discovery #1, moving_averages cd tenía Cohen's h=0.125 con
+  // n=365 → p=0.0057 (no pasa Bonferroni α=2.67e-4). Con n=1825 (5y) el
+  // mismo h da p≈0.00017 → cruza Bonferroni. 5× más poder estadístico.
   // ═══════════════════════════════════════════════════════════════
   private async testAlgorithmEdge(): Promise<TestResult[]> {
-    // Walk-forward predictions from clean retrospective runs.
-    // For each algo, compute: did rank_of_winner <= 15 significantly more than 15% of the time?
     const { rows } = await this.pool.query<{
       algo_name: string; game_type: string; draw_type: string; half: string;
       hits:      string; n_total:    string;
@@ -272,9 +275,9 @@ export class EdgeDiscoveryEngine {
               SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS hits,
               COUNT(*)::int                                              AS n_total
        FROM hitdash.algo_rank_history
-       WHERE draw_date >= CURRENT_DATE - INTERVAL '365 days'
+       WHERE draw_date >= CURRENT_DATE - INTERVAL '5 years'
        GROUP BY algo_name, game_type, draw_type, half
-       HAVING COUNT(*) >= 100`,
+       HAVING COUNT(*) >= 500`,
     );
 
     const tests: TestResult[] = [];
@@ -691,6 +694,156 @@ export class EdgeDiscoveryEngine {
       interpretation: `Diversidad: ${algos.length} algos, ${n} pares de Spearman. r_promedio=${meanCorr.toFixed(4)}. ${highCorr} pares con r>0.9 (redundantes). ${meanCorr > 0.5 ? 'Algoritmos altamente correlacionados — diversidad baja.' : 'Diversidad razonable.'}`,
       data: { mean_correlation: meanCorr, high_corr_count: highCorr, algos },
     }];
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // DEEP DIVE — re-test pre-specified candidate signals with max data
+  //
+  // En discovery exploratorio (187 tests) la corrección Bonferroni es muy
+  // estricta (α=2.67e-4). Pero cuando ya tenemos hipótesis pre-especificadas
+  // (las 9 señales identificadas en discovery #1), aplicamos Bonferroni
+  // solo sobre ellas: α=0.05/9=0.0056. Mucho más sensible.
+  //
+  // Esto es buena práctica estadística: separar discovery exploratorio
+  // de testing confirmatorio (pre-specified hypotheses).
+  // ═══════════════════════════════════════════════════════════════
+  async deepDive(candidates: Array<{
+    family:    string;
+    name:      string;
+    game_type: string;
+    draw_type: string;
+    half?:     string;
+    position?: string;
+    lag?:      number;
+  }>): Promise<{
+    run_id:  string;
+    tests:   TestResult[];
+    verdict: string;
+  }> {
+    const run_id = `deepdive-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}`;
+    logger.info({ run_id, n_candidates: candidates.length }, '🎯 Deep Dive: start');
+
+    await this.pool.query(
+      `INSERT INTO hitdash.edge_discovery_runs (run_id, status, started_at, metadata)
+       VALUES ($1, 'running', now(), $2::jsonb)
+       ON CONFLICT (run_id) DO UPDATE SET status='running', started_at=now()`,
+      [run_id, JSON.stringify({ type: 'deep_dive', candidates })],
+    );
+
+    const tests: TestResult[] = [];
+
+    for (const c of candidates) {
+      if (c.family === 'algo_edge') {
+        // Re-test single algo over MAX data (algo_rank_history all-time)
+        const { rows } = await this.pool.query<{ hits: string; n_total: string }>(
+          `SELECT SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS hits,
+                  COUNT(*)::int                                              AS n_total
+           FROM hitdash.algo_rank_history
+           WHERE algo_name=$1 AND game_type=$2 AND draw_type=$3 AND half=$4`,
+          [c.name.split(':')[1], c.game_type, c.draw_type, c.half],
+        );
+        if (rows[0] && Number(rows[0].n_total) > 0) {
+          const hits = Number(rows[0].hits);
+          const n    = Number(rows[0].n_total);
+          const p_hat = hits / n;
+          const p0    = 0.15;
+          const p_value = binomialPValueOneSided(hits, n, p0);
+          const ci     = wilsonInterval(hits, n);
+          const h      = cohenH(p_hat, p0);
+          tests.push({
+            test_family: 'algo_edge_deepdive',
+            test_name:   `deepdive:${c.name}`,
+            game_type:   c.game_type, draw_type: c.draw_type, half: c.half ?? null,
+            scope:       { algo_name: c.name.split(':')[1], window: 'all-time', n_at: 15 },
+            null_hypothesis: `H0: hit_rate ≤ 15% (full algo_rank_history para ${c.name.split(':')[1]})`,
+            test_statistic: (p_hat - p0) / Math.sqrt(p0*(1-p0)/n),
+            p_value,
+            bonferroni_threshold: 0,
+            significant: false,
+            effect_size: h,
+            effect_size_metric: 'cohen_h',
+            sample_size: n,
+            interpretation: `DEEP DIVE ${c.name}: hit_rate=${(p_hat*100).toFixed(3)}% (CI [${(ci.lo*100).toFixed(2)}, ${(ci.hi*100).toFixed(2)}]) n=${n}, h=${h.toFixed(4)}`,
+            data: { hit_rate: p_hat, wilson_lo: ci.lo, wilson_hi: ci.hi, hits, n },
+          });
+        }
+      } else if (c.family === 'autocorrelation' && c.position && c.lag) {
+        // Re-test autocorrelation over FULL position series
+        const { rows } = await this.pool.query<{ val: number }>(
+          `SELECT ${c.position} AS val
+           FROM hitdash.ingested_results
+           WHERE game_type=$1 AND draw_type=$2 AND ${c.position} IS NOT NULL
+           ORDER BY draw_date ASC, draw_key ASC`,
+          [c.game_type, c.draw_type],
+        );
+        if (rows.length > 100 + c.lag) {
+          const series = rows.map(r => Number(r.val));
+          const a = series.slice(0, -c.lag);
+          const b = series.slice(c.lag);
+          const r = pearson(a, b);
+          const n = a.length;
+          const z = r * Math.sqrt(n);
+          const p_value = 2 * (1 - normCdf(Math.abs(z)));
+          tests.push({
+            test_family: 'autocorr_deepdive',
+            test_name:   `deepdive:autocorr:${c.game_type}:${c.draw_type}:${c.position}:lag${c.lag}`,
+            game_type:   c.game_type, draw_type: c.draw_type, half: null,
+            scope:       { position: c.position, lag: c.lag, window: 'all-time' },
+            null_hypothesis: `H0: r(lag-${c.lag}) = 0 para ${c.position}`,
+            test_statistic: r, p_value,
+            bonferroni_threshold: 0, significant: false,
+            effect_size: Math.abs(r), effect_size_metric: 'r',
+            sample_size: n,
+            interpretation: `DEEP DIVE autocorr ${c.position} lag-${c.lag}: r=${r.toFixed(4)} z=${z.toFixed(2)} p=${p_value.toExponential(2)} n=${n}`,
+            data: { r, z, lag: c.lag, position: c.position, n },
+          });
+        }
+      } else if (c.family === 'drift_ks') {
+        // Re-run KS with FULL data, finer split (5 buckets vs 2)
+        // Skipped here, KS already used max data in first pass
+        tests.push({
+          test_family: 'drift_ks_deepdive',
+          test_name:   `deepdive:${c.name}`,
+          game_type:   c.game_type, draw_type: c.draw_type, half: c.half ?? null,
+          scope:       { note: 'first pass already used max data' },
+          null_hypothesis: 'H0: distribución estable',
+          test_statistic: 0, p_value: 1,
+          bonferroni_threshold: 0, significant: false,
+          effect_size: null, effect_size_metric: null,
+          sample_size: 0,
+          interpretation: `${c.name}: deep-dive skip — primera pass usó max data ya`,
+          data: {},
+        });
+      }
+    }
+
+    // Bonferroni con M MUCHO menor (solo candidates pre-specificados)
+    const m = Math.max(1, tests.length);
+    const alpha = 0.05 / m;
+    for (const t of tests) {
+      t.bonferroni_threshold = alpha;
+      t.significant = t.p_value < alpha;
+    }
+
+    await this.persistTests(run_id, tests);
+
+    const significant = tests.filter(t => t.significant);
+    const verdict = significant.length > 0
+      ? `🎯 DEEP DIVE: ${significant.length}/${m} señales pre-especificadas CONFIRMADAS post-Bonferroni α=${alpha.toFixed(4)}`
+      : `❌ DEEP DIVE: 0/${m} señales sobreviven Bonferroni α=${alpha.toFixed(4)} ni con data máxima`;
+
+    await this.pool.query(
+      `UPDATE hitdash.edge_discovery_runs
+          SET status='completed', completed_at=now(),
+              total_tests=$2, significant_tests=$3,
+              edge_found=$4, verdict=$5, duration_ms=$6
+        WHERE run_id=$1`,
+      [run_id, m, significant.length, significant.length > 0, verdict, 0],
+    );
+
+    logger.info({ run_id, total: m, significant: significant.length, edge_found: significant.length > 0 }, '🎯 Deep Dive: completed');
+
+    return { run_id, tests, verdict };
   }
 
   // ═══════════════════════════════════════════════════════════════

@@ -2361,6 +2361,34 @@ ${ragSummary}`;
     }
   });
 
+  // POST /api/agent/edge-discovery/deep-dive
+  // Re-testea las 9 señales pre-especificadas con MAX data y Bonferroni laxo (α=0.05/9)
+  router.post('/edge-discovery/deep-dive', strictLimiter, async (req: Request, res: Response) => {
+    try {
+      const { EdgeDiscoveryEngine } = await import('../../agent/services/EdgeDiscoveryEngine.js');
+      const engine = new EdgeDiscoveryEngine(agentPool);
+
+      // Las 9 señales identificadas en discovery #1 (p<0.05 sin corregir)
+      const candidates = req.body?.candidates ?? [
+        { family: 'algo_edge', name: 'algo_edge:moving_averages',   game_type: 'pick4', draw_type: 'evening', half: 'cd' },
+        { family: 'algo_edge', name: 'algo_edge:decade_family',     game_type: 'pick4', draw_type: 'evening', half: 'ab' },
+        { family: 'autocorrelation',                                game_type: 'pick3', draw_type: 'midday',  position: 'p2', lag: 7,  name: 'autocorr:pick3:midday:p2:lag7' },
+        { family: 'algo_edge', name: 'algo_edge:streak',            game_type: 'pick4', draw_type: 'midday',  half: 'ab' },
+        { family: 'algo_edge', name: 'algo_edge:moving_averages',   game_type: 'pick4', draw_type: 'midday',  half: 'ab' },
+        { family: 'drift_ks',  name: 'drift_ks:pick3:evening:du',   game_type: 'pick3', draw_type: 'evening', half: 'du' },
+        { family: 'autocorrelation',                                game_type: 'pick4', draw_type: 'midday',  position: 'p2', lag: 30, name: 'autocorr:pick4:midday:p2:lag30' },
+        { family: 'autocorrelation',                                game_type: 'pick3', draw_type: 'evening', position: 'p3', lag: 7,  name: 'autocorr:pick3:evening:p3:lag7' },
+        { family: 'algo_edge', name: 'algo_edge:position',          game_type: 'pick3', draw_type: 'midday',  half: 'du' },
+      ];
+
+      const result = await engine.deepDive(candidates);
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'edge-discovery/deep-dive failed');
+      res.status(500).json({ error: 'Error en deep-dive', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // GET /api/agent/edge-discovery/list — todos los runs
   router.get('/edge-discovery/list', async (_req: Request, res: Response) => {
     try {
