@@ -450,13 +450,22 @@ export class HelixRetrospectiveSimulator {
     if (from_date) { params.push(from_date); extra += ` AND draw_date >= $${params.length}`; }
     if (to_date)   { params.push(to_date);   extra += ` AND draw_date <= $${params.length}`; }
 
+    // FIX 2026-05-21: tabla real es ingested_results, no ballbot_draws.
+    // Columnas: draw_key (PK), draw_date, p1, p2, p3, p4, game_type, draw_type.
+    // Pick3 usa p2,p3 (du); Pick4 usa p1,p2 (ab) o p3,p4 (cd).
+    // Filtramos draws válidos: pick3 requires p2 AND p3; pick4 requires p1-p4.
+    const completeFilter = game_type === 'pick3'
+      ? 'p2 IS NOT NULL AND p3 IS NOT NULL'
+      : 'p1 IS NOT NULL AND p2 IS NOT NULL AND p3 IS NOT NULL AND p4 IS NOT NULL';
+
     const { rows } = await this.pool.query<DrawRow>(
       `SELECT draw_date::text AS draw_date,
               ${pairSql} AS winning_pair
-       FROM hitdash.ballbot_draws
+       FROM hitdash.ingested_results
        WHERE game_type = $1 AND draw_type = $2
+         AND ${completeFilter}
          ${extra}
-       ORDER BY draw_date ASC, id ASC`,
+       ORDER BY draw_date ASC, draw_key ASC`,
       params,
     );
     return rows;
