@@ -568,6 +568,86 @@
           </button>
         </div>
 
+        <!-- ═══ CEREBRO F1 EN VIVO (C1, 2026-05-20) ═══ -->
+        <div v-if="brainEvtState" class="f1-brain-card">
+          <div class="f1-brain-header">
+            <span class="f1-brain-title">🧠 Cerebro F1 — HELIX v2</span>
+            <span class="f1-brain-badge" :style="{ background: brainRegimeBadge.color }">
+              {{ brainRegimeBadge.emoji }} {{ brainRegimeBadge.label }}
+            </span>
+          </div>
+
+          <div class="f1-brain-grid">
+            <!-- Régimen + intensidad -->
+            <div class="f1-cell">
+              <div class="f1-cell-label">Intensidad Hawkes</div>
+              <div class="f1-cell-val">{{ ((brainEvtState.quad_hawkes_intensity || brainEvtState.triple_hawkes_intensity || 0) * 100).toFixed(1) }}%</div>
+              <div class="f1-cell-sub">
+                quad: {{ brainEvtState.days_since_quad ?? '—' }}d ·
+                triple: {{ brainEvtState.days_since_triple ?? '—' }}d
+              </div>
+            </div>
+
+            <!-- Cobertura conformal -->
+            <div v-if="brainConformal" class="f1-cell">
+              <div class="f1-cell-label">Cobertura garantizada</div>
+              <div class="f1-cell-val" style="color: #22c55e">{{ (brainConformal.level * 100).toFixed(0) }}%</div>
+              <div class="f1-cell-sub">{{ brainConformal.threshold }} pares · teorema conformal</div>
+            </div>
+
+            <!-- Hawkes pairs -->
+            <div class="f1-cell">
+              <div class="f1-cell-label">Señales dígito→dígito</div>
+              <div class="f1-cell-val" :style="{ color: brainHawkesCount > 0 ? '#f59e0b' : '#64748b' }">
+                {{ brainHawkesCount }}
+              </div>
+              <div class="f1-cell-sub">Bonferroni α=5e-4</div>
+            </div>
+          </div>
+
+          <!-- Multipliers activos -->
+          <div v-if="brainMultipliers.length > 0" class="f1-multipliers">
+            <span class="f1-mult-title">Pesos activos esta predicción:</span>
+            <span
+              v-for="m in brainMultipliers" :key="m.algo"
+              class="f1-mult-pill"
+              :class="m.direction === 'boost' ? 'f1-mult--boost' : 'f1-mult--suppress'"
+            >
+              {{ m.algo }} ×{{ m.weight }}
+            </span>
+          </div>
+
+          <!-- Thompson top 5 -->
+          <div v-if="brainThompsonAlgos.length > 0" class="f1-thompson">
+            <span class="f1-mult-title">Top 5 algos por UCB Bayesiano:</span>
+            <div class="f1-thompson-row" v-for="(t, i) in brainThompsonAlgos.slice(0,5)" :key="t.algo_name">
+              <span class="f1-rank">{{ i + 1 }}</span>
+              <span class="f1-algo">{{ t.algo_name }}</span>
+              <span class="f1-ucb">UCB {{ (t.ucb_score * 100).toFixed(1) }}%</span>
+              <span class="f1-mean">μ {{ (t.mean * 100).toFixed(1) }}%</span>
+            </div>
+          </div>
+
+          <!-- Top Hawkes pairs (si hay) -->
+          <div v-if="brainTopHawkesPairs.length > 0" class="f1-hawkes">
+            <span class="f1-mult-title">🔥 Excitaciones dígito-a-dígito detectadas:</span>
+            <span
+              v-for="p in brainTopHawkesPairs" :key="`${p.from}-${p.to}`"
+              class="f1-hawkes-pill"
+              :class="p.effect === 'EXCITATION' ? 'f1-hawkes--exc' : 'f1-hawkes--inh'"
+            >
+              {{ p.from }}→{{ p.to }} ×{{ p.lift.toFixed(2) }}
+            </span>
+          </div>
+
+          <div class="f1-brain-footer">
+            <span class="f1-explanation">{{ brainGating?.explanation ?? '' }}</span>
+            <span v-if="brainLastFetch" class="f1-timestamp">
+              {{ new Date(brainLastFetch).toLocaleTimeString() }}
+            </span>
+          </div>
+        </div>
+
         <!-- Diversity Report -->
         <div v-if="diversityData" class="diversity-bar">
           <span class="div-label">🧩 Diversidad consensus:</span>
@@ -726,9 +806,24 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useAgentStatus } from '../../composables/agent/useAgentStatus.js';
+// C1 (2026-05-20): cerebro F1 panel
+import { useHelixV2Brain } from '../../composables/agent/useHelixV2Brain.js';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
 
 const { status, connected } = useAgentStatus();
+
+// ─── Cerebro F1 (HELIX v2) — auto-refresh 30s ───────────────
+const {
+  evtState:        brainEvtState,
+  gating:          brainGating,
+  thompsonAlgos:   brainThompsonAlgos,
+  lastFetch:       brainLastFetch,
+  regimeBadge:     brainRegimeBadge,
+  activeMultipliers: brainMultipliers,
+  hawkesPairCount: brainHawkesCount,
+  topHawkesPairs:  brainTopHawkesPairs,
+  conformalCoverage: brainConformal,
+} = useHelixV2Brain();
 const pendingAlerts = computed(() => status.value?.pending_alerts ?? 0);
 const lastSession   = computed(() => status.value?.last_session ?? null);
 
@@ -1406,4 +1501,73 @@ onUnmounted(() => {
   .regime-row > span:nth-child(4),
   .regime-row > span:nth-child(5) { display: none; }
 }
+
+/* ═══ C1 — Cerebro F1 panel (HELIX v2) ═══ */
+.f1-brain-card {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin: 1rem 0;
+  color: #e2e8f0;
+}
+.f1-brain-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 1rem;
+}
+.f1-brain-title {
+  font-size: 1.1rem; font-weight: 700; letter-spacing: 0.02em;
+}
+.f1-brain-badge {
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  font-size: 0.8rem; font-weight: 700; color: white;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.f1-brain-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem; margin-bottom: 1rem;
+}
+.f1-cell {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.f1-cell-label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
+.f1-cell-val   { font-size: 1.5rem; font-weight: 800; color: #60a5fa; margin: 0.25rem 0; }
+.f1-cell-sub   { font-size: 0.65rem; color: #64748b; }
+.f1-multipliers, .f1-thompson, .f1-hawkes {
+  margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #1e293b;
+}
+.f1-mult-title {
+  display: block; font-size: 0.7rem; color: #94a3b8;
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;
+}
+.f1-mult-pill {
+  display: inline-block; padding: 0.25rem 0.6rem;
+  margin: 0.15rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;
+}
+.f1-mult--boost { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid #22c55e44; }
+.f1-mult--suppress { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid #ef444444; }
+.f1-thompson-row {
+  display: grid; grid-template-columns: 2rem 1fr 4rem 4rem;
+  gap: 0.5rem; padding: 0.35rem 0; font-size: 0.8rem; align-items: center;
+}
+.f1-rank { color: #fbbf24; font-weight: 700; }
+.f1-algo { color: #e2e8f0; }
+.f1-ucb  { color: #60a5fa; text-align: right; }
+.f1-mean { color: #94a3b8; text-align: right; }
+.f1-hawkes-pill {
+  display: inline-block; padding: 0.25rem 0.6rem;
+  margin: 0.15rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;
+}
+.f1-hawkes--exc { background: rgba(251, 146, 60, 0.2); color: #fb923c; }
+.f1-hawkes--inh { background: rgba(96, 165, 250, 0.2); color: #60a5fa; }
+.f1-brain-footer {
+  display: flex; justify-content: space-between;
+  margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #1e293b;
+  font-size: 0.7rem; color: #64748b;
+}
+.f1-explanation { flex: 1; font-style: italic; }
+.f1-timestamp   { color: #475569; }
 </style>

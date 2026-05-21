@@ -30,6 +30,8 @@ import { LearningEmbedder }  from './LearningEmbedder.js';
 import { DriftDetector }     from './DriftDetector.js';
 import { RAGService }        from '../services/RAGService.js';
 import { AutoLearningLoop }          from '../learning/AutoLearningLoop.js';
+// D1 (2026-05-20): persistir Thompson Beta(α,β) tras cada sorteo
+import { ThompsonSampler }           from '../services/ThompsonSampler.js';
 import { HelixSentinel }             from '../core/HelixSentinel.js';
 import { TelegramNotifier }          from '../services/TelegramNotifier.js';
 import { AlgorithmCandidateService } from '../services/AlgorithmCandidateService.js';
@@ -76,6 +78,7 @@ export class PostDrawProcessor {
   private readonly embedder:       LearningEmbedder;
   private readonly drift:          DriftDetector;
   private readonly ppsService:     PPSService;          // MOTOR-Σ
+  private readonly thompsonSampler: ThompsonSampler;    // D1 — persistencia Beta
   private readonly autoLearning:    AutoLearningLoop;          // HELIX Autónomo
   private readonly sentinel:        HelixSentinel;             // HELIX Sentinel proactivo
   private readonly algoComparativa: AlgorithmCandidateService; // Comparativa simétrica
@@ -94,7 +97,8 @@ export class PostDrawProcessor {
     this.evaluator    = new StrategyEvaluator(agentPool);
     this.embedder     = new LearningEmbedder(agentPool, ragService);
     this.drift        = new DriftDetector(ballbotPool);
-    this.ppsService   = new PPSService(agentPool);        // MOTOR-Σ
+    this.ppsService       = new PPSService(agentPool);    // MOTOR-Σ
+    this.thompsonSampler  = new ThompsonSampler(agentPool); // D1 — Bayesian Beta posteriors
     this.autoLearning    = new AutoLearningLoop(agentPool);          // HELIX Autónomo
     this.sentinel        = new HelixSentinel(agentPool);             // HELIX Sentinel proactivo
     this.algoComparativa = new AlgorithmCandidateService(agentPool); // Comparativa simétrica
@@ -357,6 +361,15 @@ export class PostDrawProcessor {
         const records = await this.ppsService.processPostDraw(
           game_type, draw_type, draw_date, half, winning_pair
         );
+
+        // D1 (2026-05-20): persistir Thompson state DESPUÉS de processPostDraw
+        // El algo_rank_history ya tiene la entrada nueva → buildState() la captura.
+        // Fire-and-forget: no bloquea el flujo principal si falla.
+        this.thompsonSampler.persistState(game_type, draw_type, half, 15)
+          .catch((err: Error) => logger.warn(
+            { err: err.message, game_type, draw_type, half },
+            'D1 — Thompson persistState fallo (non-fatal)'
+          ));
 
         if (records.length > 0 && this.notifier) {
           const sorted  = [...records].sort((a, b) => a.rank_of_winner - b.rank_of_winner);

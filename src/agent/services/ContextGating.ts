@@ -27,6 +27,7 @@
 import { Pool } from 'pg';
 import pino from 'pino';
 import { EVTScorer, type EVTState } from './EVTScorer.js';
+import { MultivariateHawkesAnalyzer } from './MultivariateHawkesAnalyzer.js';
 import { CANONICAL_ALGORITHMS } from '../types/analysis.types.js';
 
 const logger = pino({ name: 'ContextGating' });
@@ -37,6 +38,12 @@ export interface GatingWeights {
   regime:           string;
   regime_strength:  number;
   explanation:      string;
+  // ── B3 (2026-05-20): Multivariate Hawkes pair boosts ──
+  // pair_boosts[pair] = lift factor cuando hay señal dígito-a-dígito significativa.
+  // Solo activado cuando el último sorteo produce un dígito con excitación Bonferroni-confirmada.
+  // En NORMAL: vacío. Si hay 1+ par significativo: mapa de boosts por par específico.
+  pair_boosts?:     Record<string, number>;
+  hawkes_explanation?: string;
 }
 
 // ── Default (neutral) weight for any algorithm ────────────────
@@ -45,9 +52,11 @@ const NEUTRAL = 1.0;
 // ══════════════════════════════════════════════════════════════
 export class ContextGating {
   private readonly evtScorer: EVTScorer;
+  private readonly hawkesAnalyzer: MultivariateHawkesAnalyzer;
 
   constructor(private readonly pool: Pool) {
-    this.evtScorer = new EVTScorer(pool);
+    this.evtScorer       = new EVTScorer(pool);
+    this.hawkesAnalyzer  = new MultivariateHawkesAnalyzer(pool);
   }
 
   // ─── Compute gating weights for current moment ─────────────
@@ -118,8 +127,27 @@ export class ContextGating {
       }
     }
 
+    // ── B3 (2026-05-20): Multivariate Hawkes pair-level boosts ──
+    // Para pick3, intentamos derivar boosts dígito-a-dígito desde la matriz Hawkes.
+    // SOLO se activa cuando hay 1+ par (d_prev, d_curr) Bonferroni-significativo
+    // en la posición relevante (p2 para half=du de pick3, p1 para ab de pick4, etc.).
+    // Si no hay señal: pair_boosts queda undefined (no aplica).
+    let pairBoosts: Record<string, number> | undefined;
+    let hawkesExplanation: string | undefined;
+    try {
+      const result = await this.computePairBoosts(game_type, draw_type, half);
+      if (result && Object.keys(result.boosts).length > 0) {
+        pairBoosts = result.boosts;
+        hawkesExplanation = result.explanation;
+      }
+    } catch (err) {
+      logger.debug({ err: err instanceof Error ? err.message : String(err) },
+        'Hawkes pair boosts not available — non-fatal');
+    }
+
     logger.info(
-      { game_type, draw_type, half, regime: evt.regime, regime_strength: evt.regime_strength },
+      { game_type, draw_type, half, regime: evt.regime, regime_strength: evt.regime_strength,
+        hawkes_pairs: pairBoosts ? Object.keys(pairBoosts).length : 0 },
       'ContextGating computed',
     );
 
@@ -128,7 +156,107 @@ export class ContextGating {
       regime:          evt.regime,
       regime_strength: evt.regime_strength,
       explanation,
+      pair_boosts:        pairBoosts,
+      hawkes_explanation: hawkesExplanation,
     };
+  }
+
+  // ── B3: Multivariate Hawkes → pair-level boosts ──────────────
+  // Computa boosts por par específico (no por algoritmo).
+  // Aplicable cuando la matriz Hawkes tiene celdas significativas (Bonferroni).
+  //
+  // FLUJO:
+  //   1. Identifica las posiciones de dígito relevantes para el half:
+  //      pick3 du = (p2, p3), pick4 ab = (p1, p2), pick4 cd = (p3, p4)
+  //   2. Para cada posición, computa la matriz Hawkes y busca pares significativos
+  //   3. Lee el último sorteo para obtener los dígitos previos
+  //   4. Para cada par "XY" candidato, multiplica boosts si:
+  //      - (last_pos1, X) tiene excitación → boost para todos los pares XY
+  //      - (last_pos2, Y) tiene excitación → boost para todos los pares XY
+  private async computePairBoosts(
+    game_type: string,
+    draw_type: string,
+    half:      string,
+  ): Promise<{ boosts: Record<string, number>; explanation: string } | null> {
+    // Mapeo half → posiciones de dígito relevantes
+    const positionMap: Record<string, ['p1'|'p2'|'p3'|'p4', 'p1'|'p2'|'p3'|'p4']> = {
+      'du': ['p2', 'p3'],   // pick3 — par p2p3
+      'ab': ['p1', 'p2'],   // pick4 — par p1p2
+      'cd': ['p3', 'p4'],   // pick4 — par p3p4
+    };
+    const positions = positionMap[half];
+    if (!positions) return null;
+    const [pos1, pos2] = positions;
+
+    // Solo aplicar para pick3 (donde detectamos señal Bonferroni en p1) — empíricamente sustentado
+    // Para pick4: NO hay señal multivariada significativa a nivel dígito (confirmed)
+    if (game_type !== 'pick3') return null;
+
+    // Computar matriz para ambas posiciones
+    const [matrix1, matrix2] = await Promise.all([
+      this.hawkesAnalyzer.analyze(game_type as 'pick3'|'pick4', draw_type as 'midday'|'evening', pos1),
+      this.hawkesAnalyzer.analyze(game_type as 'pick3'|'pick4', draw_type as 'midday'|'evening', pos2),
+    ]);
+
+    // Si ninguna posición tiene señal, no aplica
+    if (!matrix1.has_signal && !matrix2.has_signal) return null;
+
+    // Leer el último sorteo para obtener los dígitos previos
+    const { rows } = await this.pool.query<{
+      [key: string]: number;
+    }>(
+      `SELECT p1, p2, p3, p4 FROM hitdash.ingested_results
+       WHERE game_type = $1 AND draw_type = $2
+       ORDER BY draw_date DESC LIMIT 1`,
+      [game_type, draw_type],
+    );
+
+    const lastDraw = rows[0];
+    if (!lastDraw) return null;
+
+    const lastDigit1 = Number(lastDraw[pos1]);
+    const lastDigit2 = Number(lastDraw[pos2]);
+
+    if (isNaN(lastDigit1) || isNaN(lastDigit2)) return null;
+
+    // Build pair boosts: para cada par XY ∈ {00..99}
+    //   boost[XY] = matrix1[last_d1][X] × matrix2[last_d2][Y]
+    // Solo añadir al map si boost se desvía de 1.0 (≥0.95 o ≤1.05)
+    const boosts: Record<string, number> = {};
+    const significantPairs1 = new Set(matrix1.significant_pairs.map(p => `${p.digit_from}->${p.digit_to}`));
+    const significantPairs2 = new Set(matrix2.significant_pairs.map(p => `${p.digit_from}->${p.digit_to}`));
+
+    for (let x = 0; x < 10; x++) {
+      for (let y = 0; y < 10; y++) {
+        const lift1 = matrix1.excitation_matrix[lastDigit1]?.[x] ?? 1.0;
+        const lift2 = matrix2.excitation_matrix[lastDigit2]?.[y] ?? 1.0;
+
+        // Solo aplicar lift si la celda específica fue significativa post-Bonferroni
+        const apply1 = significantPairs1.has(`${lastDigit1}->${x}`);
+        const apply2 = significantPairs2.has(`${lastDigit2}->${y}`);
+
+        const effectiveLift1 = apply1 ? lift1 : 1.0;
+        const effectiveLift2 = apply2 ? lift2 : 1.0;
+        const finalBoost = effectiveLift1 * effectiveLift2;
+
+        // Cap conservador: [0.5, 2.0] para evitar over-amplification
+        const capped = Math.max(0.5, Math.min(2.0, finalBoost));
+
+        // Solo añadir al map si se desvía ≥5% de neutral
+        if (Math.abs(capped - 1.0) >= 0.05) {
+          const pairKey = `${x}${y}`;
+          boosts[pairKey] = +capped.toFixed(3);
+        }
+      }
+    }
+
+    if (Object.keys(boosts).length === 0) return null;
+
+    const explanation = `Multivariate Hawkes: último ${pos1}=${lastDigit1}, ${pos2}=${lastDigit2}. ` +
+      `${Object.keys(boosts).length} pares con boost significativo aplicados ` +
+      `(matrix sig: ${matrix1.n_significant}+${matrix2.n_significant} pares Bonferroni).`;
+
+    return { boosts, explanation };
   }
 
   // Expose EVT state directly for callers that need it

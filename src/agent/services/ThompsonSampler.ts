@@ -178,6 +178,51 @@ export class ThompsonSampler {
   }
 
   // ------------------------------------------------------------------
+  // D1 (2026-05-20): persistState — escribir Beta(α,β) a thompson_state
+  // Cierra el loop de aprendizaje: PostDrawProcessor llama esto después
+  // de cada sorteo para que el dashboard lea O(1) sin recomputar.
+  // ------------------------------------------------------------------
+  async persistState(
+    game_type: string,
+    draw_type: string,
+    half:      string,
+    n_at:      number = 15,
+  ): Promise<{ persisted: number }> {
+    const state = await this.buildState(game_type, draw_type, half, n_at, 90);
+    if (state.size === 0) return { persisted: 0 };
+
+    let persisted = 0;
+    for (const [algo, s] of state.entries()) {
+      try {
+        await this.pool.query(
+          `INSERT INTO hitdash.thompson_state
+             (algo_name, game_type, draw_type, half, n_at, alpha, beta_param, n_total, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+           ON CONFLICT (algo_name, game_type, draw_type, half, n_at)
+           DO UPDATE SET
+             alpha       = $6,
+             beta_param  = $7,
+             n_total     = $8,
+             updated_at  = now()`,
+          [algo, game_type, draw_type, half, n_at, s.alpha, s.beta_param, s.n_total],
+        );
+        persisted++;
+      } catch (err) {
+        logger.warn(
+          { algo, err: err instanceof Error ? err.message : String(err) },
+          'persistState: failed to upsert algo',
+        );
+      }
+    }
+
+    logger.info(
+      { game_type, draw_type, half, n_at, persisted },
+      '🧠 Thompson state persistido a thompson_state',
+    );
+    return { persisted };
+  }
+
+  // ------------------------------------------------------------------
   // sampleWeights — draw from Beta posteriors for this round
   // Returns algo_name → sampled weight (used for consensus ranking)
   // ------------------------------------------------------------------
