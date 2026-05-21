@@ -144,12 +144,15 @@ jobs:
             # ── PASO 6.5: Genesis Backtest — poblar Accuracy + Rendimiento ─
             # Fire-and-forget: el job corre async en el server, no bloqueamos el pipeline.
             # Garantiza que los gráficos muestren datos reales en el primer login.
-            # NOTA v2.4: fibonacci_pisano REMOVIDO (sin base empírica, eliminado del motor).
+            #
+            # DEPLOY FIX (2026-05-21): Lista actualizada para coincidir EXACTAMENTE con
+            # STRATEGY_CATALOG en backtestJobRunner.ts (13 estrategias válidas).
+            # Las 8 anteriores (pair_return_cycle, sum_pattern_filter, double_triple_detector,
+            # cross_draw_correlation, trend_momentum, trend_momentum_sweet, est_individuales,
+            # terminal_analysis) no están en STRATEGY_CATALOG → API retornaba 400 →
+            # genesis fallaba silenciosamente desde siempre.
             echo "📊 Disparando Genesis Backtest (pick3 + pick4, 90 días)..."
-            # A2 FIX (2026-05-20): eliminados momentum_ema/consensus_top/apex_adaptive
-            # (phantom strategies removidos del catálogo canónico v2.4).
-            # Lista ahora coincide con CANONICAL_ALGORITHMS (21 algos canónicos).
-            ALL_STRATS='["frequency_rank","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","pair_return_cycle","sum_pattern_filter","double_triple_detector","cross_draw_correlation","trend_momentum","trend_momentum_sweet","est_individuales","terminal_analysis"]'
+            ALL_STRATS='["frequency_rank","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday"]'
             curl -sf -X POST "http://localhost:3005/api/backtest-control/run" \
               -H "Content-Type: application/json" \
               -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \

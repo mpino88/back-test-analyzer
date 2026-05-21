@@ -10,7 +10,7 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "start": "node dist/server/index.js",
+    "start": "node dist/server/server/index.js",
     "migrate": "node --env-file=.env --loader ts-node/esm src/agent/db/migrate.ts",
     "seed": "node --env-file=.env --loader ts-node/esm src/agent/scripts/seed-rag.ts",
     "test": "vitest",
