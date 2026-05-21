@@ -60,8 +60,8 @@
 
     <!-- Main content -->
     <main class="agent-main">
-      <!-- ── U3 (2026-05-20): Sistema Nervioso Central — visible en TODAS las vistas ── -->
-      <BrainStatusBar />
+      <!-- NOTA (2026-05-21): BrainStatusBar removido del layout global.
+           Ahora vive en una vista dedicada accesible vía menu/route. -->
 
       <!-- ── Error boundary: captura crashes silenciosos de vistas hijas ── -->
       <div v-if="routeError" class="route-error">
@@ -81,7 +81,7 @@ import { computed, ref, provide, onErrorCaptured } from 'vue';
 import { RouterLink, RouterView } from 'vue-router';
 import { useAgentStatus }    from '../../composables/agent/useAgentStatus.js';
 import { createHelixBrain }  from '../../composables/agent/useHelixBrain.js';
-import BrainStatusBar        from '../../components/layout/BrainStatusBar.vue';
+// BrainStatusBar removido del layout global — ahora se usa solo en BrainView dedicada
 
 const { status, connected } = useAgentStatus();
 
