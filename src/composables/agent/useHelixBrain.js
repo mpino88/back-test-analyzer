@@ -88,34 +88,64 @@ export function createHelixBrain(sseStatus) {
     }
   });
 
-  // ── Régimen activo (prioriza pick4 evening si está en cluster) ──
+  // ── FIX (2026-05-21): mostrar AMBOS juegos en paralelo, no priorizar uno ──
+  // Antes: priorizaba pick4 si en cluster → pick3 quedaba oculto.
+  // Ahora: ambos games exponen su propio estado independiente, la UI
+  // los muestra side-by-side.
+
+  function buildGameView(evtRef, thompsonRef, game) {
+    return computed(() => {
+      const evt = evtRef.value;
+      const state  = evt?.evt_state ?? {};
+      const gating = evt?.gating ?? {};
+      const regime = state.regime ?? 'NORMAL';
+      const weights = gating.weights ?? {};
+      const intensity = Math.max(
+        state.quad_hawkes_intensity ?? 0,
+        state.triple_hawkes_intensity ?? 0,
+      );
+      const daysSince = state.days_since_quad ?? state.days_since_triple ?? null;
+
+      const multipliers = Object.entries(weights)
+        .filter(([, v]) => Math.abs(v - 1.0) > 0.05)
+        .map(([algo, v]) => ({ algo, weight: +v.toFixed(2), direction: v > 1 ? 'boost' : 'suppress' }))
+        .sort((a, b) => Math.abs(b.weight - 1) - Math.abs(a.weight - 1));
+
+      return {
+        game,
+        regime,
+        meta: REGIME_META[regime] ?? REGIME_META.NORMAL,
+        strength:    state.regime_strength ?? 0,
+        intensity,
+        daysSince,
+        multipliers,
+        topMultiplier: multipliers[0] ?? null,
+        thompsonLeaders: (thompsonRef.value ?? []).slice(0, 5),
+        topThompson:     (thompsonRef.value ?? [])[0] ?? null,
+        explanation:     gating.explanation ?? null,
+      };
+    });
+  }
+
+  // ── Vista independiente por juego ───────────────────────────
+  const pick3View = buildGameView(_evtPick3Evening, _thompsonPick3, 'pick3');
+  const pick4View = buildGameView(_evtPick4Evening, _thompsonPick4, 'pick4');
+
+  // ── Compatibilidad con código legacy (DashboardView usa esto) ──
+  // Prioriza el juego con régimen no-NORMAL para "activeGame"
   const activeRegime = computed(() => {
-    const r4 = _evtPick4Evening.value?.evt_state?.regime;
-    const r3 = _evtPick3Evening.value?.evt_state?.regime;
-    // Si pick4 está en cluster (más raro), priorizar
-    if (r4 && r4 !== 'NORMAL') return { game: 'pick4', regime: r4, source: _evtPick4Evening.value };
-    if (r3 && r3 !== 'NORMAL') return { game: 'pick3', regime: r3, source: _evtPick3Evening.value };
-    // Por defecto pick4 (mostrar siempre el estado de pick4 evening)
-    return { game: 'pick4', regime: r4 ?? 'NORMAL', source: _evtPick4Evening.value };
+    if (pick4View.value.regime !== 'NORMAL') return pick4View.value;
+    if (pick3View.value.regime !== 'NORMAL') return pick3View.value;
+    return pick4View.value; // default
   });
 
-  const regime = computed(() => activeRegime.value.regime);
-  const regimeMeta = computed(() => REGIME_META[regime.value] ?? REGIME_META.NORMAL);
-  const regimeStrength = computed(() => activeRegime.value.source?.evt_state?.regime_strength ?? 0);
-
-  const activeMultipliers = computed(() => {
-    const w = activeRegime.value.source?.gating?.weights ?? {};
-    return Object.entries(w)
-      .filter(([, v]) => Math.abs(v - 1.0) > 0.05)
-      .map(([algo, v]) => ({ algo, weight: +v.toFixed(2), direction: v > 1 ? 'boost' : 'suppress' }))
-      .sort((a, b) => Math.abs(b.weight - 1) - Math.abs(a.weight - 1));
-  });
-
-  const thompsonLeaders = computed(() => {
-    // Mostrar líderes del juego con régimen activo, fallback a pick4
-    const game = activeRegime.value.game;
-    return (game === 'pick3' ? _thompsonPick3.value : _thompsonPick4.value).slice(0, 5);
-  });
+  const regime         = computed(() => activeRegime.value.regime);
+  const regimeMeta     = computed(() => activeRegime.value.meta);
+  const regimeStrength = computed(() => activeRegime.value.strength);
+  const activeMultipliers = computed(() => activeRegime.value.multipliers);
+  const thompsonLeaders   = computed(() => activeRegime.value.thompsonLeaders);
+  const hawkesIntensity   = computed(() => activeRegime.value.intensity);
+  const daysSinceRareEvent = computed(() => activeRegime.value.daysSince);
 
   const conformalCoverage = computed(() => {
     const p = _helixPredictPick4.value;
@@ -125,18 +155,6 @@ export function createHelixBrain(sseStatus) {
       pairs:     p.conformal_pairs_80?.length ?? 0,
       level:     p.confidence_level ?? 0.80,
     };
-  });
-
-  // ── Vital signs derivados ───────────────────────────────────
-  const hawkesIntensity = computed(() => {
-    const e = activeRegime.value.source?.evt_state;
-    if (!e) return 0;
-    return Math.max(e.quad_hawkes_intensity ?? 0, e.triple_hawkes_intensity ?? 0);
-  });
-
-  const daysSinceRareEvent = computed(() => {
-    const e = activeRegime.value.source?.evt_state;
-    return e?.days_since_quad ?? e?.days_since_triple ?? null;
   });
 
   return {
@@ -183,6 +201,11 @@ export function createHelixBrain(sseStatus) {
     }),
 
     // ═══════ HELIX v2 — CEREBRO F1 UNIFICADO ═══════
+    // FIX 2026-05-21: vistas independientes por juego (no priorizar uno)
+    pick3View,
+    pick4View,
+
+    // Legacy/compat — devuelve el juego "activo" (con régimen no-NORMAL si existe)
     activeGame:        computed(() => activeRegime.value.game),
     regime,
     regimeMeta,
