@@ -113,7 +113,11 @@ export class AlgorithmCandidateService {
       gap_analysis:       { algo: new GapAnalysis(hitPool),           topN: TOP_N_DEFAULT, minScore: 0.01 },
       hot_cold:           { algo: new HotColdClassifier(hitPool),     topN: TOP_N_DEFAULT, minScore: 0.01 },
       pairs_correlation:  { algo: new PairCorrelation(hitPool),       topN: TOP_N_DEFAULT, minScore: 0.01 },
-      fibonacci_resonance: { algo: new FibonacciResonancePro(hitPool), topN: TOP_N_DEFAULT, minScore: 0.40 },
+      // A3 FIX (2026-05-20): fibonacci_resonance ELIMINADO del registro activo.
+      // El algo fibonacci_pisano fue removido en v2.4 (sin base empírica en RNG).
+      // fibonacci_resonance era un proxy/derivado que seguía generando rows
+      // en algo_rank_history post-migration 022/025. Causa raíz cortada aquí.
+      // FibonacciResonancePro.ts conservado para trazabilidad histórica pero NO instanciado.
       est_individuales:    { algo: new EstIndividuales(hitPool),        topN: TOP_N_DEFAULT, minScore: 0.80 },
       streak_detection:   { algo: new StreakDetection(hitPool),       topN: TOP_N_DEFAULT, minScore: 0.50 },
       position_analysis:  { algo: new PositionAnalysis(hitPool),      topN: TOP_N_DEFAULT, minScore: 0.01 },

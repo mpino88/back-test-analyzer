@@ -20,6 +20,11 @@
 import type { Pool } from 'pg';
 import pino from 'pino';
 import { PPSService } from '../services/PPSService.js';
+// ─── HELIX v2 — F1 brain wire-in (B1+B2 2026-05-20) ──────────────
+// ContextGating: aplica multiplicadores por régimen (HAWKES_QUAD_CLUSTER → double_triple ×3.58, etc.)
+// ThompsonSampler: muestrea pesos Bayesianos Beta(α,β) en vez de PPS estático (exploración activa)
+import { ContextGating }   from '../services/ContextGating.js';
+import { ThompsonSampler } from '../services/ThompsonSampler.js';
 
 import { FrequencyAnalysis }  from './algorithms/FrequencyAnalysis.js';
 import { GapAnalysis }        from './algorithms/GapAnalysis.js';
@@ -241,6 +246,9 @@ export class AnalysisEngine {
   private readonly terminalAnalysis: TerminalAnalysis;
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
   private readonly ppsService:  PPSService;
+  // ─── HELIX v2: F1 brain services (B1+B2 2026-05-20) ──────────
+  private readonly contextGating:   ContextGating;
+  private readonly thompsonSampler: ThompsonSampler;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -277,6 +285,9 @@ export class AnalysisEngine {
     this.terminalAnalysis = new TerminalAnalysis(agentPool);
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
     this.ppsService = new PPSService(agentPool);
+    // ─── HELIX v2 — F1 brain (B1+B2 2026-05-20) ──────────────────
+    this.contextGating   = new ContextGating(agentPool);
+    this.thompsonSampler = new ThompsonSampler(agentPool);
   }
 
   async analyze(
@@ -615,6 +626,44 @@ export class AnalysisEngine {
       logger.info({ algos_with_pps: ppsMap.size }, 'AnalysisEngine: pesos PPS cargados desde MOTOR-Σ');
     }
 
+    // ── HELIX v2 — F1 BRAIN ACTIVATION (B1+B2 2026-05-20) ────────────────────
+    // B1: ContextGating — detecta régimen (HAWKES/EVT) y aplica multiplicadores
+    //     POR ALGORITMO. Ej: en HAWKES_QUAD_CLUSTER, double_triple ×3.58.
+    // B2: ThompsonSampler — muestra pesos Bayesianos Beta(α,β) en vez de leer PPS
+    //     estático. Exploración activa: ocasionalmente prueba algos "subestimados".
+    //
+    // Ambos servicios son TOLERANTES A FALLOS: si la DB no tiene datos suficientes,
+    // retornan pesos neutrales (1.0) y el sistema fallback al consensus PPS clásico.
+    let gatingWeights: Record<string, number> = {};
+    let thompsonWeights: Map<string, number> = new Map();
+    let helixV2Regime = 'NORMAL';
+
+    try {
+      const gating = await this.contextGating.computeGating(game_type, draw_type, half);
+      gatingWeights = gating.weights;
+      helixV2Regime = gating.regime;
+      logger.info(
+        { regime: gating.regime, strength: gating.regime_strength, explanation: gating.explanation },
+        '🧠 HELIX v2 — ContextGating activado'
+      );
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) },
+        'ContextGating no disponible — fallback a pesos neutrales');
+    }
+
+    try {
+      thompsonWeights = await this.thompsonSampler.sampleWeights(game_type, draw_type, half, 15);
+      if (thompsonWeights.size > 0) {
+        logger.info(
+          { thompson_algos: thompsonWeights.size },
+          '🧠 HELIX v2 — Thompson Sampling activo (pesos Bayesianos Beta)'
+        );
+      }
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) },
+        'ThompsonSampler no disponible — fallback a PPS clásico');
+    }
+
     // ── Mantener adaptive_weights como capa de compatibilidad ─────────────────
     // Mientras PPS acumula historial, adaptive_weights sirve de respaldo.
     // Cuando PPS tiene ≥10 sorteos, domina el 80% del peso efectivo.
@@ -653,30 +702,54 @@ export class AnalysisEngine {
       }
     } catch { /* cognitive_algo_weights puede no existir aún — ok */ }
 
-    // ── Peso efectivo MOTOR-Σ + Cognitivo: jerarquía de 3 capas ─────────────
-    // 1. PPS live (aprendizaje desde deployment)
-    // 2. Peso cognitivo histórico (aprendizaje desde TODO el historial)
-    // 3. ALGORITHM_WEIGHTS estático (fallback base)
+    // ── Peso efectivo MOTOR-Σ + HELIX v2 F1 BRAIN: jerarquía de 5 capas ─────
+    // 1. Base cognitive (histórico completo)
+    // 2. PPS live (EMA aprendizaje sorteo a sorteo)
+    // 3. ★ Thompson Sampling (Beta posterior — exploración Bayesiana activa) ★
+    // 4. ★ ContextGating (EVT/Hawkes regime multiplier — el cerebro F1) ★
+    // 5. ALGORITHM_WEIGHTS estático (fallback final)
+    //
+    // El gating multiplier es lo que convierte el sistema de "pasivo estadístico"
+    // a "activo contextual": HOY el sistema está en HAWKES_QUAD_CLUSTER
+    // (3 días desde 8-8-8-8), entonces double_triple recibe ×3.58 automáticamente.
     const GLOBAL_DEFAULT_N = 15;
     function effectiveWeight(algName: string): number {
       const baseW     = cognitiveWeights[algName] ?? ALGORITHM_WEIGHTS[algName] ?? 0.5;
       const ppsScore  = ppsMap.get(algName);
 
-      // Si hay PPS live: normalizar PPS[0–100] → factor[0.1–2.0]
-      // El PPS live refina sobre el peso cognitivo base
+      // ── HELIX v2: gating multiplier (régimen-aware) ──
+      // En NORMAL todos los algos reciben 1.0 (no-op).
+      // En HAWKES_QUAD_CLUSTER: double_triple recibe ≥3.0, trend_momentum 0.7, etc.
+      const gatingMult = gatingWeights[algName] ?? 1.0;
+
+      // ── HELIX v2: Thompson sampled weight (Bayesiano) ──
+      // Beta(hits+1, misses+1) muestreado → exploración activa.
+      // Si Thompson no tiene datos para este algo, retorna 1.0 (no-op).
+      const thompsonMult = thompsonWeights.get(algName) ?? 1.0;
+
+      let weight: number;
+
       if (ppsScore !== undefined) {
+        // PPS live disponible: usar como factor refinador
         const ppsFactor = 0.1 + (ppsScore / 100) * 1.9;
-        return baseW * ppsFactor;
+        weight = baseW * ppsFactor;
+      } else {
+        // Sin PPS: usar adaptive_weights como antes
+        const stratName      = ALG_TO_STRATEGY[algName] ?? algName;
+        const adaptiveFactor = dbWeights[stratName] ?? 1.0;
+        const learnedTopN    = dbTopN[stratName] ?? DEFAULT_TOP_N_MAP[stratName] ?? GLOBAL_DEFAULT_N;
+        const precisionBonus = Math.min(2.0, GLOBAL_DEFAULT_N / learnedTopN);
+        weight = dbWeights[stratName] !== undefined
+          ? baseW * adaptiveFactor * precisionBonus
+          : baseW;
       }
 
-      // Sin PPS aún: usar adaptive_weights como antes
-      const stratName      = ALG_TO_STRATEGY[algName] ?? algName;
-      const adaptiveFactor = dbWeights[stratName] ?? 1.0;
-      const learnedTopN    = dbTopN[stratName] ?? DEFAULT_TOP_N_MAP[stratName] ?? GLOBAL_DEFAULT_N;
-      const precisionBonus = Math.min(2.0, GLOBAL_DEFAULT_N / learnedTopN);
-      return dbWeights[stratName] !== undefined
-        ? baseW * adaptiveFactor * precisionBonus
-        : baseW;
+      // ── Aplicar HELIX v2 multipliers (cerebro F1) ──
+      // Orden: gating primero (régimen contextual), luego Thompson (exploración)
+      // Cap final: peso entre 0.05 y 10.0 para evitar dominación extrema
+      const finalWeight = Math.max(0.05, Math.min(10.0, weight * gatingMult * thompsonMult));
+
+      return finalWeight;
     }
 
     const momentumExtraFactor = (() => {

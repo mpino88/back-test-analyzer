@@ -27,6 +27,7 @@ import { TransferEntropyAnalyzer }     from '../../agent/services/TransferEntrop
 import { ThompsonSampler }             from '../../agent/services/ThompsonSampler.js';
 import { ConformalPredictor }          from '../../agent/services/ConformalPredictor.js';
 import { HelixV2Engine }               from '../../agent/services/HelixV2Engine.js';
+import { MultivariateHawkesAnalyzer }  from '../../agent/services/MultivariateHawkesAnalyzer.js';
 import { requireApiKey } from '../middlewares/authMiddleware.js';
 import { createStrictLimiter } from '../middlewares/rateLimitMiddleware.js';
 import pino from 'pino';
@@ -56,6 +57,7 @@ export function createAgentRouter(agentPool: Pool, scheduler?: AgentScheduler, b
   const thompsonSampler          = new ThompsonSampler(agentPool);
   const conformalPredictor       = new ConformalPredictor(agentPool);
   const helixV2Engine            = new HelixV2Engine(agentPool);
+  const multivariateHawkes       = new MultivariateHawkesAnalyzer(agentPool);
 
   const strictLimiter = createStrictLimiter();
 
@@ -2916,6 +2918,22 @@ ${ragSummary}`;
         error:   'Error computing HELIX v2 retro-validation',
         details: err instanceof Error ? err.message : String(err),
       });
+    }
+  });
+
+  // ─── GET /api/agent/multivariate-hawkes ─────────────────────────
+  // Matriz Hawkes 10×10 dígito → dígito con corrección Bonferroni.
+  // Permite ver excitación cruzada empírica (ej: 2→2 lift 1.71).
+  router.get('/multivariate-hawkes', async (req: Request, res: Response) => {
+    try {
+      const game_type = (req.query['game_type'] as 'pick3'|'pick4') ?? 'pick3';
+      const draw_type = (req.query['draw_type'] as 'midday'|'evening') ?? 'evening';
+      const digit_pos = (req.query['digit_pos'] as 'p1'|'p2'|'p3'|'p4') ?? 'p2';
+      const result = await multivariateHawkes.analyze(game_type, draw_type, digit_pos);
+      res.json(result);
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'multivariate-hawkes failed');
+      res.status(500).json({ error: err instanceof Error ? err.message : 'unknown' });
     }
   });
 

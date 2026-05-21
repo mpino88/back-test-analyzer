@@ -146,7 +146,10 @@ jobs:
             # Garantiza que los gráficos muestren datos reales en el primer login.
             # NOTA v2.4: fibonacci_pisano REMOVIDO (sin base empírica, eliminado del motor).
             echo "📊 Disparando Genesis Backtest (pick3 + pick4, 90 días)..."
-            ALL_STRATS='["frequency_rank","momentum_ema","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","consensus_top","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","apex_adaptive"]'
+            # A2 FIX (2026-05-20): eliminados momentum_ema/consensus_top/apex_adaptive
+            # (phantom strategies removidos del catálogo canónico v2.4).
+            # Lista ahora coincide con CANONICAL_ALGORITHMS (21 algos canónicos).
+            ALL_STRATS='["frequency_rank","gap_overdue_focus","hot_cold_weighted","streak_reversal","pair_correlation","position_bias","moving_avg_signal","bayesian_score","transition_follow","markov_order2","calendar_pattern","decade_family","max_per_weekday","pair_return_cycle","sum_pattern_filter","double_triple_detector","cross_draw_correlation","trend_momentum","trend_momentum_sweet","est_individuales","terminal_analysis"]'
             curl -sf -X POST "http://localhost:3005/api/backtest-control/run" \
               -H "Content-Type: application/json" \
               -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \
