@@ -2268,6 +2268,114 @@ ${ragSummary}`;
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // EDGE DISCOVERY ENGINE — autonomous statistical proof (2026-05-21)
+  // ═══════════════════════════════════════════════════════════════
+
+  // POST /api/agent/edge-discovery/run
+  // Lanza discovery completo. Async — devuelve run_id, persiste a edge_*.
+  router.post('/edge-discovery/run', strictLimiter, async (req: Request, res: Response) => {
+    try {
+      const run_id = (req.body?.run_id as string) ?? `edge-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}`;
+      const scope  = (req.body?.scope  as string) ?? 'all';
+
+      const { EdgeDiscoveryEngine } = await import('../../agent/services/EdgeDiscoveryEngine.js');
+      const engine = new EdgeDiscoveryEngine(agentPool);
+
+      res.status(202).json({
+        accepted: true,
+        run_id,
+        scope,
+        message: `Edge Discovery iniciado. Consultar: GET /edge-discovery/report?run_id=${run_id}`,
+      });
+
+      // Fire-and-forget — async execution
+      engine.runDiscovery({ run_id, scope: scope as 'all' })
+        .then(summary => logger.info({
+          run_id: summary.run_id,
+          total: summary.total_tests,
+          significant: summary.significant_tests,
+          edge_found: summary.edge_found,
+        }, summary.edge_found ? '🎯 Edge Discovery: EDGE DETECTED' : '🔍 Edge Discovery: no edge'))
+        .catch(err => logger.error({ error: err instanceof Error ? err.message : String(err), run_id }, '❌ Edge Discovery falló'));
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'edge-discovery/run failed');
+      res.status(500).json({ error: 'Error iniciando edge discovery', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/edge-discovery/report?run_id=X
+  // Devuelve el reporte completo: run summary + tests significativos
+  router.get('/edge-discovery/report', async (req: Request, res: Response) => {
+    try {
+      const run_id = req.query.run_id as string | undefined;
+
+      // Get run summary
+      const runQuery = run_id
+        ? { sql: 'SELECT * FROM hitdash.edge_discovery_runs WHERE run_id=$1', params: [run_id] }
+        : { sql: 'SELECT * FROM hitdash.edge_discovery_runs ORDER BY started_at DESC LIMIT 1', params: [] };
+
+      const { rows: runs } = await agentPool.query(runQuery.sql, runQuery.params);
+      if (runs.length === 0) {
+        res.status(404).json({ error: 'Run no encontrado' });
+        return;
+      }
+      const run = runs[0]!;
+
+      // Get all tests for this run
+      const { rows: tests } = await agentPool.query(
+        `SELECT test_family, test_name, game_type, draw_type, half, scope,
+                null_hypothesis, test_statistic, p_value, bonferroni_threshold,
+                significant, effect_size, effect_size_metric, sample_size,
+                interpretation, data
+         FROM hitdash.edge_hypothesis_tests
+         WHERE run_id=$1
+         ORDER BY significant DESC, p_value ASC`,
+        [run.run_id],
+      );
+
+      // Aggregate by family
+      const byFamily = new Map<string, { total: number; significant: number; min_p: number }>();
+      for (const t of tests) {
+        const f = t.test_family;
+        const entry = byFamily.get(f) ?? { total: 0, significant: 0, min_p: 1 };
+        entry.total++;
+        if (t.significant) entry.significant++;
+        entry.min_p = Math.min(entry.min_p, Number(t.p_value));
+        byFamily.set(f, entry);
+      }
+      const familySummary = [...byFamily.entries()].map(([family, s]) => ({
+        family,
+        total_tests: s.total,
+        significant: s.significant,
+        min_p_value: s.min_p,
+      }));
+
+      res.json({
+        run, tests,
+        family_summary: familySummary,
+      });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'edge-discovery/report failed');
+      res.status(500).json({ error: 'Error consultando reporte', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/edge-discovery/list — todos los runs
+  router.get('/edge-discovery/list', async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await agentPool.query(
+        `SELECT run_id, started_at, completed_at, status, total_tests,
+                significant_tests, edge_found, verdict, duration_ms
+         FROM hitdash.edge_discovery_runs
+         ORDER BY started_at DESC LIMIT 50`,
+      );
+      res.json({ count: rows.length, runs: rows });
+    } catch (err) {
+      res.status(500).json({ error: 'Error listando runs', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // ─── GET /api/agent/patterns/mine ────────────────────────────────
   // Análisis de patrones empíricos: DOW bias, mes, gaps, autocorr, streaks.
   router.get('/patterns/mine', async (req: Request, res: Response) => {

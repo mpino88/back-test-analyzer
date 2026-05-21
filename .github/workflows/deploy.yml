@@ -177,6 +177,17 @@ jobs:
               -d "{\"game_type\":\"pick4\",\"mode\":\"combined\",\"top_n\":15,\"strategies\":$ALL_STRATS}" \
               && echo "✅ Genesis pick4 encolado" || echo "⚠️  Genesis pick4 no encolado (no crítico)"
 
+            # ── PASO 6.55: Edge Discovery Engine (autonomous statistical proof) ─
+            # HELIX F1 = aprendizaje adaptativo autónomo didáctico.
+            # Corre 6 familias de tests + Bonferroni. Reporta verdad sin maquillaje.
+            echo "🔬 Disparando Edge Discovery Engine (autonomous truth)..."
+            EDGE_RUN_ID="edge-deploy-$(date -u +%Y%m%dT%H%M%S)"
+            curl -sf -X POST "http://localhost:3005/api/agent/edge-discovery/run" \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: ${{ secrets.AGENT_API_KEY }}" \
+              -d "{\"run_id\":\"$EDGE_RUN_ID\",\"scope\":\"all\"}" \
+              && echo "✅ Edge Discovery iniciado run_id=$EDGE_RUN_ID" || echo "⚠️  Edge Discovery no iniciado"
+
             # ── PASO 6.6: HELIX v2 Walk-Forward Retrospective (2026-05-21) ─
             # Respuesta a inversores: replay del pipeline completo sobre 5 años.
             # POST /retrospective/helix-v2/run-all dispara los 6 combos secuencial.
