@@ -126,6 +126,19 @@ jobs:
             fi
             echo "✅ Migraciones completadas e in-sync verificado"
 
+            # ── PASO 4.5: VACUUM FULL post-tabula-rasa (2026-05-21) ────
+            # Migration 034 TRUNCATÓ ~6 GB en backtest_points_v2 + tablas
+            # cognitivas contaminadas. PostgreSQL marca páginas como "free"
+            # pero no recupera el disco hasta VACUUM FULL. Como las tablas
+            # acaban de ser truncadas, el lock es instantáneo.
+            # Idempotente: si las tablas ya están vacías, no-op.
+            echo "🧹 VACUUM FULL post-tabula-rasa (reclamar espacio en disco)..."
+            docker compose exec -T hitdash-postgres psql -U hitdash -d hitdash -c \
+              "VACUUM FULL hitdash.backtest_points_v2;
+               VACUUM FULL hitdash.algo_prediction_snapshot;
+               VACUUM FULL hitdash.helix_retrospective_runs;" 2>&1 | tail -5 \
+              && echo "✅ VACUUM completado" || echo "⚠️  VACUUM no completado (no crítico)"
+
             # ── PASO 5: Desplegar el servidor (zero-downtime) ─────────
             # Hitdash expone el puerto 3005 del host (→ 3001 interno).
             # bliss-api ocupa el 3001 del host — bóvedas separadas, sin colisión.
