@@ -135,13 +135,16 @@ export class HelixRetrospectiveSimulator {
 
       for (let i = WARMUP_DAYS; i < draws.length; i++) {
         const draw = draws[i]!;
-        seq++;
 
         // Pipeline: predict @ T using only data [start, T-1]
         const prediction = await this.predictAtTime(client, opts, draw.draw_date, top_n);
 
         if (!prediction) continue; // no snapshot for this date (skip honestly)
 
+        // FIX 2026-05-21: incrementar seq solo si predicción real ocurrió.
+        // Antes seq contaba TODAS las iteraciones (incluso sin snapshot) inflando
+        // el denominador → hit rate aparecía ~2% cuando real era ~15%.
+        seq++;
         const hit = prediction.predicted_top.includes(draw.winning_pair);
         if (hit) hits++;
 
@@ -452,21 +455,29 @@ export class HelixRetrospectiveSimulator {
 
     // FIX 2026-05-21: tabla real es ingested_results, no ballbot_draws.
     // Columnas: draw_key (PK), draw_date, p1, p2, p3, p4, game_type, draw_type.
-    // Pick3 usa p2,p3 (du); Pick4 usa p1,p2 (ab) o p3,p4 (cd).
-    // Filtramos draws válidos: pick3 requires p2 AND p3; pick4 requires p1-p4.
+    // OPTIMIZACIÓN: JOIN con algo_prediction_snapshot para procesar SOLO fechas
+    // que tienen snapshot real (≈1831 dates vs 13k+ filas totales).
     const completeFilter = game_type === 'pick3'
       ? 'p2 IS NOT NULL AND p3 IS NOT NULL'
       : 'p1 IS NOT NULL AND p2 IS NOT NULL AND p3 IS NOT NULL AND p4 IS NOT NULL';
 
     const { rows } = await this.pool.query<DrawRow>(
-      `SELECT draw_date::text AS draw_date,
-              ${pairSql} AS winning_pair
-       FROM hitdash.ingested_results
-       WHERE game_type = $1 AND draw_type = $2
-         AND ${completeFilter}
+      `SELECT DISTINCT ON (ir.draw_date)
+              ir.draw_date::text AS draw_date,
+              ${pairSql.replace(/p(\d)/g, 'ir.p$1')} AS winning_pair
+       FROM hitdash.ingested_results ir
+       WHERE ir.game_type = $1 AND ir.draw_type = $2
+         AND ${completeFilter.replace(/p(\d)/g, 'ir.p$1')}
+         AND EXISTS (
+           SELECT 1 FROM hitdash.algo_prediction_snapshot s
+           WHERE s.game_type = ir.game_type
+             AND s.draw_type = ir.draw_type
+             AND s.half      = $3
+             AND s.draw_date = ir.draw_date
+         )
          ${extra}
-       ORDER BY draw_date ASC, draw_key ASC`,
-      params,
+       ORDER BY ir.draw_date ASC, ir.draw_key ASC`,
+      [game_type, draw_type, half, ...params.slice(2)],
     );
     return rows;
   }
