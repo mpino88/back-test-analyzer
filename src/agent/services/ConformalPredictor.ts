@@ -92,44 +92,62 @@ export class ConformalPredictor {
   constructor(private readonly pool: Pool) {}
 
   // ─── Calibrate conformal scores from historical algo_rank_history ──
-  // Uses the BEST individual algorithm (highest hit_rate@15) as the
-  // nonconformity score function.
+  // F7 FIX (2026-05-21): Tres-way split para preservar exchangeability conformal.
+  //
+  // PROBLEMA AUDITORÍA (Layer 28):
+  //   El método anterior seleccionaba "best algo" sobre los MISMOS datos que
+  //   después calibraba. Esto rompe exchangeability (teorema conformal) y
+  //   anula la garantía de cobertura. El "80% guaranteed coverage" era null.
+  //
+  // SOLUCIÓN:
+  //   Split temporal tres-way del lookback_days:
+  //     • 40% más antiguo  → selección de algo líder
+  //     • 40% medio        → calibración de quantil
+  //     • 20% más reciente → cross-check empírico
+  //
+  //   Estos splits son DISJUNTOS — la selección no contamina la calibración,
+  //   y la calibración no contamina el cross-check.
   async calibrate(
     game_type:      string,
     draw_type:      string,
     half:           string,
     lookback_days:  number = 365,
   ): Promise<CalibrationResult> {
-    logger.info({ game_type, draw_type, half, lookback_days }, 'calibrate start');
+    logger.info({ game_type, draw_type, half, lookback_days }, 'F7 calibrate start (three-way split)');
 
-    // Step 1: find the best-performing algo by hit_rate@15
+    // Split temporal: 40/40/20 de los últimos `lookback_days`
+    const selectDays    = Math.floor(lookback_days * 0.40);
+    const calibrateDays = Math.floor(lookback_days * 0.40);
+    // checkDays = lookback_days - selectDays - calibrateDays (resto)
+
+    // ── PHASE 1: seleccionar líder en el SET MÁS ANTIGUO (selectDays) ──
     const { rows: bestRow } = await this.pool.query<{ algo_name: string; hr15: number }>(
       `SELECT algo_name,
               SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::float / COUNT(*) AS hr15
        FROM hitdash.algo_rank_history
-       WHERE game_type = $1
-         AND draw_type = $2
-         AND half      = $3
-         AND draw_date >= CURRENT_DATE - $4::int
+       WHERE game_type = $1 AND draw_type = $2 AND half = $3
+         AND draw_date <  CURRENT_DATE - $4::int                  -- antes del periodo de calibrate
+         AND draw_date >= CURRENT_DATE - $5::int                  -- pero dentro del lookback total
        GROUP BY algo_name
        ORDER BY hr15 DESC
        LIMIT 1`,
-      [game_type, draw_type, half, lookback_days],
+      [game_type, draw_type, half, calibrateDays + (lookback_days - selectDays - calibrateDays), lookback_days],
     );
 
     const best_algo = bestRow[0]?.algo_name ?? 'markov_order2';
 
-    // Step 2: get all rank_of_winner values from that algo
+    // ── PHASE 2: calibrar quantil en el SET MEDIO (calibrateDays) ──
+    // Este set NO incluye los draws usados para seleccionar el algo
     const { rows: rankRows } = await this.pool.query<{ rank_of_winner: string }>(
       `SELECT rank_of_winner
        FROM hitdash.algo_rank_history
-       WHERE game_type = $1
-         AND draw_type = $2
-         AND half      = $3
-         AND algo_name = $4
-         AND draw_date >= CURRENT_DATE - $5::int
+       WHERE game_type = $1 AND draw_type = $2 AND half = $3 AND algo_name = $4
+         AND draw_date <  CURRENT_DATE - $5::int                  -- antes del cross-check
+         AND draw_date >= CURRENT_DATE - $6::int                  -- pero después del select-period
        ORDER BY rank_of_winner`,
-      [game_type, draw_type, half, best_algo, lookback_days],
+      [game_type, draw_type, half, best_algo,
+       lookback_days - selectDays - calibrateDays,                 // checkDays (más recientes)
+       calibrateDays + (lookback_days - selectDays - calibrateDays)],
     );
 
     const n = rankRows.length;

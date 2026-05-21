@@ -189,7 +189,20 @@ export class TransferEntropyAnalyzer {
         SELECT -SUM((j3.n / N.total) * LOG(j3.n / cm3.m::float) / LOG(2)) AS v
         FROM j3 JOIN cm3 USING(d_tm3, d_tm1), N
       ),
-      mm AS (SELECT (9.0 * 9.0) / (2.0 * N.total * LN(2)) AS v FROM N)
+      -- F6 (2026-05-21): Miller-Madow exacto.
+      -- Para MI(X;Y) = H(X) + H(Y) - H(X,Y), la corrección es:
+      --   ΔMI = (k_X + k_Y - k_XY_observado - 1) / (2n)
+      -- Con k_X = k_Y = 10 y k_XY observado (≤ 100):
+      --   ΔMI = (20 - k_XY - 1) / (2n)
+      -- En bits: dividir por ln(2). Signo NEGATIVO cuando k_XY ≈ 100 → MI_corrected < MI_raw.
+      -- La aproximación anterior (9*9 = 81) era correcta dentro de 1-2% para nuestros n.
+      k_observed AS (
+        SELECT COUNT(DISTINCT (d_tm1, d_t)) AS k_xy FROM valid
+      ),
+      mm AS (
+        SELECT GREATEST(0.0, (k_observed.k_xy - 19.0) / (2.0 * N.total * LN(2))) AS v
+        FROM k_observed, N
+      )
       SELECT
         N.total::int AS n,
         H_marg.v    AS h_marg,

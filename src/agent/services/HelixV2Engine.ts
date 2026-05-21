@@ -152,14 +152,15 @@ export class HelixV2Engine {
 
     const coverage_80_threshold = calibration.coverage_80;
 
-    // Conformal predicted set: all pairs with rank <= threshold.
-    // Since we don't have live per-pair ranks here, we represent the
-    // guaranteed set as same-digit pairs when in Hawkes regime,
-    // or the first `threshold` pairs from ALL_PAIRS as a placeholder.
-    // In production, the endpoint caller should pass actual algo ranks.
-    const conformal_pairs_80 = buildConformalSet(
-      evtState.regime,
-      coverage_80_threshold,
+    // F4 FIX (2026-05-21): conformal set REAL desde algo_prediction_snapshot.
+    // Antes: en NORMAL regime devolvía ALL_PAIRS.slice(0,N) — secuencia
+    // lexicográfica ['00','01','02',...] sin contenido predictivo.
+    // Ahora: lee el snapshot más reciente del algo líder (mayor UCB Thompson),
+    // ordena pares por score y devuelve top-N reales.
+    const leaderAlgo = thompson_leaders[0]?.algo ?? calibration.algo_name;
+    const conformal_pairs_80 = await this._buildRealConformalSet(
+      game_type, draw_type, half, leaderAlgo,
+      evtState.regime, coverage_80_threshold,
     );
 
     // ── Build HELIX v2 final recommendation ───────────────────────
@@ -304,6 +305,60 @@ export class HelixV2Engine {
     );
 
     return report;
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // F4 FIX (2026-05-21): construir conjunto conformal REAL
+  // ────────────────────────────────────────────────────────────
+  // Lee el snapshot más reciente del algo líder, ordena pares por
+  // score real, devuelve top-N. En HAWKES regimes, fuerza
+  // same-digit pairs primero pero RESPETANDO el ranking del algo
+  // dentro de esos pares.
+  private async _buildRealConformalSet(
+    game_type: string,
+    draw_type: string,
+    half: string,
+    leader_algo: string,
+    regime: string,
+    threshold: number,
+  ): Promise<string[]> {
+    try {
+      // Snapshot más reciente del algo líder para este combo
+      const result = await this.pool.query(
+        `SELECT pair_scores
+         FROM hitdash.algo_prediction_snapshot
+         WHERE game_type=$1 AND draw_type=$2 AND half=$3 AND algo_name=$4
+         ORDER BY draw_date DESC LIMIT 1`,
+        [game_type, draw_type, half, leader_algo],
+      );
+      const rows = result.rows as Array<{ pair_scores: Record<string, number> }>;
+
+      if (rows.length === 0 || !rows[0]?.pair_scores) {
+        logger.warn({ leader_algo, game_type }, 'F4: no snapshot for leader, fallback');
+        return buildConformalSet(regime, threshold);
+      }
+
+      // Ordenar pares por score real DESC
+      const scores = rows[0].pair_scores;
+      const ranked: string[] = Object.entries(scores)
+        .sort(([, a], [, b]) => Number(b) - Number(a))
+        .map(([pair]) => pair);
+
+      if (regime === 'HAWKES_QUAD_CLUSTER') {
+        // En cluster: priorizar same-digit pairs pero ordenados por score real
+        const sameDigitRanked = ranked.filter(p => SAME_DIGIT_PAIRS.includes(p));
+        const otherRanked     = ranked.filter(p => !SAME_DIGIT_PAIRS.includes(p));
+        return [...sameDigitRanked, ...otherRanked].slice(0, threshold);
+      }
+
+      return ranked.slice(0, threshold);
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'F4 _buildRealConformalSet failed, fallback to placeholder',
+      );
+      return buildConformalSet(regime, threshold);
+    }
   }
 }
 

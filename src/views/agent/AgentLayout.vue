@@ -48,8 +48,9 @@
         <RouterLink to="/" class="nav-link nav-link--secondary">
           <span class="nav-link__icon">◀</span> Analyzer
         </RouterLink>
-        <div class="agent-nav__brain-status" :class="'brain--' + brain.brainStatus.value">
-          {{ brain.brainStatusLabel.value }}
+        <!-- F8 FIX (2026-05-21): Vue auto-unwrap en template — usar sin .value -->
+        <div class="agent-nav__brain-status" :class="'brain--' + brain.brainStatus">
+          {{ brain.brainStatusLabel }}
         </div>
         <div class="agent-nav__status" :class="connected ? 'status--live' : 'status--offline'">
           <span class="status__dot"></span>

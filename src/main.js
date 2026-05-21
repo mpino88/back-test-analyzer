@@ -30,11 +30,9 @@ const router = createRouter({
         { path: 'anomalies',   component: () => import('./views/agent/AnomalyView.vue') },
         { path: 'retrospective', component: () => import('./views/agent/RetrospectiveView.vue') },
         { path: 'accuracy',    component: () => import('./views/agent/AccuracyView.vue') },
-        // Rutas secundarias (accesibles por URL, no en nav principal)
-        { path: 'progressive', component: () => import('./views/agent/ProgressiveView.vue') },
-        { path: 'ballbot-strategies', component: () => import('./views/agent/BallbotStrategiesView.vue') },
-        // Rutas legadas — redirect a equivalente activo
-        { path: 'cartones',    redirect: '/agent/rendimiento' },
+        // F9 FIX (2026-05-21): rutas duplicadas eliminadas — progressive y
+        // ballbot-strategies ya están registradas arriba. Cartones eliminada
+        // (CartonesView/useCartones eran dead code, no referenciados desde nav).
       ],
     },
   ],

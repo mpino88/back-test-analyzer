@@ -248,7 +248,91 @@ export const CANONICAL_ALGORITHMS: readonly string[] = Object.freeze([
 // Cualquier referencia a estos en código nuevo debe lanzar warning/error.
 export const ELIMINATED_ALGORITHMS: readonly string[] = Object.freeze([
   'fibonacci_pisano', 'cycle_detector', 'mirror_complement',
+  // F1 FIX (2026-05-21): meta-aliases sin algoritmo individual
+  'apex_adaptive', 'consensus_top', 'momentum_ema', 'fibonacci_resonance',
 ]);
+
+// ─────────────────────────────────────────────────────────────────
+// F1 (2026-05-21): MAPPING BIDIRECCIONAL ÚNICO — Layer 78 del audit
+//
+// El sistema tiene 6 universos de nombres para los mismos 21 algos:
+//   - algorithm_catalog usa 'frequency'           (CANONICAL)
+//   - adaptive_weights  usa 'frequency_rank'      (STRATEGY)
+//   - strategy_registry mezcla CANONICAL + STRATEGY + phantoms
+//   - cognitive_algo_weights, pps_state, algo_rank_history: CANONICAL (con FK)
+//
+// Esta tabla canoniza el mapping. Todo código nuevo DEBE consultar aquí
+// vía toStrategyName()/toCanonicalName().
+// ─────────────────────────────────────────────────────────────────
+
+export const CANONICAL_TO_STRATEGY: Readonly<Record<string, string>> = Object.freeze({
+  frequency:            'frequency_rank',
+  hot_cold:             'hot_cold_weighted',
+  gap_analysis:         'gap_overdue_focus',
+  calendar_pattern:     'calendar_pattern',
+  markov_order2:        'markov_order2',
+  transition_follow:    'transition_follow',
+  decade_family:        'decade_family',
+  max_per_week_day:     'max_per_weekday',
+  pairs_correlation:    'pair_correlation',
+  streak:               'streak_reversal',
+  position:             'position_bias',
+  moving_averages:      'moving_avg_signal',
+  bayesian_score:       'bayesian_score',
+  pair_return_cycle:    'pair_return_cycle',
+  sum_pattern_filter:   'sum_pattern_filter',
+  double_triple:        'double_triple_detector',
+  cross_draw:           'cross_draw_correlation',
+  trend_momentum:       'trend_momentum',
+  trend_momentum_sweet: 'trend_momentum_sweet',
+  est_individuales:     'est_individuales',
+  terminal_analysis:    'terminal_analysis',
+});
+
+// Mapping reverso (strategy_name → canonical_name)
+export const STRATEGY_TO_CANONICAL: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(
+    Object.entries(CANONICAL_TO_STRATEGY).map(([canonical, strategy]) => [strategy, canonical]),
+  ),
+);
+
+/**
+ * Convertir nombre canónico (pps_state, algorithm_catalog) → strategy_name (adaptive_weights).
+ * Si no hay mapping, retorna el input (algunos coinciden).
+ */
+export function toStrategyName(canonical: string): string {
+  return CANONICAL_TO_STRATEGY[canonical] ?? canonical;
+}
+
+/**
+ * Convertir strategy_name (adaptive_weights, strategy_registry) → nombre canónico.
+ * Si no hay mapping, retorna el input.
+ */
+export function toCanonicalName(strategy: string): string {
+  return STRATEGY_TO_CANONICAL[strategy] ?? strategy;
+}
+
+/**
+ * ¿Es este nombre un alias eliminado/phantom?
+ */
+export function isEliminatedAlgorithm(name: string): boolean {
+  return ELIMINATED_ALGORITHMS.includes(name);
+}
+
+// Validación de inicialización: cada canonical DEBE tener un mapping
+// y cada strategy del mapping DEBE ser único.
+{
+  const canonicals = new Set(CANONICAL_ALGORITHMS);
+  const mapped     = new Set(Object.keys(CANONICAL_TO_STRATEGY));
+  const missing    = [...canonicals].filter(c => !mapped.has(c));
+  if (missing.length > 0) {
+    throw new Error(`F1 namespace check FAILED: canonical algos sin mapping: ${missing.join(', ')}`);
+  }
+  const strategies = Object.values(CANONICAL_TO_STRATEGY);
+  if (new Set(strategies).size !== strategies.length) {
+    throw new Error(`F1 namespace check FAILED: strategy names duplicadas en CANONICAL_TO_STRATEGY`);
+  }
+}
 
 // ─── Score por dígito/posición ───────────────────────────────────
 export interface DigitSignal {

@@ -73,44 +73,17 @@ import type {
   PairAnalysis,
   RankedPair,
 } from '../types/analysis.types.js';
-import { ALGORITHM_WEIGHTS, CANONICAL_ALGORITHMS } from '../types/analysis.types.js';
+import {
+  ALGORITHM_WEIGHTS, CANONICAL_ALGORITHMS,
+  CANONICAL_TO_STRATEGY,   // F1 (2026-05-21): mapping centralizado
+} from '../types/analysis.types.js';
 
 const logger = pino({ name: 'AnalysisEngine' });
 
-// ─── Mapeo: nombre AnalysisEngine → strategy name en adaptive_weights ──────
-// Este mapeo es crítico para que los pesos aprendidos por el backtest
-// se apliquen en la ruta live del agente.
-const ALG_TO_STRATEGY: Record<string, string> = {
-  frequency:         'frequency_rank',
-  gap_analysis:      'gap_overdue_focus',
-  hot_cold:          'hot_cold_weighted',
-  pairs_correlation: 'pair_correlation',
-  // fibonacci_pisano removed (v2.4)
-  streak:            'streak_reversal',
-  position:          'position_bias',
-  // MovingAverages.runPairs() computa (sma7-sma14)+ema → blend de moving_avg_signal + momentum_ema
-  // Se promedian ambos pesos adaptativos para el efectivo
-  moving_averages:   'moving_avg_signal',
-  // Ballbot Clones — strategy names match strategy_registry.name
-  bayesian_score:    'bayesian_score',
-  transition_follow: 'transition_follow',
-  markov_order2:     'markov_order2',
-  calendar_pattern:  'calendar_pattern',
-  decade_family:     'decade_family',
-  max_per_week_day:  'max_per_weekday',
-  // Algoritmos predictivos avanzados (v3)
-  pair_return_cycle:   'pair_return_cycle',
-  sum_pattern_filter:  'sum_pattern_filter',
-  double_triple:       'double_triple_detector',
-  cross_draw:          'cross_draw_correlation',
-  // Ballbot canonical (v4) — fórmula exacta trend_momentum
-  trend_momentum:        'trend_momentum',
-  // Ballbot Sweet Spot (v5 — 2026-05-14) — bracket dorado empírico
-  trend_momentum_sweet:  'trend_momentum_sweet',
-  // FIX #3 (2026-05-18): cerrar mapping incompleto — los 2 algos huérfanos del adaptive layer.
-  // Antes: caían al fallback `stratName = algName`, perdiendo capa adaptive_weights.
-  est_individuales:      'est_individuales',
-  terminal_analysis:     'terminal_analysis',
+// F1 FIX (2026-05-21): ALG_TO_STRATEGY ahora deriva del mapping CENTRALIZADO
+// en analysis.types.ts. Antes había DUPLICACIÓN entre este archivo y los
+// catálogos en backtest engines. Single source of truth ahora.
+const ALG_TO_STRATEGY: Record<string, string> = { ...CANONICAL_TO_STRATEGY,
 };
 
 // Default top_n si la estrategia aún no tiene historial adaptativo
@@ -713,9 +686,22 @@ export class AnalysisEngine {
     // a "activo contextual": HOY el sistema está en HAWKES_QUAD_CLUSTER
     // (3 días desde 8-8-8-8), entonces double_triple recibe ×3.58 automáticamente.
     const GLOBAL_DEFAULT_N = 15;
+
+    // ── F2 FIX (2026-05-21): Kill-switch UNIFICADO ──
+    // Migration 032 silenció HARMFUL en cognitive_algo_weights a 0.1.
+    // Si cognitive_weight ≤ 0.15, el algo está KILLED y NINGÚN multiplier
+    // (gating, thompson, ppsFactor) puede resucitarlo.
+    // Antes: gatingMult ×3.58 podía multiplicar un 0.1 → 0.36 (todavía contribuye).
+    // Ahora: si killed, retorna 0.05 (mínimo) sin multiplicar nada.
     function effectiveWeight(algName: string): number {
       const baseW     = cognitiveWeights[algName] ?? ALGORITHM_WEIGHTS[algName] ?? 0.5;
       const ppsScore  = ppsMap.get(algName);
+
+      // KILL-SWITCH: si el algo fue silenciado en cognitive_algo_weights, NO resucitarlo
+      const KILL_THRESHOLD = 0.15;
+      if ((cognitiveWeights[algName] ?? 1.0) <= KILL_THRESHOLD) {
+        return 0.05; // mínimo absoluto, sin gating ni thompson boost
+      }
 
       // ── HELIX v2: gating multiplier (régimen-aware) ──
       // En NORMAL todos los algos reciben 1.0 (no-op).

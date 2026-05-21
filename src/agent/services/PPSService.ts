@@ -364,12 +364,15 @@ export class PPSService {
       ).catch(err => logger.warn({ algo_name, error: err instanceof Error ? err.message : String(err) },
         'PPSService: error upserting pps_state'));
 
-      // ── Insertar en historial ──────────────────────────────────
+      // ── Insertar en historial (F3 FIX 2026-05-21: ON CONFLICT post-UNIQUE) ──
+      // Migration 031 añadió UNIQUE(algo_name, game_type, draw_type, draw_date, half).
+      // Retries/races ya no duplican: el INSERT idempotente preserva 1 row por combo.
       await this.pool.query(
         `INSERT INTO hitdash.algo_rank_history
            (algo_name, game_type, draw_type, draw_date, half,
             winning_pair, rank_of_winner, pps_before, pps_after)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (algo_name, game_type, draw_type, draw_date, half) DO NOTHING`,
         [algo_name, game_type, draw_type, draw_date, half,
          winning_pair, rank_of_winner, pps_before, pps_after]
       ).catch(err => logger.warn({ algo_name, error: err instanceof Error ? err.message : String(err) },
