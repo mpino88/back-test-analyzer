@@ -639,12 +639,13 @@ export class PPSService {
     windowDraws: number = 30
   ): Promise<{ algo_name: string; hits: number; total: number; rate: number; edge: number; wilson_lower: number } | null> {
     const BASELINE              = 0.15;    // baseline aleatorio @ N=15
-    const CHAMPION_RATE         = 0.30;    // 2× baseline (observado)
-    // M3 FIX (2026-05-18): Wilson 95% CI lower bound mínimo para aceptar champion.
-    // Con PAYOUT=$50, MIN_SAMPLES=20, rate=0.30 → Wilson lower ≈ 14.5% (< baseline).
-    // Requiriendo wilson_lower ≥ 0.20 se necesitan ~80 sorteos con rate≥30%
-    // para confirmar el champion, eliminando falsos positivos por muestras pequeñas.
-    const CHAMPION_WILSON_FLOOR = 0.20;    // Wilson lower bound mínimo @ 95% CI
+    // CM FIX (2026-05-21): threshold anterior 0.30 era matemáticamente imposible.
+    // Max observado en producción post-dedupe: 16.73%. Con 0.30 champion nunca disparaba.
+    // Nuevo: 0.20 = 1.33× baseline — realista y estadísticamente significativo.
+    const CHAMPION_RATE         = 0.20;    // 1.33× baseline (alcanzable con ~25-30% del mejor algo)
+    // Wilson floor ajustado: con rate=0.20 y n=40 → Wilson lower ≈ 0.125 (por encima de baseline).
+    // Requiere ~40 sorteos para confirmar el champion real.
+    const CHAMPION_WILSON_FLOOR = 0.14;    // Wilson lower bound mínimo @ 95% CI (ajustado al nuevo rate)
     const MIN_SAMPLES           = 20;      // sample size mínimo (guard de arranque)
 
     const hitRates = await this.computeRecentHitRates(game_type, draw_type, half, windowDraws, 15);

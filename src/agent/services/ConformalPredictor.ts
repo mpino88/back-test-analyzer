@@ -185,9 +185,38 @@ export class ConformalPredictor {
       calibrated_at: new Date().toISOString(),
     };
 
+    // CP FIX (2026-05-21): persistir en conformal_calibration (antes siempre vacía).
+    // ON CONFLICT (game_type, draw_type, half, algo_name) → actualiza thresholds.
+    try {
+      await this.pool.query(
+        `INSERT INTO hitdash.conformal_calibration
+           (game_type, draw_type, half, algo_name, n_calibration,
+            threshold_80, threshold_90, threshold_95,
+            empirical_80, empirical_90, calibrated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+         ON CONFLICT (game_type, draw_type, half, algo_name)
+         DO UPDATE SET
+           n_calibration = $5,
+           threshold_80  = $6,
+           threshold_90  = $7,
+           threshold_95  = $8,
+           empirical_80  = $9,
+           empirical_90  = $10,
+           calibrated_at = now()`,
+        [
+          game_type, draw_type, half, best_algo, n,
+          threshold80, threshold90, threshold95,
+          round4(emp80), round4(emp90),
+        ],
+      );
+    } catch (persistErr) {
+      // Non-fatal: calibration result still returned; will be recomputed next call
+      logger.warn({ err: String(persistErr) }, 'calibrate: failed to persist to conformal_calibration');
+    }
+
     logger.info(
       { game_type, draw_type, half, best_algo, n, threshold80, threshold90, emp80, emp90 },
-      'calibrate complete',
+      'calibrate complete (persisted)',
     );
 
     return result;

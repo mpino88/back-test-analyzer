@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { ref, computed } from 'vue';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
+import { pct as _pct, fmtN as _fmtN, rank as _rank } from '../../utils/format.js'; // F10 FIX
 import { useBacktestControl } from './useBacktestControl.js';
 
 const STRATEGY_META = {
@@ -162,9 +163,9 @@ export function useBacktestV2() {
     return STRATEGY_META[name] ?? { label: name, icon: '📌', color: '#64748b' };
   }
 
-  function pct(v)     { return v != null ? (v * 100).toFixed(1) + '%' : '—'; }
-  function fmtN(v, d=3) { return v != null ? (+v).toFixed(d) : '—'; }
-  function rank(v)    { return v != null ? (+v).toFixed(1) : '—'; }
+  function pct(v)       { return _pct(v); }   // F10 FIX: delegado a format.js
+  function fmtN(v, d=3) { return _fmtN(v, d); }
+  function rank(v)      { return _rank(v); }
 
   return {
     // state

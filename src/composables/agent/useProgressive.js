@@ -5,6 +5,7 @@
 import { ref, computed } from 'vue';
 import { apiGet, apiPost } from '../../utils/apiClient.js';
 import { useBacktestControl } from './useBacktestControl.js';
+import { pct as _pct } from '../../utils/format.js'; // F10 FIX: centralizado
 
 const SIGNAL_META = {
   PLAY:  { color: '#22c55e', bg: '#052e16', label: 'JUGAR',   icon: '▶', ring: '#16a34a' },
@@ -154,7 +155,7 @@ export function useProgressive() {
   // ── Helpers ───────────────────────────────────────────────────
   function signalMeta(sig)  { return SIGNAL_META[sig]  ?? SIGNAL_META.WAIT; }
   function trendMeta(trend) { return TREND_META[trend] ?? TREND_META.stable; }
-  function pct(v)           { return v != null && v >= 0 ? (v * 100).toFixed(1) + '%' : '—'; }
+  function pct(v)           { return _pct(v); } // F10 FIX: delegado a format.js
   function fmt(v)           { return v != null ? Math.round(v) : '—'; }
 
   return {

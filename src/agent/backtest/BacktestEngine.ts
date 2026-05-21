@@ -803,17 +803,19 @@ export class BacktestEngine {
     };
 
     // Estrategias base primero (sin apex_adaptive que depende de sus resultados)
+    // L77 FIX (2026-05-21): momentum_ema, fibonacci_pisano, consensus_top, apex_adaptive
+    // ELIMINADOS — no ejecutar en backtest: updateAdaptiveWeights() los reescribiría en DB.
     const baseStrategies: StrategyName[] = [
       'frequency_rank',
       'hot_cold_weighted',
       'gap_overdue_focus',
       'moving_avg_signal',
-      'momentum_ema',
+      /* momentum_ema ELIMINATED */
       'streak_reversal',
       'position_bias',
       'pair_correlation',
-      'fibonacci_pisano',
-      'consensus_top',
+      /* fibonacci_pisano ELIMINATED */
+      /* consensus_top   ELIMINATED */
     ];
 
     const summaries: BacktestSummary[] = [];
@@ -839,19 +841,9 @@ export class BacktestEngine {
     // Actualizar pesos adaptativos con los resultados de las estrategias base
     await this.updateAdaptiveWeights(summaries, config.game_type, mode);
 
-    // Ejecutar apex_adaptive DESPUÉS para que use los pesos recién calculados
-    try {
-      const apexSummary = await this.runStrategy('apex_adaptive', { ...config, mode });
-      const apexId = await this.persistSummary(apexSummary);
-      await this.updateStrategyWinRate('apex_adaptive', apexSummary);
-      logger.info(
-        { strategy: 'apex_adaptive', id: apexId, eff: apexSummary.effectiveness_pct, both: apexSummary.both_accuracy },
-        'BacktestEngine: apex_adaptive completado con pesos adaptativos'
-      );
-      summaries.push(apexSummary);
-    } catch (err) {
-      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'apex_adaptive fallido');
-    }
+    // L77 FIX (2026-05-21): apex_adaptive ELIMINADO del backtest.
+    // Era meta-estrategia dependiente de pesos de momentum_ema/fibonacci_pisano.
+    // Removido para evitar que adaptive_weights sea contaminado con fantasmas.
 
     // Rebalance estrategias según nuevo win_rate
     await this.agentPool.query(

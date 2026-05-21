@@ -1210,6 +1210,13 @@ export class PairBacktestEngine {
 
   // ─── Actualizar win_rate en strategy_registry ────────────────
   async updateStrategyWinRate(strategyName: string, summary: PairBacktestSummary): Promise<void> {
+    // L77 FIX (2026-05-21): guardia defensiva — nunca escribir estrategias eliminadas a DB.
+    // Aunque ALL_BASE_STRATEGIES ya no las incluye, esta guardia previene regresiones.
+    const ELIMINATED = ['momentum_ema', 'fibonacci_pisano', 'consensus_top', 'apex_adaptive', 'fibonacci_resonance'];
+    if (ELIMINATED.includes(strategyName)) {
+      logger.warn({ strategyName }, 'updateStrategyWinRate: estrategia eliminada ignorada (defense-in-depth)');
+      return;
+    }
     // ═══ F05 FIX: α=0.15 sincronizado con StrategyEvaluator (era 0.20)
     // Con dos alphas distintas, win_rate fluctuaba diferente según qué camino actualizaba:
     // backtest usaba 0.20 (más reactivo) vs live evaluation usaba 0.15 (más conservador).
@@ -1328,10 +1335,15 @@ export class PairBacktestEngine {
       ...configOverrides,
     };
 
+    // L77 FIX (2026-05-21): momentum_ema, fibonacci_pisano, consensus_top, apex_adaptive
+    // son ELIMINATED_ALGORITHMS — si se ejecutan, updateStrategyWinRate() los escribe en
+    // adaptive_weights resucitando fantasmas que F1/F2 eliminaron.
     const ALL_BASE_STRATEGIES: Exclude<PairStrategyName, 'apex_adaptive'>[] = [
       'frequency_rank', 'hot_cold_weighted', 'gap_overdue_focus',
-      'moving_avg_signal', 'momentum_ema', 'streak_reversal',
-      'position_bias', 'pair_correlation', 'fibonacci_pisano', 'consensus_top',
+      'moving_avg_signal', /* momentum_ema ELIMINATED */
+      'streak_reversal',
+      'position_bias', 'pair_correlation', /* fibonacci_pisano ELIMINATED */
+      /* consensus_top ELIMINATED */
       // Ballbot Clones
       'bayesian_score', 'transition_follow', 'markov_order2',
       'calendar_pattern', 'decade_family', 'max_per_weekday',
@@ -1344,8 +1356,8 @@ export class PairBacktestEngine {
 
     const summaries: PairBacktestSummary[] = [];
     let doneCount = 0;
-    // +1 for apex_adaptive at the end
-    const totalCount = baseStrategies.length + 1;
+    // L77 FIX: apex_adaptive ya no se ejecuta — totalCount = solo estrategias base
+    const totalCount = baseStrategies.length;
 
     for (const name of baseStrategies) {
       try {
@@ -1368,18 +1380,10 @@ export class PairBacktestEngine {
     // Actualizar top_n adaptativos con resultados de estrategias base
     await this.updateAdaptiveTopN(summaries, game_type, mode);
 
-    // Ejecutar apex_adaptive ÚLTIMO con pesos+top_n recién calculados
-    try {
-      const apexSummary = await this.runStrategy('apex_adaptive', config);
-      const apexId      = await this.persistSummary(apexSummary);
-      await this.updateStrategyWinRate('apex_adaptive', apexSummary);
-      config.on_progress?.(totalCount, totalCount, 'apex_adaptive');
-      logger.info({ id: apexId, hit_rate: apexSummary.hit_rate }, 'apex_adaptive completado');
-      summaries.push(apexSummary);
-    } catch (err) {
-      config.on_progress?.(totalCount, totalCount, 'apex_adaptive(error)');
-      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'apex_adaptive fallido');
-    }
+    // L77 FIX (2026-05-21): apex_adaptive ELIMINADO del backtest.
+    // Era meta-estrategia que leía adaptive_weights (con pesos de momentum_ema/fibonacci_pisano)
+    // y escribía resultados de vuelta → feedback loop contaminado. Removido para mantener
+    // adaptive_weights limpio con solo las 13 estrategias canónicas.
 
     // Rebalance strategy_registry
     await this.agentPool.query(

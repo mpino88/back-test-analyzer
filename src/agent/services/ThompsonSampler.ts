@@ -225,6 +225,10 @@ export class ThompsonSampler {
   // ------------------------------------------------------------------
   // sampleWeights — draw from Beta posteriors for this round
   // Returns algo_name → sampled weight (used for consensus ranking)
+  //
+  // L79 FIX (2026-05-21): leer de thompson_state primero (O(1) — sin scan).
+  // Si el cache está fresco (<2h) lo usa; si no, cae a buildState() (90-day scan).
+  // persistState() escribe a thompson_state después de cada sorteo (PostDrawProcessor D1).
   // ------------------------------------------------------------------
   async sampleWeights(
     game_type: string,
@@ -232,14 +236,43 @@ export class ThompsonSampler {
     half:      string,
     n_at:      number = 15,
   ): Promise<Map<string, number>> {
-    const state = await this.buildState(game_type, draw_type, half, n_at);
-    const weights = new Map<string, number>();
+    // — Cache path: thompson_state fresco (<2h) ——————————————————————
+    try {
+      const { rows } = await this.pool.query<{
+        algo_name:  string;
+        alpha:      number;
+        beta_param: number;
+      }>(
+        `SELECT algo_name, alpha, beta_param
+         FROM hitdash.thompson_state
+         WHERE game_type = $1 AND draw_type = $2 AND half = $3 AND n_at = $4
+           AND updated_at > now() - interval '2 hours'`,
+        [game_type, draw_type, half, n_at],
+      );
 
-    for (const [algo_name, s] of state.entries()) {
-      // Use fresh sample (sampleBeta is stochastic)
-      weights.set(algo_name, sampleBeta(s.alpha, s.beta_param));
+      if (rows.length > 0) {
+        const weights = new Map<string, number>();
+        for (const r of rows) {
+          weights.set(r.algo_name, sampleBeta(Number(r.alpha), Number(r.beta_param)));
+        }
+        logger.debug(
+          { game_type, draw_type, half, n_at, n_algos: rows.length },
+          'sampleWeights: served from thompson_state cache (O(1))',
+        );
+        return weights;
+      }
+    } catch (err) {
+      // Cache miss (table not ready yet) → fall through to buildState
+      logger.debug({ err: String(err) }, 'sampleWeights: thompson_state unavailable, fallback to buildState');
     }
 
+    // — Fallback: recompute from algo_rank_history (slow path) ————————
+    logger.debug({ game_type, draw_type, half }, 'sampleWeights: cache miss — recomputing from algo_rank_history');
+    const state = await this.buildState(game_type, draw_type, half, n_at);
+    const weights = new Map<string, number>();
+    for (const [algo_name, s] of state.entries()) {
+      weights.set(algo_name, sampleBeta(s.alpha, s.beta_param));
+    }
     return weights;
   }
 

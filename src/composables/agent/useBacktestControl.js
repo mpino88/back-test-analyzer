@@ -9,6 +9,7 @@
 
 import { ref, computed, readonly } from 'vue';
 import { apiFetch } from '../../utils/apiClient.js';
+import { pct as _pct } from '../../utils/format.js'; // F10 FIX: centralizado
 
 const BASE    = '/api/backtest-control';
 const POLL_MS = 1500;
@@ -291,7 +292,7 @@ const drawsMetaForContext = computed(() => {
   };
 });
 
-function pct(v)     { return v != null ? (v * 100).toFixed(1) + '%' : '—'; }
+function pct(v)     { return _pct(v); } // F10 FIX: delegado a format.js
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleString('es-PR', { dateStyle: 'short', timeStyle: 'short' });

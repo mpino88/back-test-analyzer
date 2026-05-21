@@ -45,6 +45,9 @@ const ballbotPool = new Pool({
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
   ssl: process.env['BALLBOT_SSL'] === 'true' ? { rejectUnauthorized: false } : undefined,
+  // TO FIX (2026-05-21): statement_timeout previene queries colgantes indefinidamente.
+  // Sin esto buildState() 90-day scan puede bloquear la conexión sin límite.
+  statement_timeout: 30_000,  // 30s máximo por query
 });
 
 const agentPool = new Pool({
@@ -52,6 +55,8 @@ const agentPool = new Pool({
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
+  // TO FIX (2026-05-21): statement_timeout para agentPool (read-write local VPS).
+  statement_timeout: 30_000,  // 30s máximo por query
 });
 
 // ─── Redis ──────────────────────────────────────────────────────

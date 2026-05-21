@@ -77,6 +77,7 @@ import {
   ALGORITHM_WEIGHTS, CANONICAL_ALGORITHMS,
   CANONICAL_TO_STRATEGY,   // F1 (2026-05-21): mapping centralizado
 } from '../types/analysis.types.js';
+import { AlgorithmHealthMonitor } from '../services/AlgorithmHealthMonitor.js';
 
 const logger = pino({ name: 'AnalysisEngine' });
 
@@ -220,8 +221,12 @@ export class AnalysisEngine {
   // ─── MOTOR-Σ: PPS learning service ───────────────────────────
   private readonly ppsService:  PPSService;
   // ─── HELIX v2: F1 brain services (B1+B2 2026-05-20) ──────────
-  private readonly contextGating:   ContextGating;
-  private readonly thompsonSampler: ThompsonSampler;
+  private readonly contextGating:      ContextGating;
+  private readonly thompsonSampler:    ThompsonSampler;
+  // ─── F5 FIX (2026-05-21): AlgorithmHealthMonitor como singleton de clase ──
+  // Antes: dynamic import + new AlgorithmHealthMonitor() POR LLAMADA en hot path.
+  // Ahora: instancia única creada en constructor, reutilizada en cada analyzePairs().
+  private readonly algorithmHealth: AlgorithmHealthMonitor;
 
   constructor(
     private readonly ballbotPool: Pool,
@@ -259,8 +264,10 @@ export class AnalysisEngine {
     // ─── MOTOR-Σ ─────────────────────────────────────────────────
     this.ppsService = new PPSService(agentPool);
     // ─── HELIX v2 — F1 brain (B1+B2 2026-05-20) ──────────────────
-    this.contextGating   = new ContextGating(agentPool);
-    this.thompsonSampler = new ThompsonSampler(agentPool);
+    this.contextGating      = new ContextGating(agentPool);
+    this.thompsonSampler    = new ThompsonSampler(agentPool);
+    // ─── F5 FIX: AlgorithmHealthMonitor — singleton de clase ──────
+    this.algorithmHealth    = new AlgorithmHealthMonitor(agentPool);
   }
 
   async analyze(
@@ -812,11 +819,10 @@ export class AnalysisEngine {
     // Antes de normalizar, consultamos AlgorithmHealthMonitor.
     // DISABLED → algo no contribuye al consensus (hit_rate sostenido < baseline×1.10).
     // DEGRADED → algo contribuye con weight × 0.5 (hit_rate sostenido < baseline).
+    // F5 FIX: usar this.algorithmHealth (singleton) en lugar de new por llamada
     let healthMap = new Map<string, { status: 'healthy' | 'degraded' | 'disabled'; weight_multiplier: number }>();
     try {
-      const { AlgorithmHealthMonitor } = await import('../services/AlgorithmHealthMonitor.js');
-      const hm = new AlgorithmHealthMonitor(this.agentPool);
-      const health = await hm.getHealth(game_type, draw_type, half);
+      const health = await this.algorithmHealth.getHealth(game_type, draw_type, half);
       healthMap = new Map(
         Array.from(health.entries()).map(([k, v]) => [k, { status: v.status, weight_multiplier: v.weight_multiplier }])
       );
