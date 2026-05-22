@@ -2390,6 +2390,78 @@ ${ragSummary}`;
   });
 
   // ═══════════════════════════════════════════════════════════════
+  // TRUTH CERTIFICATES — Diferenciador único de mercado (2026-05-21)
+  // ═══════════════════════════════════════════════════════════════
+
+  // POST /api/agent/certificate/issue — emite certificado para predicción
+  router.post('/certificate/issue', strictLimiter, async (req: Request, res: Response) => {
+    try {
+      const { game_type, draw_type, half, draw_date, predicted_top, algo_used, prediction_id } = req.body ?? {};
+
+      if (!game_type || !draw_type || !half || !draw_date || !Array.isArray(predicted_top)) {
+        res.status(400).json({ error: 'Faltan campos requeridos: game_type, draw_type, half, draw_date, predicted_top' });
+        return;
+      }
+
+      const { TruthCertificateService } = await import('../../agent/services/TruthCertificateService.js');
+      const svc = new TruthCertificateService(agentPool);
+      const cert = await svc.issueCertificate({
+        game_type, draw_type, half, draw_date, predicted_top, algo_used, prediction_id,
+      });
+
+      res.json({ success: true, certificate: cert });
+    } catch (err) {
+      logger.error({ error: err instanceof Error ? err.message : String(err) }, 'certificate/issue failed');
+      res.status(500).json({ error: 'Error emitiendo certificado', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/certificate/:id — descargar certificado existente
+  router.get('/certificate/:id', async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const { TruthCertificateService } = await import('../../agent/services/TruthCertificateService.js');
+      const svc = new TruthCertificateService(agentPool);
+      const cert = await svc.getCertificate(id);
+      if (!cert) { res.status(404).json({ error: 'Certificado no encontrado' }); return; }
+      res.json(cert);
+    } catch (err) {
+      res.status(500).json({ error: 'Error', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/agent/certificate/:id/verify — verificar HMAC
+  router.post('/certificate/:id/verify', async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const { TruthCertificateService } = await import('../../agent/services/TruthCertificateService.js');
+      const svc = new TruthCertificateService(agentPool);
+      const cert = await svc.getCertificate(id);
+      if (!cert) { res.status(404).json({ error: 'Certificado no encontrado' }); return; }
+      const valid = svc.verifyCertificate(cert);
+      res.json({ certificate_id: id, signature_valid: valid });
+    } catch (err) {
+      res.status(500).json({ error: 'Error', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/agent/certificate/list — listar certificados recientes
+  router.get('/certificate-list', async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await agentPool.query(
+        `SELECT certificate_id, game_type, draw_type, half, draw_date,
+                predicted_n, hit_rate_wf, wilson_lo, wilson_hi,
+                edge_multiplier, hit, generated_at
+         FROM hitdash.truth_certificates
+         ORDER BY generated_at DESC LIMIT 50`,
+      );
+      res.json({ count: rows.length, certificates: rows });
+    } catch (err) {
+      res.status(500).json({ error: 'Error', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
   // ROUTE A — Surgical Feature Exploration (2026-05-21)
   // 7 familias NO testeadas previamente con train/test validation
   // ═══════════════════════════════════════════════════════════════
