@@ -48,6 +48,9 @@
         <RouterLink to="/agent/truth"             class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">🔬</span> Truth Mode
         </RouterLink>
+        <RouterLink to="/agent/certificates"      class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">📜</span> Certificates
+        </RouterLink>
       </nav>
 
       <div class="agent-nav__footer">
