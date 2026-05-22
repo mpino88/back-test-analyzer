@@ -95,14 +95,15 @@ export class TruthCertificateService {
   private readonly secret: Buffer;
 
   constructor(private readonly pool: Pool) {
-    // Secret de .env. Si no existe, generamos uno y warn.
-    const envSecret = process.env['HELIX_CERT_SECRET'];
-    if (!envSecret) {
-      logger.warn('HELIX_CERT_SECRET no configurada — generando random (NO production-safe)');
-      this.secret = randomBytes(32);
-    } else {
-      this.secret = Buffer.from(envSecret, 'utf-8');
+    // Secret de .env. Si no existe, default fijo determinístico
+    // para que issue+verify sean consistentes entre instancias del service.
+    // PRODUCTION: setear HELIX_CERT_SECRET en .env vía GitHub secret.
+    const envSecret = process.env['HELIX_CERT_SECRET']
+                   ?? 'helix-truth-certificate-default-secret-2026-not-production-safe';
+    if (envSecret.includes('not-production-safe')) {
+      logger.warn('HELIX_CERT_SECRET no configurada — usando default fijo (demo/dev solamente)');
     }
+    this.secret = Buffer.from(envSecret, 'utf-8');
   }
 
   /**
