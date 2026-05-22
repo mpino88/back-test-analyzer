@@ -113,10 +113,13 @@ export function createAllianceRouter(agentPool: Pool): Router {
       });
 
       // 3. Persistir vínculo con user_id (audit trail cross-product)
+      // jsonb_set requiere que el path padre exista. Usamos || (concat) para
+      // crear/mergear el objeto alliance si no existe.
       try {
         await agentPool.query(
           `UPDATE hitdash.truth_certificates
-              SET payload_json = jsonb_set(payload_json, '{alliance,user_id}', to_jsonb($2::text), true)
+              SET payload_json = payload_json
+                || jsonb_build_object('alliance', jsonb_build_object('user_id', $2::text, 'linked_at', now()))
             WHERE certificate_id = $1`,
           [cert.certificate_id, String(user_id)],
         );
