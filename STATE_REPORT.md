@@ -1,4 +1,4 @@
-# HELIX — STATE REPORT 2026-05-21 (v2 post Route A)
+# HELIX — STATE REPORT 2026-05-22 (v3 post Truth Certificates + Protocol)
 
 > **Autoaprendizaje adaptativo autónomo didáctico** — el sistema ahora prueba edge con rigor estadístico y reporta la verdad sin maquillaje.
 
@@ -16,12 +16,57 @@
 
 ---
 
+## 🆕 TRUTH CERTIFICATES — Diferenciador único de mercado
+
+**Cada predicción HELIX viene con certificado criptográficamente firmado** que prueba:
+- Wilson 95% CI walk-forward del combo
+- Edge Discovery verdict más reciente (con run_id auditable)
+- Conformal coverage threshold (cuando disponible)
+- **Disclosure HONESTO**: `edge_demonstrated: false`, `CI_includes_baseline: true`
+- HMAC-SHA256 signature anti-forgery
+
+**Verificado end-to-end** con cert `TC-2026-05-22-B93752D5`:
+```json
+{
+  "statistics": {
+    "hit_rate_walk_forward": 0.1602,
+    "wilson_95_ci_lo": 0.1437,
+    "wilson_95_ci_hi": 0.1781,
+    "edge_multiplier": 1.0677
+  },
+  "disclosure": {
+    "edge_demonstrated": false,
+    "confidence_interval_includes_baseline": true,
+    "statement": "El Wilson 95% CI [14.37%, 17.81%] INCLUYE el baseline aleatorio del 15%. El sistema NO ha demostrado edge sobre el azar."
+  }
+}
+```
+
+**Verify endpoint**: `signature_valid: true` — HMAC criptográficamente verificable offline.
+
+Ningún competidor del mercado publica p-values en vivo. Esto ES el producto vendible.
+
+## 🌐 PREDICTOR PROTOCOL — Foundation Ruta B
+
+Interface abstracta para que el motor prediga **cualquier time-series**:
+- LotteryPredictor (current)
+- SportsLinePredictor (planeado)
+- CryptoMicrostructurePredictor (planeado)
+- InsuranceClaimPredictor (planeado)
+- RetailDemandPredictor (planeado)
+
+Métodos clave: `ingest`, `predict`, `predictAtPointInTime` (walk-forward sin leakage), `recordOutcome`, `getStatistics`, `getConformalGuarantee`.
+
+Cualquier dominio que cumpla este protocolo recibe AUTOMÁTICAMENTE: Bayesian Thompson, conformal coverage, walk-forward validation, Edge Discovery testing, Truth Certificates.
+
+Esto convierte HELIX en **plataforma**, no producto de loto.
+
 ## ESTADO TÉCNICO LIVE
 
 ```
-Deploy:      864a23c (2026-05-21 20:37 UTC, 1m11s pipeline)
+Deploy:      8d03822 (2026-05-22 02:28 UTC, 1m21s pipeline)
 Container:   hitdash-server, healthy, port 3005
-Database:    PostgreSQL hitdash, 35 migraciones aplicadas
+Database:    PostgreSQL hitdash, 37 migraciones aplicadas
 Redis:       healthy, 0-1ms latency
 DB latency:  4ms
 Uptime:      stable
@@ -132,7 +177,10 @@ Por familia:
 
 ### Servicios autónomos
 - **EdgeDiscoveryEngine** (740 LOC, 6 familias de tests, Bonferroni-honest)
+- **SurgicalRouteAExplorer** (740 LOC, 7 familias adicionales con train/test split)
 - **HelixRetrospectiveSimulator** (walk-forward sin future leakage)
+- **TruthCertificateService** (330 LOC, HMAC-SHA256 + audit trail)
+- **PredictorProtocol** (interface abstracta para domain-agnostic future)
 - **SnapshotBackfillService** (regenera point-in-time correcto)
 - **ThompsonSampler** (Beta posteriors con sampleBeta exacto en edge cases)
 - **ConformalPredictor** (three-way temporal split, exchangeability preservada)
@@ -148,6 +196,12 @@ POST /api/agent/retrospective/helix-v2/run-all
 GET  /api/agent/retrospective/helix-v2/summary
 GET  /api/agent/retrospective/helix-v2/timeseries
 POST /api/agent/snapshot-backfill          # max 730d window
+POST /api/agent/route-a/explore            # 7 nuevas familias estadísticas
+GET  /api/agent/route-a/report
+POST /api/agent/certificate/issue          # 🆕 emite Truth Certificate
+GET  /api/agent/certificate/:id            # 🆕 descarga certificate
+POST /api/agent/certificate/:id/verify     # 🆕 verifica HMAC offline
+GET  /api/agent/certificate-list           # 🆕 lista recientes
 ```
 
 ### UI
