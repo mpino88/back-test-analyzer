@@ -12,6 +12,11 @@ const router = createRouter({
       component: () => import('./views/AnalyzerView.vue'),
     },
     {
+      // PÚBLICA — verificación de Truth Certificates sin login
+      path: '/verify',
+      component: () => import('./views/PublicVerifyView.vue'),
+    },
+    {
       path: '/agent',
       component: () => import('./views/agent/AgentLayout.vue'),
       children: [

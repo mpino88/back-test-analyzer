@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { createHealthRouter } from './routes/healthRouter.js';
 import { createAgentRouter } from './routes/agentRouter.js';
 import { createSSERouter } from './routes/sseRouter.js';
+import { createPublicRouter } from './routes/publicRouter.js';
 import { createBacktestControlRouter } from './routes/backtestControlRouter.js';
 import { createIngestRouter } from './routes/ingestRouter.js';
 import { IngestionWorker } from '../agent/services/IngestionWorker.js';
@@ -171,6 +172,7 @@ app.use(createHealthRouter(agentPool, redis));
 // Elimina el lag de 15 min del IngestionWorker cron. Sin cambios de red Docker.
 app.use('/api/ingest', createIngestRouter(agentPool, ragService, postDrawProcessor, redis));
 app.use('/api/agent', createAgentRouter(agentPool, agentScheduler, ballbotPool, redis));
+app.use('/api/public', createPublicRouter(agentPool));  // SIN auth — verificación pública
 app.use('/api/backtest-control', createBacktestControlRouter(agentPool, ballbotPool, redis));
 app.use(createSSERouter(agentPool, redis));
 
