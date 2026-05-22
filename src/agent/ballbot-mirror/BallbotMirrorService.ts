@@ -208,7 +208,12 @@ export class BallbotMirrorService {
   // MIRROR-ONLY STRATEGIES (replicadas exactas de Ballbot)
   // ─────────────────────────────────────────────────────────────
   private async runMirrorOnly(ballbot_id: string, req: MirrorRunRequest): Promise<Record<string, number>> {
-    const draws = await this.loadDraws(req);
+    // BUG FIX (2026-05-22): unodostres_plus debe usar period combinado (m+e)
+    // Antes: usaba mismo draws que unodostres → output idéntico.
+    // Ahora: combined cuando plus=true.
+    const draws = ballbot_id === 'unodostres_plus'
+      ? await this.loadDrawsCombined(req)
+      : await this.loadDraws(req);
     if (draws.length === 0) return {};
 
     switch (ballbot_id) {
@@ -233,13 +238,30 @@ export class BallbotMirrorService {
     return rows;
   }
 
-  // ─── CYCLE DETECTOR (Ballbot replica) ──────────────────────────
+  /** BUG FIX: unodostres_plus usa midday + evening combinados (replica Ballbot). */
+  private async loadDrawsCombined(req: MirrorRunRequest): Promise<Array<{ p1: number; p2: number; p3: number; p4: number | null; draw_date: string }>> {
+    const { rows } = await this.pool.query<{ p1: number; p2: number; p3: number; p4: number | null; draw_date: string }>(
+      `SELECT p1, p2, p3, p4, draw_date::text AS draw_date
+       FROM hitdash.ingested_results
+       WHERE game_type = $1
+         AND draw_type IN ('midday', 'evening')
+         AND p1 IS NOT NULL AND p2 IS NOT NULL AND p3 IS NOT NULL
+         ${req.as_of ? 'AND draw_date <= $2' : ''}
+       ORDER BY draw_date ASC, draw_key ASC`,
+      req.as_of ? [req.game_type, req.as_of] : [req.game_type],
+    );
+    return rows;
+  }
+
+  // ─── CYCLE DETECTOR (Ballbot replica + bug fix tie-breaking) ──────
+  // BUG FIX (2026-05-22): antes filtraba concentration < 0.22 → 99 pares
+  // quedaban en score 0.01 → tie-break secuencial. Ahora score continuo
+  // sin filtro binario: cada par tiene score único = phase * concentration.
   private computeCycleDetector(
     draws: Array<{ p1: number; p2: number; p3: number; p4: number | null }>,
     half: PairHalf,
   ): Record<string, number> {
     const BAND_TOLERANCE = 0.20;
-    const MIN_CONCENTRATION = 0.22;
     const scores: Record<string, number> = {};
 
     // Build appearance indices per pair
@@ -255,30 +277,30 @@ export class BallbotMirrorService {
     for (let x = 0; x <= 9; x++) {
       for (let y = 0; y <= 9; y++) {
         const pair = `${x}${y}`;
-        scores[pair] = 0.01;
         const idx = appearances.get(pair) ?? [];
-        if (idx.length < 4) continue;
 
-        // Compute gaps between consecutive appearances
+        // FALLBACK: pares con <4 apariciones → score basado en marginal
+        if (idx.length < 4) {
+          scores[pair] = (idx.length / Math.max(1, totalDraws)) * 0.1;
+          continue;
+        }
+
         const gaps: number[] = [];
         for (let i = 1; i < idx.length; i++) gaps.push(idx[i]! - idx[i-1]!);
         const avgGap = gaps.reduce((s, g) => s + g, 0) / gaps.length;
-        if (avgGap === 0) continue;
+        if (avgGap === 0) { scores[pair] = 0.01; continue; }
 
-        // Concentration: fraction of gaps within ±20% of avg
         const lo = avgGap * (1 - BAND_TOLERANCE);
         const hi = avgGap * (1 + BAND_TOLERANCE);
         const inBand = gaps.filter(g => g >= lo && g <= hi).length;
         const concentration = inBand / gaps.length;
 
-        if (concentration < MIN_CONCENTRATION) continue;
-
-        // Phase: how many draws since last appearance / avgGap
         const lastIdx = idx[idx.length - 1]!;
         const sinceLast = totalDraws - 1 - lastIdx;
-        const phase = sinceLast / avgGap;
+        const phase = avgGap > 0 ? sinceLast / avgGap : 0;
 
-        // Score = phase * concentration (más alto si fase ≥ 0.8)
+        // FIX: score continuo SIN filtro binario. Pares con baja concentration
+        // o fase lejana reciben score bajo pero único, no 0.01 fijo.
         scores[pair] = Math.max(0.01, phase * concentration);
       }
     }

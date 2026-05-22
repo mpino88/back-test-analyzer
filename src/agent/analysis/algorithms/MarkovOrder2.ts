@@ -116,13 +116,27 @@ export class MarkovOrder2 {
       }
     }
 
-    // Normalize
+    // ── BUG FIX (2026-05-22): blend Markov vote con marginal para evitar
+    // tie-breaking secuencial cuando solo 1 par tiene transición observada.
+    // Antes: scores=[0.99, 0, 0, ...] → top-15 = ['42', '10', '11', '12', ...]
+    // Ahora: cada par tiene score único basado en marginal frequency.
+    const MARKOV_WEIGHT   = 0.80;
+    const MARGINAL_WEIGHT = 0.20;
+
+    // Marginal frequency
+    const marginalCount: Record<string, number> = {};
+    for (const p of allPairs) marginalCount[p] = (marginalCount[p] ?? 0) + 1;
+    const maxMarginal = Math.max(...Object.values(marginalCount), 1);
+
+    // Normalize votes
     const maxVote = Math.max(...Object.values(votes), 1e-9);
     const scores: Record<string, number> = {};
     for (let x = 0; x <= 9; x++) {
       for (let y = 0; y <= 9; y++) {
-        const p = `${x}${y}`;
-        scores[p] = (votes[p] ?? 0) / maxVote;
+        const p             = `${x}${y}`;
+        const markovScore   = (votes[p] ?? 0) / maxVote;
+        const marginalScore = (marginalCount[p] ?? 0) / maxMarginal;
+        scores[p] = MARKOV_WEIGHT * markovScore + MARGINAL_WEIGHT * marginalScore;
       }
     }
 

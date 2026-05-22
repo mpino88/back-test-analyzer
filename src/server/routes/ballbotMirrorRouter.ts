@@ -188,5 +188,217 @@ export function createBallbotMirrorRouter(agentPool: Pool): Router {
     }
   });
 
+  // ═══════════════════════════════════════════════════════════════
+  // POINT 2 — POST /diff : comparar candidatos Ballbot (pegados) vs HELIX
+  // Body: {
+  //   ballbot_candidates: string[],   // ['17','54','03',...]
+  //   ballbot_id:          string,     // 'trend_momentum' etc.
+  //   game_type, draw_type, half, top_n
+  // }
+  // ═══════════════════════════════════════════════════════════════
+  router.post('/diff', async (req: Request, res: Response) => {
+    try {
+      const {
+        ballbot_candidates,
+        ballbot_id,
+        game_type = 'pick3',
+        draw_type = 'evening',
+        half      = 'du',
+        top_n     = 15,
+      } = req.body ?? {};
+
+      if (!Array.isArray(ballbot_candidates) || ballbot_candidates.length === 0) {
+        res.status(400).json({ error: 'ballbot_candidates debe ser array no vacío' });
+        return;
+      }
+      if (!ballbot_id) {
+        res.status(400).json({ error: 'ballbot_id requerido (e.g. trend_momentum)' });
+        return;
+      }
+
+      // Normalize Ballbot candidates: ensure 2-digit zero-padded strings
+      const ballbotNorm: string[] = ballbot_candidates.map((c: unknown) =>
+        String(c).padStart(2, '0').slice(-2),
+      );
+
+      // Run mirror for the same combo + strategy
+      const { BallbotMirrorService } = await import('../../agent/ballbot-mirror/BallbotMirrorService.js');
+      const svc = new BallbotMirrorService(agentPool);
+      const result = await svc.runAll({ game_type, draw_type, half, top_n: Number(top_n) });
+      const helixStrat = result.strategies.find(s => s.ballbot_id === ballbot_id);
+
+      if (!helixStrat) {
+        res.status(404).json({ error: `Estrategia desconocida: ${ballbot_id}` });
+        return;
+      }
+
+      const helixCands = helixStrat.candidates.slice(0, ballbotNorm.length);
+      const ballbotSet = new Set(ballbotNorm);
+      const helixSet   = new Set(helixCands);
+
+      // Set overlap
+      const intersection = [...ballbotSet].filter(c => helixSet.has(c));
+      const onlyBallbot  = [...ballbotSet].filter(c => !helixSet.has(c));
+      const onlyHelix    = [...helixSet].filter(c => !ballbotSet.has(c));
+      const union        = new Set([...ballbotSet, ...helixSet]);
+
+      // Position-exact match
+      const minLen = Math.min(ballbotNorm.length, helixCands.length);
+      let positionExact = 0;
+      const positionMap: Array<{ pos: number; ballbot: string; helix: string; match: boolean }> = [];
+      for (let i = 0; i < Math.max(ballbotNorm.length, helixCands.length); i++) {
+        const b = ballbotNorm[i] ?? '—';
+        const h = helixCands[i]  ?? '—';
+        const m = i < minLen && b === h;
+        if (m) positionExact++;
+        positionMap.push({ pos: i + 1, ballbot: b, helix: h, match: m });
+      }
+
+      res.json({
+        ballbot_id,
+        bot_title: helixStrat.bot_title,
+        game_type, draw_type, half, top_n: Number(top_n),
+        ballbot_input:  ballbotNorm,
+        helix_output:   helixCands,
+        // Métricas de fidelidad
+        set_overlap_count:   intersection.length,
+        set_overlap_pct:     +(intersection.length / Math.max(ballbotNorm.length, 1) * 100).toFixed(2),
+        jaccard:             +(intersection.length / Math.max(union.size, 1) * 100).toFixed(2),
+        position_exact_count: positionExact,
+        position_exact_pct:   +(positionExact / Math.max(minLen, 1) * 100).toFixed(2),
+        // Detalle
+        intersection,
+        only_ballbot:        onlyBallbot,
+        only_helix:          onlyHelix,
+        position_map:        positionMap,
+        // Backtest del algo
+        retrospective: helixStrat.retrospective,
+      });
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'diff failed');
+      res.status(500).json({ error: 'Error en diff', details: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // POINT 4 — GET /timeseries : evolución mensual hit rate por algo
+  // Query: ?algo=trend_momentum&game=pick3&draw=evening&half=du
+  // ═══════════════════════════════════════════════════════════════
+  router.get('/timeseries', async (req: Request, res: Response) => {
+    try {
+      const algo      = String(req.query.algo ?? '');
+      const game_type = String(req.query.game ?? 'pick3');
+      const draw_type = String(req.query.draw ?? 'evening');
+      const half      = String(req.query.half ?? 'du');
+      const bucket    = String(req.query.bucket ?? 'month'); // 'week' | 'month' | 'quarter'
+
+      if (!algo) {
+        res.status(400).json({ error: 'algo requerido' });
+        return;
+      }
+
+      const trunc = bucket === 'week' ? 'week'
+                  : bucket === 'quarter' ? 'quarter'
+                  : 'month';
+
+      const { rows } = await agentPool.query<{
+        bucket: string; n: string; h15: string; h25: string;
+      }>(
+        `SELECT date_trunc('${trunc}', draw_date)::date::text AS bucket,
+                COUNT(*)::int AS n,
+                SUM(CASE WHEN rank_of_winner <= 15 THEN 1 ELSE 0 END)::int AS h15,
+                SUM(CASE WHEN rank_of_winner <= 25 THEN 1 ELSE 0 END)::int AS h25
+         FROM hitdash.algo_rank_history
+         WHERE algo_name=$1 AND game_type=$2 AND draw_type=$3 AND half=$4
+         GROUP BY 1 ORDER BY 1`,
+        [algo, game_type, draw_type, half],
+      );
+
+      const series = rows.map(r => {
+        const n = Number(r.n);
+        const h15 = Number(r.h15);
+        const hr15 = n > 0 ? h15 / n : 0;
+        const z = 1.96;
+        const center = n > 0 ? (hr15 + (z*z)/(2*n)) / (1 + (z*z)/n) : 0;
+        const margin = n > 0 ? (z * Math.sqrt(hr15*(1-hr15)/n + (z*z)/(4*n*n))) / (1 + (z*z)/n) : 0;
+        return {
+          bucket: r.bucket,
+          n,
+          h15,
+          h25: Number(r.h25),
+          hit_rate_15: +hr15.toFixed(4),
+          wilson_lo:   Math.max(0, +(center - margin).toFixed(4)),
+          wilson_hi:   +(center + margin).toFixed(4),
+          edge_pp:     +((hr15 - 0.15) * 100).toFixed(2),
+        };
+      });
+
+      res.json({ algo, game_type, draw_type, half, bucket, count: series.length, series });
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'timeseries failed');
+      res.status(500).json({ error: 'Error en timeseries' });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  // POINT 5 — POST /issue-certs : emite Truth Cert por cada estrategia
+  // del mirror, con disclosure incluido. Útil para auditoría.
+  // ═══════════════════════════════════════════════════════════════
+  router.post('/issue-certs', async (req: Request, res: Response) => {
+    try {
+      const {
+        game_type = 'pick3',
+        draw_type = 'evening',
+        half      = 'du',
+        top_n     = 15,
+        draw_date = new Date().toISOString().slice(0, 10),
+        user_id,
+      } = req.body ?? {};
+
+      const { BallbotMirrorService } = await import('../../agent/ballbot-mirror/BallbotMirrorService.js');
+      const { TruthCertificateService } = await import('../../agent/services/TruthCertificateService.js');
+
+      const mirror = new BallbotMirrorService(agentPool);
+      const certSvc = new TruthCertificateService(agentPool);
+
+      const mirrorResult = await mirror.runAll({ game_type, draw_type, half, top_n: Number(top_n) });
+      const certs: Array<Record<string, unknown>> = [];
+
+      // Issue UN cert por estrategia con sus candidatos
+      for (const strat of mirrorResult.strategies) {
+        if (strat.candidates.length === 0) continue;
+        try {
+          const cert = await certSvc.issueCertificate({
+            game_type, draw_type, half, draw_date,
+            predicted_top: strat.candidates,
+            algo_used: strat.helix_id ?? strat.ballbot_id,
+            prediction_id: undefined,
+          });
+          certs.push({
+            ballbot_id: strat.ballbot_id,
+            bot_title:  strat.bot_title,
+            emoji:      strat.emoji,
+            cert_id:    cert.certificate_id,
+            verify_url: `https://dash.ballbot.tel/verify?id=${cert.certificate_id}`,
+            candidates: strat.candidates,
+            disclosure: cert.disclosure,
+            retro:      strat.retrospective,
+          });
+        } catch (certErr) {
+          logger.warn({ err: certErr, ballbot_id: strat.ballbot_id }, 'cert issue failed for strategy');
+        }
+      }
+
+      res.json({
+        game_type, draw_type, half, draw_date, user_id: user_id ?? null,
+        certs_issued: certs.length,
+        certs,
+      });
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'issue-certs failed');
+      res.status(500).json({ error: 'Error emitiendo certs' });
+    }
+  });
+
   return router;
 }

@@ -70,6 +70,105 @@
       </div>
     </section>
 
+    <!-- POINT 3: Comparativa lado-a-lado (pega output Ballbot) -->
+    <section class="bm-diff-card">
+      <h2 class="bm-section-title">🔬 Comparativa Bot Ballbot ↔ HELIX Mirror</h2>
+      <p class="bm-diff-help">
+        Pega aquí los candidatos del bot Ballbot (números 2-dígitos separados por coma, espacio, o salto de línea) y selecciona la estrategia. Se calculará overlap y position-match.
+      </p>
+      <div class="bm-diff-grid">
+        <div class="bm-diff-col">
+          <label class="bm-diff-lbl">Estrategia a comparar</label>
+          <select v-model="diff.ballbot_id" class="bm-sel">
+            <option v-for="m in BALLBOT_LIST" :key="m.id" :value="m.id">{{ m.emoji }} {{ m.title }}</option>
+          </select>
+          <label class="bm-diff-lbl" style="margin-top: 0.5rem;">Candidatos Ballbot (pegar)</label>
+          <textarea
+            v-model="diff.ballbot_input"
+            class="bm-textarea"
+            placeholder="17, 54, 03, 86, 75, 10, 16, 71, 93, 69, 42, 23, 64, 88, 04"
+            rows="3"></textarea>
+          <button class="bm-btn" @click="runDiff" :disabled="diffLoading || !diff.ballbot_input">
+            {{ diffLoading ? '⟳ Comparando...' : '▶ Calcular diff' }}
+          </button>
+        </div>
+        <div v-if="diff.result" class="bm-diff-result">
+          <div class="bm-diff-metrics">
+            <div class="bm-diff-metric">
+              <div class="bm-diff-val" :class="diff.result.set_overlap_pct >= 80 ? 'good' : diff.result.set_overlap_pct >= 50 ? 'neutral' : 'bad'">
+                {{ diff.result.set_overlap_pct }}%
+              </div>
+              <div class="bm-diff-lbl-sm">Set overlap</div>
+            </div>
+            <div class="bm-diff-metric">
+              <div class="bm-diff-val" :class="diff.result.jaccard >= 80 ? 'good' : diff.result.jaccard >= 50 ? 'neutral' : 'bad'">
+                {{ diff.result.jaccard }}%
+              </div>
+              <div class="bm-diff-lbl-sm">Jaccard</div>
+            </div>
+            <div class="bm-diff-metric">
+              <div class="bm-diff-val" :class="diff.result.position_exact_pct >= 80 ? 'good' : 'neutral'">
+                {{ diff.result.position_exact_pct }}%
+              </div>
+              <div class="bm-diff-lbl-sm">Position exact</div>
+            </div>
+          </div>
+          <table class="bm-diff-table">
+            <thead><tr><th>#</th><th>Ballbot</th><th>HELIX</th><th>Match</th></tr></thead>
+            <tbody>
+              <tr v-for="r in diff.result.position_map" :key="r.pos">
+                <td>{{ r.pos }}</td>
+                <td class="bm-mono">{{ r.ballbot }}</td>
+                <td class="bm-mono">{{ r.helix }}</td>
+                <td>{{ r.match ? '✅' : '✗' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="diff.result.only_ballbot.length || diff.result.only_helix.length" class="bm-diff-sets">
+            <div v-if="diff.result.only_ballbot.length">
+              <strong>Solo Ballbot:</strong> <code>{{ diff.result.only_ballbot.join(', ') }}</code>
+            </div>
+            <div v-if="diff.result.only_helix.length">
+              <strong>Solo HELIX:</strong> <code>{{ diff.result.only_helix.join(', ') }}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- POINT 4: Timeseries evolución mensual por algo -->
+    <section v-if="result?.strategies?.length" class="bm-ts-card">
+      <h2 class="bm-section-title">📈 Evolución mensual del algoritmo</h2>
+      <p class="bm-diff-help">
+        Selecciona un algoritmo para ver su hit-rate mes a mes (con Wilson 95% CI). Permite identificar regímenes favorables/desfavorables en el tiempo.
+      </p>
+      <div class="bm-ts-controls">
+        <select v-model="ts.algo" class="bm-sel" @change="loadTimeseries">
+          <option v-for="s in result.strategies.filter(x => x.helix_id)" :key="s.ballbot_id" :value="s.helix_id">
+            {{ s.emoji }} {{ s.bot_title }}
+          </option>
+        </select>
+        <select v-model="ts.bucket" class="bm-sel" @change="loadTimeseries">
+          <option value="month">Mensual</option>
+          <option value="week">Semanal</option>
+          <option value="quarter">Trimestral</option>
+        </select>
+      </div>
+      <div v-if="ts.series.length" class="bm-ts-chart">
+        <div class="bm-ts-baseline">Baseline azar 15% ▬▬</div>
+        <div class="bm-ts-bars">
+          <div v-for="(pt, i) in ts.series" :key="i" class="bm-ts-bar-wrap" :title="`${pt.bucket}: ${(pt.hit_rate_15*100).toFixed(1)}% (n=${pt.n}, edge=${pt.edge_pp>=0?'+':''}${pt.edge_pp}pp)`">
+            <div class="bm-ts-bar"
+                 :class="pt.edge_pp >= 1 ? 'good' : pt.edge_pp >= 0 ? 'neutral' : 'bad'"
+                 :style="{ height: Math.max(2, Math.min(100, pt.hit_rate_15 * 250)) + 'px' }">
+            </div>
+            <div class="bm-ts-label">{{ pt.bucket.slice(5) }}</div>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="ts.loading" class="bm-loading">⟳ Cargando timeseries...</div>
+    </section>
+
     <!-- Tabla comparativa -->
     <section v-if="result?.strategies?.length" class="bm-section">
       <h2 class="bm-section-title">📊 Comparativa estrategias Ballbot ({{ result.strategies.length }})</h2>
@@ -147,8 +246,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
-import { apiPost } from '../../utils/apiClient.js';
+import { ref, computed, watch } from 'vue';
+import { apiPost, apiGet } from '../../utils/apiClient.js';
 
 const form = ref({
   game_type: 'pick3',
@@ -159,6 +258,43 @@ const form = ref({
 
 const loading = ref(false);
 const result  = ref(null);
+
+// POINT 3: Diff state
+const BALLBOT_LIST = [
+  { id: 'trend_momentum', emoji: '📈', title: 'Fuerza de Tendencia Pro' },
+  { id: 'freq_analysis', emoji: '🎯', title: 'Radar de Frecuencias' },
+  { id: 'gap_due', emoji: '⏳', title: 'Números Debidos' },
+  { id: 'bayesian_score', emoji: '🧠', title: 'Score Bayesiano' },
+  { id: 'markov_order2', emoji: '🔮', title: 'Markov-2' },
+  { id: 'streak_analysis', emoji: '🔥', title: 'Detector de Rachas' },
+  { id: 'positional_analysis', emoji: '🎯', title: 'Radiografía Posicional' },
+  { id: 'transition_follow', emoji: '🔗', title: 'Rastreador de Secuencias' },
+  { id: 'calendar_pattern', emoji: '📅', title: 'Reloj de Probabilidades' },
+  { id: 'decade_family', emoji: '🏷', title: 'Bloques Ganadores' },
+  { id: 'terminal_analysis', emoji: '🎚', title: 'Cierres Perfectos' },
+  { id: 'max_per_week_day', emoji: '📊', title: 'Max por Día Semana' },
+  { id: 'est_individuales', emoji: '📈', title: 'Estadísticas Individuales' },
+  { id: 'pairs_correlation', emoji: '🔀', title: 'Correlación de Pares' },
+  { id: 'cycle_detector', emoji: '🔄', title: 'Radar de Ciclos' },
+  { id: 'mirror_complement', emoji: '🪞', title: 'Sincronía Oculta' },
+  { id: 'unodostres', emoji: '🔢', title: 'Fibonacci' },
+  { id: 'unodostres_plus', emoji: '✨', title: 'Fibonacci PLUS' },
+];
+
+const diff = ref({
+  ballbot_id: 'trend_momentum',
+  ballbot_input: '',
+  result: null,
+});
+const diffLoading = ref(false);
+
+// POINT 4: Timeseries state
+const ts = ref({
+  algo: 'trend_momentum',
+  bucket: 'month',
+  series: [],
+  loading: false,
+});
 
 const sortedStrategies = computed(() => {
   if (!result.value?.strategies) return [];
@@ -218,6 +354,8 @@ async function runMirror() {
       top_n:     Number(form.value.top_n),
     });
     result.value = r;
+    // Auto-cargar timeseries del primer algo
+    if (r?.strategies?.length) loadTimeseries();
   } catch (err) {
     console.error(err);
     alert('Error ejecutando mirror: ' + (err.message ?? err));
@@ -225,6 +363,59 @@ async function runMirror() {
     loading.value = false;
   }
 }
+
+// POINT 3: Comparar candidatos Ballbot pegados vs HELIX
+async function runDiff() {
+  diffLoading.value = true;
+  diff.value.result = null;
+  try {
+    // Parse pegado: extraer todos los 2-dígitos
+    const parsed = (diff.value.ballbot_input || '')
+      .split(/[\s,;\n\r]+/)
+      .map(s => s.trim().replace(/^[0-9]*([0-9]{1,2})$/, '$1').padStart(2, '0'))
+      .filter(s => /^[0-9]{2}$/.test(s));
+
+    if (parsed.length === 0) {
+      alert('No se encontraron candidatos válidos. Pega números de 2 dígitos.');
+      diffLoading.value = false;
+      return;
+    }
+
+    const r = await apiPost('/api/ballbot-mirror/diff', {
+      ballbot_candidates: parsed,
+      ballbot_id:         diff.value.ballbot_id,
+      game_type:          form.value.game_type,
+      draw_type:          form.value.draw_type,
+      half:               form.value.half,
+      top_n:              Number(form.value.top_n),
+    });
+    diff.value.result = r;
+  } catch (err) {
+    console.error(err);
+    alert('Error en diff: ' + (err.message ?? err));
+  } finally {
+    diffLoading.value = false;
+  }
+}
+
+// POINT 4: cargar evolución mensual
+async function loadTimeseries() {
+  if (!ts.value.algo) return;
+  ts.value.loading = true;
+  ts.value.series = [];
+  try {
+    const r = await apiGet(`/api/ballbot-mirror/timeseries?algo=${encodeURIComponent(ts.value.algo)}&game=${form.value.game_type}&draw=${form.value.draw_type}&half=${form.value.half}&bucket=${ts.value.bucket}`);
+    ts.value.series = r.series ?? [];
+  } catch (err) {
+    console.error(err);
+  } finally {
+    ts.value.loading = false;
+  }
+}
+
+watch(() => form.value.game_type, () => { if (result.value) loadTimeseries(); });
+watch(() => form.value.draw_type, () => { if (result.value) loadTimeseries(); });
+watch(() => form.value.half, () => { if (result.value) loadTimeseries(); });
 </script>
 
 <style scoped>
@@ -347,4 +538,96 @@ async function runMirror() {
   color: #64748b; font-size: 0.9rem;
 }
 .bm-empty p { margin: 0.25rem 0; }
+
+/* POINT 3: Diff card */
+.bm-diff-card {
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.05), rgba(167, 139, 250, 0.04));
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 10px; padding: 1.25rem 1.5rem;
+}
+.bm-diff-help { font-size: 0.8rem; color: #94a3b8; line-height: 1.5; margin: 0.25rem 0 1rem; }
+.bm-diff-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 1.25rem;
+}
+.bm-diff-col { display: flex; flex-direction: column; gap: 0.5rem; }
+.bm-diff-lbl { font-size: 0.75rem; color: #94a3b8; }
+.bm-textarea {
+  background: #0a0d14; color: #e2e8f0;
+  border: 1px solid #1e2d40; border-radius: 6px;
+  padding: 0.6rem 0.8rem; font-family: monospace; font-size: 0.85rem;
+  resize: vertical;
+}
+.bm-textarea:focus { border-color: #60a5fa; outline: none; }
+
+.bm-diff-result { display: flex; flex-direction: column; gap: 0.6rem; }
+.bm-diff-metrics {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem;
+}
+.bm-diff-metric {
+  background: rgba(0,0,0,0.3); border-radius: 6px;
+  padding: 0.6rem; text-align: center;
+}
+.bm-diff-val {
+  font-size: 1.3rem; font-weight: 800;
+  font-family: var(--font-mono, monospace);
+}
+.bm-diff-val.good    { color: #4ade80; }
+.bm-diff-val.neutral { color: #fbbf24; }
+.bm-diff-val.bad     { color: #f87171; }
+.bm-diff-lbl-sm { font-size: 0.65rem; color: #64748b; text-transform: uppercase; margin-top: 0.2rem; }
+
+.bm-diff-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 0.78rem; color: #cbd5e1;
+  background: rgba(0,0,0,0.3); border-radius: 6px; overflow: hidden;
+}
+.bm-diff-table th, .bm-diff-table td {
+  padding: 0.35rem 0.6rem; text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.bm-diff-table th {
+  font-size: 0.65rem; color: #64748b; text-transform: uppercase;
+  background: rgba(0,0,0,0.4);
+}
+.bm-mono { font-family: monospace; }
+
+.bm-diff-sets { font-size: 0.78rem; color: #cbd5e1; line-height: 1.6; }
+.bm-diff-sets code { background: rgba(0,0,0,0.3); padding: 0.1rem 0.35rem; border-radius: 3px; color: #fbbf24; }
+
+/* POINT 4: Timeseries card */
+.bm-ts-card {
+  background: #0f1623; border: 1px solid #1e2d40; border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+}
+.bm-ts-controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.bm-ts-chart {
+  background: rgba(0,0,0,0.2); border-radius: 8px;
+  padding: 1rem 0.75rem 0.5rem;
+  position: relative;
+}
+.bm-ts-baseline {
+  position: absolute; left: 0.75rem; top: 0.5rem;
+  font-size: 0.65rem; color: #64748b;
+}
+.bm-ts-bars {
+  display: flex; gap: 2px; align-items: flex-end;
+  height: 120px; overflow-x: auto;
+  border-bottom: 1px dashed #1e2d40;
+}
+.bm-ts-bar-wrap { display: flex; flex-direction: column; align-items: center; min-width: 28px; }
+.bm-ts-bar {
+  width: 22px; border-radius: 2px 2px 0 0;
+  transition: opacity 0.15s; cursor: pointer;
+}
+.bm-ts-bar:hover { opacity: 0.7; }
+.bm-ts-bar.good { background: #4ade80; }
+.bm-ts-bar.neutral { background: #fbbf24; }
+.bm-ts-bar.bad { background: #f87171; }
+.bm-ts-label {
+  font-size: 0.55rem; color: #64748b;
+  margin-top: 0.25rem; transform: rotate(-45deg);
+  transform-origin: top right;
+  white-space: nowrap;
+}
 </style>
