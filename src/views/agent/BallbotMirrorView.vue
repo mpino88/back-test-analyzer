@@ -211,7 +211,7 @@ async function runMirror() {
   loading.value = true;
   result.value = null;
   try {
-    const r = await apiPost('/api/agent/ballbot-mirror/run', {
+    const r = await apiPost('/api/ballbot-mirror/run', {
       game_type: form.value.game_type,
       draw_type: form.value.draw_type,
       half:      form.value.half,
