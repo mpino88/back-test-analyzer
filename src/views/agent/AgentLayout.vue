@@ -51,6 +51,13 @@
         <RouterLink to="/agent/certificates"      class="nav-link" active-class="nav-link--active">
           <span class="nav-link__icon">📜</span> Certificates
         </RouterLink>
+        <RouterLink to="/agent/ballbot-mirror"    class="nav-link" active-class="nav-link--active">
+          <span class="nav-link__icon">🪞</span> Ballbot Mirror
+        </RouterLink>
+        <RouterLink to="/agent/labs/sports"       class="nav-link nav-link--admin" active-class="nav-link--active">
+          <span class="nav-link__icon">🧪</span> Labs · Sports
+          <span class="nav-link__pill">admin</span>
+        </RouterLink>
       </nav>
 
       <div class="agent-nav__footer">
@@ -168,6 +175,17 @@ onErrorCaptured((err, _instance, info) => {
 .nav-link:hover { background: #1a2535; color: #e2e8f0; }
 .nav-link--active { background: #1d3a5f; color: #60a5fa; }
 .nav-link--secondary { color: #64748b; font-size: 0.8rem; }
+.nav-link--admin { opacity: 0.85; }
+.nav-link__pill {
+  margin-left: auto;
+  background: rgba(167, 139, 250, 0.15);
+  color: #a78bfa;
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
 .nav-link__icon { font-size: 1rem; }
 .nav-link__badge {
   margin-left: auto;
